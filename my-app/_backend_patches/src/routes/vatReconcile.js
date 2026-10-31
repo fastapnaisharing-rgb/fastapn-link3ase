@@ -726,6 +726,9 @@ const IS_PAGE_HEADER_SUBSTRINGS = [
   "รวม :",            // แถวสรุปยอดรวม
   "====",             // เส้นคั่น Grand Total (คนละแบบกับ "----------")
   "TAPVATIN",         // ลายเซ็นชื่อโปรแกรมที่ออกรายงาน (ท้ายไฟล์)
+  "รายงานภาษีซื้อ",     // MARKER_VATRECONCILE_IS_HEADER_LOOSE_V1 -- ชื่อรายงานในหัวหน้า
+  "ชื่อผู้ประกอบการ :",  // หัวสาขา/หน้า: ชื่อผู้ประกอบการ
+  "ที่อยู่ :",           // หัวสาขา/หน้า: ที่อยู่
 ];
 
 function isPageHeaderJunk(strippedLine) {
@@ -760,6 +763,15 @@ function isParseDate(raw) {
 // MARKER_VATRECONCILE_IS_PAGEHEADER_ZONE_V1 -- Zone Page Header: เริ่มที่ "<BU> BOOK ..." จบที่เส้นประคั่นหัว Column
 const IS_PAGE_HEADER_START = /^[A-Za-z0-9]{2,8}\s+BOOK\b/;
 const IS_PAGE_HEADER_END = /^-{5,}(?:\s+-{5,}){2,}\s*$/;
+// MARKER_VATRECONCILE_IS_HEADER_LOOSE_V1 -- ตรวจจุดเริ่มหัวหน้า (Page Header) ให้ไม่พึ่งแค่รูปแบบ "<BU> BOOK" (ชื่อ BU ที่มี - _ . หรือเว้นวรรค เช่น CR-CM / CR-RR เดิมตรวจไม่เจอ -> บรรทัด ชื่อผู้ประกอบการ / ที่อยู่ / เลขที่... ของหัวหน้า หลุดไปต่อท้ายเลขที่ใบกำกับ/ชื่อผู้ค้าของแถวก่อนหน้า)
+// เริ่ม Zone เมื่อ: "<คำ 1-12 ตัว> BOOK" | ขึ้นหน้าใหม่ (Form Feed \f / _x000C_) | FAPMGR008 | หัวรายงาน "รายงานภาษีซื้อ" (เฉพาะกลางไฟล์ คือมีแถวก่อนหน้าแล้ว)
+function isPageHeaderStartLoose(rawLine, stripped, hasRecord) {
+  if (/^\S{1,12}(?:\s+\S{1,12})?\s+BOOK\b/.test(stripped)) return true;
+  if (/\f|_x000C_/.test(rawLine) && !IS_DATE_ROW_PATTERN.test(rawLine.replace(/^[\f\s]+/, ""))) return true;
+  if (stripped.includes("FAPMGR008")) return true;
+  if (hasRecord && stripped.includes("รายงานภาษีซื้อ")) return true;
+  return false;
+}
 const IS_PAGE_HEADER_MAX_LINES = 40;
 
 function isParseRowFields(line) {
@@ -834,10 +846,12 @@ function parseInputSummaryText(rawText) {
       }
     }
 
+    // MARKER_VATRECONCILE_IS_FOOTER_END_V1 -- Footer (TOTAL GROUP / รวมตามสาขา / รวม : / รวมทั้งสิ้น / ==== / TAPVATIN) = จบข้อมูล: ปิดแถวล่าสุดทันที ห้ามมีอะไรหลัง Footer ต่อเข้า Detail
+    if (/TOTAL GROUP|รวมตามสาขา|รวมทั้งสิ้น|รวม\s*:|^={4,}|TAPVATIN/.test(stripped) && !IS_DATE_ROW_PATTERN.test(line)) { currentRecord = null; contEligible = false; continue; }
     // MARKER_VATRECONCILE_IS_PAGEHEADER_ZONE_V1 -- ข้าม Page Header ทั้งก้อน (ไม่ต่อเข้า vendor_name / tax_invoice_no)
     if (IS_DATE_ROW_PATTERN.test(line)) {
       inPageHeader = false; // แถวข้อมูลจริง -> ปิด Zone เสมอ
-    } else if (!inPageHeader && IS_PAGE_HEADER_START.test(stripped)) {
+    } else if (!inPageHeader && (IS_PAGE_HEADER_START.test(stripped) || isPageHeaderStartLoose(line, stripped, !!currentRecord))) { // MARKER_VATRECONCILE_IS_HEADER_LOOSE_V1
       inPageHeader = true;
       pageHeaderCount = 0;
     }
@@ -1747,6 +1761,86 @@ async function reconClaimPercentLookup(numericBu, buRaw) {
   }
   return { pctOf: (branch) => byBranch.get(String(branch).trim()) ?? companyPct ?? 100 };
 }
+
+/**
+ * GET /vat-reconcile/input-summary/for-ap09/list
+ * MARKER_VATRECONCILE_INPUT_SUMMARY_FOR_AP09_LIST_V2 -- BU + Period ที่ Reconcile มีข้อมูล Input และ/หรือ Simple (รวมทุก Account) ให้ Resource Center เลือกดึง -- อ่านอย่างเดียว
+ */
+router.get("/input-summary/for-ap09/list", async (req, res) => {
+  try {
+    const ACC = "('11610752','11610755','11610751')";
+    // MARKER_VATRECONCILE_INPUT_SUMMARY_FOR_AP09_LIST_V3 -- ready = เข้าเกณฑ์จริง (GRT หลักที่ 2-3 = 41/71/91 · Simple ตัด ภ.พ.36) · expired = ใบกำกับเก่ากว่า 6 เดือนจาก Period (ไม่นับ GRT ที่มี F) เหมือนสถานะ Expired ในหน้า Detail
+    const tdate = (c) => `(CASE WHEN EXTRACT(YEAR FROM ${c}) >= 2500 THEN ${c} - INTERVAL '543 years' ELSE ${c} END)`;
+    const grtOk = (c) => `substr(regexp_replace(COALESCE(${c}::text,''), '\\D', '', 'g'), 2, 2) IN ('41','71','91')`;
+    const expd = (dcol, gcol) => `(${dcol} IS NOT NULL AND COALESCE(${gcol}::text,'') !~* 'F' AND (substr(PERIOD::text,1,4)::int * 12 + substr(PERIOD::text,6,2)::int) - (EXTRACT(YEAR FROM ${tdate(dcol)})::int * 12 + EXTRACT(MONTH FROM ${tdate(dcol)})::int) > 6)`;
+    const inReady = grtOk("grt_no");
+    const inExp = expd("tax_invoice_date", "grt_no").replace(/PERIOD/g, "period");
+    const smReady = `${grtOk("d.running_no")} AND COALESCE(d.item_detail,'') !~ 'ภ\\s*\\.?\\s*พ\\s*\\.?\\s*36'`;
+    const smExp = expd("d.tax_invoice_date", "d.running_no").replace(/PERIOD/g, "h.period");
+    const { rows } = await pool.query(
+      `SELECT bu, period, SUM(n_input)::int AS input_total, SUM(n_simple)::int AS simple_total,
+              SUM(r_input)::int AS input_ready, SUM(r_simple)::int AS simple_ready, SUM(x_ready)::int AS expired_ready, MAX(last_updated) AS last_updated FROM (
+         SELECT bu, period, COUNT(*) AS n_input, 0 AS n_simple,
+                COUNT(*) FILTER (WHERE ${inReady}) AS r_input, 0 AS r_simple,
+                COUNT(*) FILTER (WHERE ${inReady} AND ${inExp}) AS x_ready, MAX(updated_at) AS last_updated
+           FROM vat_reconcile_input_summary WHERE reconcile_account IN ${ACC} GROUP BY bu, period
+         UNION ALL
+         SELECT h.bu, h.period, 0, COUNT(d.id), 0, COUNT(*) FILTER (WHERE ${smReady}),
+                COUNT(*) FILTER (WHERE ${smReady} AND ${smExp}), MAX(h.updated_at)
+           FROM vat_reconcile_simple_header h JOIN vat_reconcile_simple_detail d ON d.header_id = h.id
+          WHERE h.reconcile_account IN ${ACC} GROUP BY h.bu, h.period
+       ) x GROUP BY bu, period ORDER BY period DESC, bu`
+    );
+    const { rows: cl } = await pool.query(`SELECT bu, "COMPANY CODE" AS company_code FROM company_list WHERE deleted IS NOT TRUE`);
+    const labelOf = new Map();
+    for (const c of cl) { const seg = String(c.company_code || "").split("-")[2]; if (seg && !labelOf.has(seg)) labelOf.set(seg, c.bu); }
+    res.json({ items: rows.map((r) => ({ ...r, label: labelOf.get(String(r.bu)) || String(r.bu) })) });
+  } catch (err) {
+    console.error("[vatReconcile] input-summary for-ap09 list error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างดึงรายการ Input Summary", detail: err.message });
+  }
+});
+
+/**
+ * GET /vat-reconcile/input-summary/for-ap09?bu=OMT&period=2026-09
+ * MARKER_VATRECONCILE_INPUT_SUMMARY_FOR_AP09_V1 -- ให้ Resource Center (AP09 Inputsummary) ดึงรายการ Input ที่ Reconcile เก็บไว้แล้ว
+ * ตาม BU + Period รวมทุก Account (11610752 / 11610755 / 11610751) ไม่แยก Account -- อ่านอย่างเดียว ไม่เขียน DB
+ * (ตัวกรอง GRT หลักที่ 2-3 = 41/71/91 ทำที่ Frontend ด้วยกติกาเดียวกับ AP09 เดิม)
+ */
+router.get("/input-summary/for-ap09", async (req, res) => {
+  try {
+    const period = String(req.query.period || "");
+    if (!req.query.bu || !/^\d{4}-\d{2}$/.test(period)) {
+      return res.status(400).json({ error: "ต้องระบุ bu และ period รูปแบบ YYYY-MM" });
+    }
+    const buNum = await resolveBuToNumeric(req.query.bu);
+    if (!buNum) return res.status(422).json({ error: "ไม่พบ BU นี้ในระบบ (แปลงเป็นเลข BU ไม่ได้)" });
+    const fd = (c) => `to_char(CASE WHEN EXTRACT(YEAR FROM ${c}) >= 2500 THEN ${c} - INTERVAL '543 years' ELSE ${c} END, 'DD-Mon-YY')`;
+    const { rows } = await pool.query(
+      `SELECT id, reconcile_account, tax_type, branch, vendor_name, grt_no, tax_invoice_no, item_detail,
+              ${fd("receive_date")} AS receive_date, ${fd("tax_invoice_date")} AS tax_invoice_date,
+              paid_amount::float8 AS paid_amount, paid_vat::float8 AS paid_vat
+         FROM vat_reconcile_input_summary
+        WHERE bu = $1 AND period = $2 AND reconcile_account IN ('11610752','11610755','11610751')
+        ORDER BY branch, tax_invoice_date, id`,
+      [buNum, period]
+    );
+    // MARKER_VATRECONCILE_INPUT_SUMMARY_FOR_AP09_SIMPLE_V1 -- Simple (100/AVG): GRT = running_no · Branch = สาขาของ Header (เหมือน "รวมสาขา XXXXXX" ตอนโยนไฟล์ Simple)
+    const sres = await pool.query(
+      `SELECT d.id, h.reconcile_account, h.simple_type, h.branch, d.running_no AS grt_no, d.tax_invoice_no, d.vendor_name, d.item_detail,
+              ${fd("d.receive_date")} AS receive_date, ${fd("d.tax_invoice_date")} AS tax_invoice_date,
+              d.paid_amount::float8 AS paid_amount, d.paid_vat::float8 AS paid_vat
+         FROM vat_reconcile_simple_header h JOIN vat_reconcile_simple_detail d ON d.header_id = h.id
+        WHERE h.bu = $1 AND h.period = $2 AND h.reconcile_account IN ('11610752','11610755','11610751')
+        ORDER BY h.branch, d.tax_invoice_date, d.id`,
+      [buNum, period]
+    );
+    res.json({ bu: buNum, period, count: rows.length, rows, simple_count: sres.rows.length, simple_rows: sres.rows });
+  } catch (err) {
+    console.error("[vatReconcile] input-summary for-ap09 error:", err);
+    res.status(500).json({ error: "เกิดข้อผิดพลาดระหว่างดึง Input Summary", detail: err.message });
+  }
+});
 
 /**
  * GET /vat-reconcile/dashboard/report?type=tb|input_summary|reconcile&bu=...&account=...&period=...

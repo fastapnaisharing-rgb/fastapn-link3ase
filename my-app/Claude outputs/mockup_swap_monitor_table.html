@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Monitor Table</title>
+<style>
+:root{--g:#1e8e4a;--line:#e3e8ee;--mute:#6b7785;--bad:#b3261e;--text:#1f2933}
+body{margin:0;padding:24px;background:#f5f8f6;font-family:"Segoe UI",Tahoma,sans-serif;color:var(--text)}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px;max-width:1280px;margin:0 auto}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.sub{font-size:12px;color:var(--mute);font-weight:600;margin-bottom:8px}
+.tabs{display:inline-flex;background:#eef2f0;border-radius:10px;padding:4px;gap:2px}
+.tab{padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;color:#9aa7b3}
+.tab.on{background:#fff;color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.btn{padding:8px 16px;border:1px solid #cfd8e0;border-radius:8px;background:#fff;font-size:13px;font-weight:600}
+.wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;margin-top:12px}
+table{border-collapse:separate;border-spacing:0;width:100%}
+th{background:#eef4f0;color:#44515e;font-size:11.5px;font-weight:700;padding:10px 12px;border-bottom:2px solid #cfe3d6;text-align:left;white-space:nowrap;letter-spacing:.2px}
+td{padding:9px 12px;border-bottom:1px solid var(--line);font-size:13px;white-space:nowrap;background:#fff}
+tbody tr:nth-child(even) td{background:#fafcfb}
+tbody tr:hover td{background:#eef8f1}
+.r{text-align:right}.c{text-align:center;color:var(--mute)}
+.m{font-family:ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+.v{width:100%;min-width:260px;white-space:normal}
+.neg{color:var(--bad)}.dim{color:#b6c0c9}
+.num{width:44px;text-align:center;color:var(--mute);font-size:12px}
+tfoot td{background:#eef4f0;border-top:2px solid #cfe3d6;font-weight:700}
+tfoot small{display:block;font-weight:400;color:var(--mute);font-size:11.5px}
+.sel td.s{background:#d7eedf!important}
+.bar{margin-top:10px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;background:#14213d;color:#fff;border-radius:10px;padding:8px 14px;font-size:13px}
+.bar b{color:#7ee0a8;font-size:15px}
+.note{max-width:1280px;margin:14px auto 0;font-size:13px;color:var(--mute);line-height:1.7}
+</style></head><body>
+<div class="card">
+  <div class="sub">Monitor · เริ่มต้น 2026-04 (เลือก Out จากไฟล์ต้นทาง · ต้องสลับภายใน 2026-10)</div>
+  <div class="top">
+    <div class="tabs"><span class="tab on">Transaction ที่จะเอาออก (Out) · 5 ใบ</span><span class="tab">Transaction ที่จะเอาเข้า (In) · 0 ใบ</span></div>
+    <span class="btn">+ คอลัมน์ (12)</span>
+  </div>
+  <div class="wrap"><table>
+    <thead><tr>
+      <th class="num">#</th><th>เลขที่ใบกำกับภาษี</th><th>วันที่ใบกำกับ</th><th class="v">ผู้ค้า</th><th>Invoice Ref.</th><th>Tax ID / สาขา</th>
+      <th class="r">มูลค่าก่อน VAT</th><th class="r">เงินภาษี</th><th class="c">Rate</th><th class="r">ยอด @100%</th><th class="c">ใช้ได้ถึง</th><th class="c">แถวไฟล์</th>
+    </tr></thead>
+    <tbody>
+      <tr class="sel"><td class="num">1</td><td class="m s">00405263</td><td class="m s">2026-04-30</td><td class="v s">*บริษัท เดอะ แพลทินัม กรุ๊ปจำกัด (มหาชน) (สาขาที่ 00008)</td><td class="m dim s">—</td><td class="m s">0107557000241 / 00008</td><td class="r m s">4,792.13</td><td class="r m s">335.45</td><td class="c m">100%</td><td class="r m" style="font-weight:700">335.45</td><td class="c m">2026-10</td><td class="c m">5209</td></tr>
+      <tr><td class="num">2</td><td class="m">00405263</td><td class="m">2026-04-30</td><td class="v">*บริษัท เดอะ แพลทินัม กรุ๊ปจำกัด (มหาชน) (สาขาที่ 00008)</td><td class="m dim">—</td><td class="m">0107557000241 / 00008</td><td class="r m">43,541.63</td><td class="r m">3,047.91</td><td class="c m">100%</td><td class="r m" style="font-weight:700">3,047.91</td><td class="c m">2026-10</td><td class="c m">5210</td></tr>
+      <tr><td class="num">3</td><td class="m">2026-10400768</td><td class="m">2026-04-30</td><td class="v">*เซ็นทรัลพัฒนา ดีเวลลอปเม้นท์บจก. (สาขาที่ 00002)</td><td class="m dim">—</td><td class="m">0105550069511 / 00002</td><td class="r m">33,581.00</td><td class="r m">2,350.67</td><td class="c m">100%</td><td class="r m" style="font-weight:700">2,350.67</td><td class="c m">2026-10</td><td class="c m">5799</td></tr>
+      <tr><td class="num">4</td><td class="m">2026-10400768</td><td class="m">2026-04-30</td><td class="v">*เซ็นทรัลพัฒนา ดีเวลลอปเม้นท์บจก. (สาขาที่ 00002)</td><td class="m dim">—</td><td class="m">0105550069511 / 00002</td><td class="r m neg">-3,956.55</td><td class="r m neg">-276.96</td><td class="c m">100%</td><td class="r m neg" style="font-weight:700">-276.96</td><td class="c m">2026-10</td><td class="c m">5800</td></tr>
+      <tr><td class="num">5</td><td class="m">2060000106</td><td class="m">2026-04-17</td><td class="v">*โรงพยาบาลกรุงเทพสุราษฎร์ บจก.</td><td class="m">INV-2604-0017</td><td class="m">0105556102014 / 00000</td><td class="r m">25,773.20</td><td class="r m">1,804.12</td><td class="c m">100%</td><td class="r m" style="font-weight:700">1,804.12</td><td class="c m">2026-10</td><td class="c m">5030</td></tr>
+    </tbody>
+    <tfoot><tr><td>รวม Out<small>ผลต่างจากเป้า 0.00</small></td><td></td><td></td><td></td><td></td><td></td><td class="r m">160,047.59</td><td class="r m">11,203.32</td><td></td><td class="r m">11,203.32</td><td></td><td></td></tr></tfoot>
+  </table></div>
+  <div class="bar"><span>ที่เลือก <b>4</b> ช่อง</span><span>ผลรวม <b class="m">51,517.14</b></span><span style="opacity:.85">ตอนลากคลุมตัวเลข แล้ว Ctrl+C วางใน Excel ได้เลย</span></div>
+</div>
+<div class="note">ตัวอย่างนี้ใช้ข้อมูลสมมุติบางส่วน (เช่นแถวสุดท้ายมี Invoice Ref.) เพื่อให้เห็นการจัดคอลัมน์: ผู้ค้ากินพื้นที่ที่เหลือ, ตัวเลขชิดขวา, ติดลบสีแดง, Invoice Ref. ต่อจากผู้ค้า, ลากคลุมแล้วไฮไลต์ช่องสีเขียวอ่อน</div>
+</body></html>

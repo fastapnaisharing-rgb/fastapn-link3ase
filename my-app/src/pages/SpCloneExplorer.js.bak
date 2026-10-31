@@ -49,7 +49,7 @@ export default function SpCloneExplorer({ onBack, onOpenLegacy, dest, menu, titl
   const MY = MENU === 'gl'; // MARKER_SPC_MY_FOLDERS_V1 -- GL Report: ปุ่ม "My Folders" (เลือกโฟลเดอร์ของตัวเอง ทุกคนใช้ได้) แทน Folder Manage ของ Owner
   const PAGE_TITLE = title || 'VatController';
   const BACK_LABEL = backLabel || 'VAT Control';
-  const ROOT_LABEL = DEST === 'ap' ? 'Z_Report Reconcile - Account Payable' : 'Z_Report Reconcile';
+  const ROOT_LABEL = ({ ap: 'Z_Report Reconcile - Account Payable', gl: 'Detail of Account', doh: 'Z_Backup_DOH' })[DEST] || 'Z_Report Reconcile'; // MARKER_GL_DOA_BOX_V1
   const { userName, currentUser, userRole } = useAuth();   // MARKER_SPC_RESOURCE_HEADER_V1
   const { isOwner } = useUserRole();
   const [syncing, setSyncing] = useState(false);

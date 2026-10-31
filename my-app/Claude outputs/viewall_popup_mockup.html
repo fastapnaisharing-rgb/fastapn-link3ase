@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup หน้าต่าง View All</title>
+<style>
+  :root{--bg:#f3f2ee;--card:#fff;--ink:#1f2933;--mute:#7b8794;--line:#eceae3;--navy:#1a3a5c;--amber:#f0b04a;--orange:#b3691b;--green:#2f9e44;--blue:#3b82f6;--track:#e5e7eb}
+  *{box-sizing:border-box}
+  body{margin:0;padding:24px 16px 48px;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI","Noto Sans Thai",system-ui,sans-serif}
+  h1{font-size:18px;margin:0 0 4px}p.sub{margin:0 0 20px;color:var(--mute);font-size:13px}
+  .stage{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
+  .cap{font-size:12px;color:var(--mute);margin:0 0 8px}
+  .modal{width:560px;max-width:100%;background:var(--card);border-radius:16px;box-shadow:0 18px 50px rgba(20,30,50,.22);overflow:hidden}
+  .hd{padding:18px 22px 14px;background:linear-gradient(180deg,#f7f9fc,#fff);border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:flex-start}
+  .ic{width:40px;height:40px;border-radius:12px;background:#eaf1fb;display:grid;place-items:center;font-size:20px;flex:none}
+  .hd h2{margin:0;font-size:16px;color:var(--navy)}
+  .hd .s{font-size:12px;color:var(--mute);margin-top:2px}
+  .badge{margin-left:auto;background:var(--navy);color:#fff;border-radius:99px;padding:3px 12px;font-size:12px;font-weight:700;white-space:nowrap}
+  .state{margin:14px 22px 0;padding:10px 12px;border-radius:10px;font-size:12px;display:flex;gap:8px;align-items:center}
+  .state.lock{background:#fff7e8;color:#8a5a14;border:1px solid #f7e3c8}
+  .state.ok{background:#e9f7ee;color:#1f6b33;border:1px solid #c9ecd4}
+  .tbl{margin:12px 22px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .th,.tr{display:grid;grid-template-columns:70px 1fr 56px 86px;gap:10px;align-items:center;padding:10px 14px}
+  .th{background:#f6f7f9;font-size:11px;color:var(--mute);font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+  .tr{border-top:1px solid var(--line)}
+  .bu{display:inline-block;background:#eaf1fb;color:var(--navy);font-weight:700;font-size:12px;border-radius:8px;padding:3px 10px;text-align:center}
+  .bar{height:12px;background:var(--track);border-radius:99px;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:99px}
+  .pct{font-weight:700;font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+  .meta{font-size:11px;color:var(--mute);line-height:1.5}
+  .meta b{color:var(--ink);font-weight:600}
+  .chip{display:inline-block;margin-left:4px;background:#e3f4e8;color:#1f6b33;border-radius:99px;padding:0 8px;font-size:10px;font-weight:700}
+  .ft{display:flex;gap:10px;align-items:center;padding:16px 22px 18px}
+  .ft .sum{font-size:12px;color:var(--mute);margin-right:auto}
+  .btn{height:38px;border-radius:10px;padding:0 18px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid #d5dbe3;background:#fff;color:#4a5568}
+  .btn.rs{border:none;color:#fff;background:linear-gradient(180deg,#c47a26,#b3691b)}
+  .btn.rs[disabled]{background:#e5e7eb;color:#9aa3ad;cursor:not-allowed}
+</style>
+</head>
+<body>
+<h1>หน้าต่าง View All (Mockup)</h1>
+<p class="sub">ออกแบบใหม่ให้อ่านง่ายขึ้น: ป้าย BU, หลอดความคืบหน้า, สถานะ Reset ชัดเจนด้านบน และปุ่ม Reset อยู่ท้ายหน้าต่าง · แสดง 2 สถานะ: ยัง Reset ไม่ได้ / Reset ได้แล้ว</p>
+
+<div class="stage">
+  <div>
+    <p class="cap">สถานะ 1 · ยังปิด Period ไม่ได้ (Reset กดไม่ได้)</p>
+    <div class="modal">
+      <div class="hd"><div class="ic">👁</div><div><h2>BU ที่มีความคืบหน้า</h2><div class="s">รวมทุก BU ในระบบที่มี % · Period Oct 2569</div></div><span class="badge">2 BU</span></div>
+      <div class="state lock">🔒 <span>ยัง Reset ไม่ได้ — ต้องปิด Period ก่อน</span></div>
+      <div class="tbl">
+        <div class="th"><span>BU</span><span>ความคืบหน้า</span><span style="text-align:right">%</span><span>รายละเอียด</span></div>
+        <div class="tr"><span class="bu">BTM</span><div class="bar"><i style="width:12%;background:var(--amber)"></i></div><span class="pct" style="color:var(--orange)">12%</span><span class="meta">ติ๊ก <b>5</b> · Req <b>0</b> · Vat <b>0</b></span></div>
+        <div class="tr"><span class="bu">REV</span><div class="bar"><i style="width:12%;background:var(--amber)"></i></div><span class="pct" style="color:var(--orange)">12%</span><span class="meta">ติ๊ก <b>5</b> · Req <b>0</b> · Vat <b>0</b></span></div>
+        <div class="tr"><span class="bu">CFM</span><div class="bar"><i style="width:58%;background:var(--blue)"></i></div><span class="pct" style="color:var(--blue)">58%</span><span class="meta">ติ๊ก <b>14</b> · Req <b>2</b> · Vat <b>1</b></span></div>
+        <div class="tr"><span class="bu">CFW</span><div class="bar"><i style="width:100%;background:var(--green)"></i></div><span class="pct" style="color:var(--green)">100%</span><span class="meta">ติ๊ก <b>22</b> · Req <b>3</b> · Vat <b>2</b><span class="chip">Confirm</span></span></div>
+      </div>
+      <div class="ft"><span class="sum">รวม 4 BU (ตัวอย่าง)</span><button class="btn">ปิด</button><button class="btn rs" disabled>↺ Reset All</button></div>
+    </div>
+  </div>
+
+  <div>
+    <p class="cap">สถานะ 2 · ปิด Period แล้ว (Reset กดได้)</p>
+    <div class="modal">
+      <div class="hd"><div class="ic">👁</div><div><h2>BU ที่มีความคืบหน้า</h2><div class="s">รวมทุก BU ในระบบที่มี % · Period Oct 2569</div></div><span class="badge">2 BU</span></div>
+      <div class="state ok">✅ <span>Period ปิดแล้ว — Reset ได้ 1 ครั้ง (ยืนยันด้วย OTP)</span></div>
+      <div class="tbl">
+        <div class="th"><span>BU</span><span>ความคืบหน้า</span><span style="text-align:right">%</span><span>รายละเอียด</span></div>
+        <div class="tr"><span class="bu">BTM</span><div class="bar"><i style="width:12%;background:var(--amber)"></i></div><span class="pct" style="color:var(--orange)">12%</span><span class="meta">ติ๊ก <b>5</b> · Req <b>0</b> · Vat <b>0</b></span></div>
+        <div class="tr"><span class="bu">REV</span><div class="bar"><i style="width:12%;background:var(--amber)"></i></div><span class="pct" style="color:var(--orange)">12%</span><span class="meta">ติ๊ก <b>5</b> · Req <b>0</b> · Vat <b>0</b></span></div>
+      </div>
+      <div class="ft"><span class="sum">รวม 2 BU</span><button class="btn">ปิด</button><button class="btn rs">↺ Reset All</button></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

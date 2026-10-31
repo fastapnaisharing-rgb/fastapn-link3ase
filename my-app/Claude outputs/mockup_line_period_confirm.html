@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Popup Confirm งวดของบรรทัด</title>
+<style>
+body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#e9ecf1;margin:0;padding:24px;color:#222}
+h3{margin:0 0 8px;font-size:14px;color:#1a3a5c}.note{font-size:12px;color:#666;line-height:1.7;margin:0 0 14px;max-width:1000px}
+.stage{position:relative;max-width:1040px;height:380px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.15);margin-bottom:22px}
+.hd{padding:12px 18px;border-bottom:1px solid #eee;font-size:14px;font-weight:600;color:#1a3a5c}.hd small{font-weight:400;color:#888;margin-left:8px}
+.th,.tr{display:grid;grid-template-columns:130px 90px 1fr 80px;gap:8px;padding:8px 18px;font-size:11px;align-items:center}
+.th{background:#f6f8fa;color:#888}
+.in{border:1px solid #dde;border-radius:6px;padding:7px 8px;background:#fff;font-size:11px;color:#1a3a5c;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.in.sel{border-color:#9db8d8;background:#f3f8fe}
+mark{background:#fff1d6;color:#b26a00;border-radius:3px;padding:0 2px}
+.dim{position:absolute;inset:0;background:rgba(15,30,50,.35);display:flex;align-items:center;justify-content:center}
+.pop{width:470px;background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(26,58,92,.3);overflow:hidden}
+.pop .t{padding:13px 18px;border-bottom:1px solid #f0f0f0}.pop .t b{font-size:13px;color:#1a3a5c}.pop .t small{display:block;font-size:11px;color:#999;margin-top:2px}
+.body{padding:14px 18px;font-size:12px;line-height:1.9}
+.row{display:flex;gap:10px;align-items:center}
+.lbl{width:90px;color:#888;font-size:11px}
+.box{flex:1;border:1px solid #e0e0e0;border-radius:7px;padding:6px 9px;font-size:12px;color:#1a3a5c;background:#fafbfc}
+.box.new{border-color:#e67e22;background:#FFF3E0;color:#a35a00;font-weight:700}
+.ft{display:flex;justify-content:flex-end;gap:8px;padding:10px 18px;background:#fafbfc}
+.btn{border:1px solid #ccc;border-radius:7px;padding:6px 16px;font-size:12px;color:#555;background:#fff}
+.btn.ok{background:#1a3a5c;color:#fff;border-color:#1a3a5c}
+.cap{font-size:12px;color:#444;margin:0 0 6px;font-weight:600}
+</style></head><body>
+<h3>Mockup — เลือก Item Code ค่าไฟ แล้วมี Popup ให้ Confirm งวดของบรรทัดนั้น</h3>
+<p class="note">เมื่อเลือก Item CT ในบรรทัด (เช่น ค่าไฟ ค่าน้ำ) ระบบคำนวณงวดถัดไปของ <b>ค่าใช้จ่ายตัวนั้น</b> จากประวัติ (Supplier + สาขา + Item Code เดียวกัน) แล้วขึ้น Popup ให้ยืนยัน · ยืนยัน = ใส่งวดนั้นใน Description ของบรรทัดนั้นเท่านั้น ไม่ผ่านช่อง Period กลาง ทำให้แต่ละบรรทัดงวดเหลื่อมกันได้ · ข้อมูลตัวอย่างสมมติ</p>
+
+<p class="cap">① เลือกค่าไฟ แล้ว Popup ขึ้น</p>
+<div class="stage">
+  <div class="hd">Invoice Detail <small>Supplier LKS-T0051 · Branch 5898AB</small></div>
+  <div class="th"><div>Item Code</div><div>Amount</div><div>Description</div><div>Tax Code</div></div>
+  <div class="tr"><div class="in">C0000703</div><div class="in">45,000.00</div><div class="in">5898AB-IB <mark>01/12/2026 - 31/12/2026</mark> (N) ค่าเช่าพื้นที่ …</div><div class="in">N5</div></div>
+  <div class="tr"><div class="in sel">C0000750</div><div class="in">&nbsp;</div><div class="in">&nbsp;</div><div class="in">&nbsp;</div></div>
+  <div class="dim">
+    <div class="pop">
+      <div class="t"><b>ยืนยันงวด — ค่าไฟฟ้า (C0000750)</b><small>คำนวณจากประวัติของ Supplier + สาขา 5898AB</small></div>
+      <div class="body">
+        <div class="row"><span class="lbl">งวดล่าสุด</span><div class="box">23/09/2026 - 22/10/2026</div></div>
+        <div class="row"><span class="lbl">งวดถัดไป</span><div class="box new">23/10/2026 - 22/11/2026</div></div>
+        <div style="color:#999;font-size:11px;margin-top:4px">แก้ไขงวดได้ก่อนยืนยัน · ใช้เฉพาะบรรทัดนี้</div>
+      </div>
+      <div class="ft"><span class="btn">ข้าม</span><span class="btn ok">ยืนยัน</span></div>
+    </div>
+  </div>
+</div>
+
+<p class="cap">② หลังยืนยัน — แต่ละบรรทัดมีงวดของตัวเอง</p>
+<div class="stage" style="height:200px">
+  <div class="th"><div>Item Code</div><div>Amount</div><div>Description</div><div>Tax Code</div></div>
+  <div class="tr"><div class="in">C0000703</div><div class="in">45,000.00</div><div class="in">5898AB-IB <mark>01/12/2026 - 31/12/2026</mark> (N) ค่าเช่าพื้นที่ …</div><div class="in">N5</div></div>
+  <div class="tr"><div class="in">C0000750</div><div class="in">&nbsp;</div><div class="in">5898AB-IB <mark>23/10/2026 - 22/11/2026</mark> (S) ค่าไฟฟ้า …</div><div class="in">&nbsp;</div></div>
+</div>
+</body></html>

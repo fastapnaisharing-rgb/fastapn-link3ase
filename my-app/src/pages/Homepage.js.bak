@@ -10,8 +10,11 @@ import BatchChatDrawer from './BatchChatDrawer';
 import { confirmDialog } from '../confirmDialog';
 // MARKER_HOMEPAGE_REALTIME_NOTIFICATION_V1
 import { useRealtimeRefresh } from '../useRealtimeRefresh';
+import { useTeamPresence } from '../teamPresence'; // MARKER_TEAM_PRESENCE_SHARED_V1
 // MARKER_HOMEPAGE_AGREEMENT_SYNC_V1
 import { broadcastWs } from '../wsManager';
+import { spLaunch, updateOutlookViaListener } from '../spHandlerAutoUpdate'; // MARKER_SP_LISTENER_LAUNCH_V1
+import { apiFetch } from '../api'; // MARKER_HOMEPAGE_TIMELINE_RESET_NOTICE_V1
 
 // MARKER_HOMEPAGE_DEPLOY_STATUS_STRIP_V1
 // -- Frontend Build Time ฝังมาตอน Build จาก prebuild.js (REACT_APP_BUILD_TIME) --
@@ -147,7 +150,7 @@ function queueFmtFile(name = '') {
   return base.length > 28 ? base.slice(0, 26) + '…' : base;
 }
 
-function Homepage({ onOpenInbox, onGotoUpload } = {}) {
+function Homepage({ onOpenInbox, onGotoUpload, onGotoTimelineReset } = {}) {
   // MARKER_HOMEPAGE_AGREEMENT_SYSTEM_V1
   const [supportPopupAgreeing, setSupportPopupAgreeing] = useState(false);
   const [supportPopupDisagreeing, setSupportPopupDisagreeing] = useState(false);
@@ -290,6 +293,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const [spToastHidden, setSpToastHidden] = useState(false);
   const spReloadRef = useRef(null);
   const [spInstallOpen, setSpInstallOpen] = useState(false);
+  const spVerifyRef = useRef(null); // MARKER_HOMEPAGE_SP_HANDLER_AUTOVERIFY_V1
   const [spInstallMsg, setSpInstallMsg] = useState('');
   const [spInstallBusy, setSpInstallBusy] = useState(false);
   useEffect(() => {
@@ -308,7 +312,12 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
         try { const u = JSON.parse(localStorage.getItem('fastapn_sp_updated') || 'null'); if (u && Number(u.v) >= Number(d?.latest || 0)) hideUntil = Number(u.at || 0) + 24 * 3600 * 1000; } catch (_) { /* เงียบ */ }
         const stillOld = d && Array.isArray(d.outdated) && d.outdated.length > 0 && Date.now() > hideUntil;
         // MARKER_HOMEPAGE_SP_HANDLER_MISSING_V1 -- Backend ไม่เคยได้รับรายงานจากผู้ใช้นี้เลย (installed=false) = ยังไม่พบการติดตั้ง -> การ์ดให้ติดตั้ง (หายเองเมื่อ Handler รายงานครั้งแรก)
-        if (d && d.installed === false) { setSpHandlerNotice({ ...d, kind: 'missing', daysSinceRelease: 0 }); return; }
+        if (d && d.installed === false) {
+          setSpHandlerNotice({ ...d, kind: 'missing', daysSinceRelease: 0 });
+          // MARKER_HOMEPAGE_SP_HANDLER_AUTOVERIFY_V1 -- เครื่องที่ติดตั้งไว้แล้วแต่ Backend ยังไม่เคยได้รับรายงาน (Handler รายงานเฉพาะตอนได้รับคำสั่งที่มี api+token) -> สั่งตรวจเงียบๆ 1 ครั้ง/Session แล้วโหลดสถานะใหม่
+          // MARKER_HOMEPAGE_SP_AUTOVERIFY_OFF_V1 -- เลิก AutoVerify (ยิง fastapn-sp:// ทุก Session ที่หน้า Home -> กล่อง "open Windows Script Host" เด้ง) | ยิงเฉพาะตอน Login (App.js) 1 ครั้ง หรือผู้ใช้กดปุ่มตรวจสอบเอง
+          return;
+        }
         setSpHandlerNotice(stillOld ? { ...d, kind: 'outdated', daysSinceRelease: Math.max(0, Number(d.daysSinceRelease) || 0) } : null);
       } catch (_) { /* เงียบ */ }
     };
@@ -317,12 +326,98 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     const iv = setInterval(load, 5 * 60 * 1000);
     return () => { stop = true; clearInterval(iv); spReloadRef.current = null; };
   }, [canVatHandler]);
+  // MARKER_HOMEPAGE_TIMELINE_RESET_NOTICE_V1 -- ครบ 20 วันหลังปิด Period VAT (นับเงียบๆ จาก vat_period_closed_at) -> ปักการ์ด "Reset All" ให้ Owner/Admin | Reset แล้วหรือยังดูจากแถว timeline_progress period_ym="__resetall__"
+  const TL_RESET_DAYS = 20;
+  const [tlResetDue, setTlResetDue] = useState(null);
+  useEffect(() => {
+    if (!isAdmin) { setTlResetDue(null); return undefined; }
+    let off = false;
+    (async () => {
+      try {
+        const r = await apiFetch('/vat/period/status');
+        const closedAt = r && r.vat_period_closed_at ? String(r.vat_period_closed_at) : '';
+        if (!closedAt) { if (!off) setTlResetDue(null); return; }
+        const due = new Date(closedAt).getTime() + TL_RESET_DAYS * 86400000;
+        if (!(Date.now() >= due)) { if (!off) setTlResetDue(null); return; }
+        const q = await db.from('timeline_progress').select('*').eq('period_ym', '__resetall__').eq('bu', 'vat');
+        const row = Array.isArray(q.data) ? q.data[0] : null;
+        if (row && row.state && String(row.state.closed_at || '') === closedAt) { if (!off) setTlResetDue(null); return; }
+        if (!off) setTlResetDue({ closedAt, dueAt: due });
+      } catch (e) { if (!off) setTlResetDue(null); }
+    })();
+    return () => { off = true; };
+  }, [isAdmin]);
+  // MARKER_HOMEPAGE_OUTLOOK_HANDLER_NOTICE_V1 -- แจ้งเตือน Outlook Handler (fastapn-outlook.ps1): ยังไม่ได้ติดตั้ง / เวอร์ชันเก่า | ขึ้นกับทุกคนที่มีสิทธิ์ใช้งานเมล (Owner หรือมี Document Access ใดๆ)
+  const canMailHandler = !!(isOwner || canVatHandler || Object.values(userPermissions?.docAccess || {}).some(Boolean));
+  const [olNotice, setOlNotice] = useState(null);
+  const [olInstallOpen, setOlInstallOpen] = useState(false);
+  const [olMsg, setOlMsg] = useState('');
+  const [olBusy, setOlBusy] = useState(false);
+  const olReloadRef = useRef(null);
+  useEffect(() => {
+    if (!canMailHandler) { setOlNotice(null); return undefined; }
+    let stop = false;
+    const load = async () => {
+      try {
+        const apiBase = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+        const token = sessionStorage.getItem('fastapn_token');
+        const res = await fetch(`${apiBase}/api/file-storage/outlook-handler/my-status`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const d = await res.json();
+        if (stop) return;
+        let snoozeUntil = 0; // กด "ติดตั้งแล้ว" = ซ่อน 30 วัน (Handler รายงานเวอร์ชันเฉพาะตอนมีการใช้งานจริง)
+        try { snoozeUntil = Number(localStorage.getItem('fastapn_ol_snooze') || 0); } catch (_) { /* เงียบ */ }
+        let hideUntil = 0;
+        try { const u = JSON.parse(localStorage.getItem('fastapn_ol_updated') || 'null'); if (u && Number(u.v) >= Number(d?.latest || 0)) hideUntil = Number(u.at || 0) + 24 * 3600 * 1000; } catch (_) { /* เงียบ */ }
+        if (d && d.installed === false) {
+          // MARKER_HOMEPAGE_OUTLOOK_HANDLER_NO_GUESS_V1 -- ยังไม่มีรายงานเวอร์ชันจากเครื่องนี้ ≠ ยังไม่ได้ติดตั้ง (Handler รุ่นเก่า/ยังไม่เคยถูกใช้ก็ไม่มีรายงาน)
+          // เลิกยิง fastapn://ping=1 (ทำให้เกิดกล่อง "This site is trying to open Windows Script Host" และ Handler รุ่นเก่าเปิดหน้าต่างเมลเอง) และเลิกขึ้นการ์ด "ยังไม่ได้ติดตั้ง" จากการเดา
+          // เครื่องที่ไม่มี Handler จริง ๆ จะรู้ตอนกด Draft Mail/Send (ปุ่มถูก Disable + ข้อความแจ้งในหน้า VAT/IE) | Handler รายงานเวอร์ชันเองทุกครั้งที่ใช้งานจริง
+          setOlNotice(null); return;
+        }
+        const stillOld = d && Array.isArray(d.outdated) && d.outdated.length > 0 && Date.now() > hideUntil;
+        const days = d && d.releasedAt ? Math.max(0, Math.floor((Date.now() - new Date(d.releasedAt).getTime()) / 86400000)) : 0;
+        setOlNotice(stillOld ? { ...d, kind: 'outdated', daysSinceRelease: days } : null);
+      } catch (_) { /* เงียบ */ }
+    };
+    olReloadRef.current = load;
+    load();
+    const iv = setInterval(load, 5 * 60 * 1000);
+    return () => { stop = true; clearInterval(iv); olReloadRef.current = null; };
+  }, [canMailHandler]);
+  const downloadOlHandler = async (kind) => {
+    setOlBusy(true); setOlMsg('');
+    try {
+      // MARKER_OUTLOOK_AUTOUPDATE_V1 -- Update (ps1) = ให้ Listener โหลด+แทนไฟล์ให้เอง สำเร็จแล้วการ์ดหายทันที | ใช้ไม่ได้ค่อยถอยไปโหลดไฟล์แบบเดิม
+      if (kind === 'ps1') {
+        const okAuto = await updateOutlookViaListener();
+        if (okAuto) {
+          try { localStorage.setItem('fastapn_ol_updated', JSON.stringify({ v: Number(olNotice?.latest || 0), at: Date.now() })); } catch (_) { /* เงียบ */ }
+          setOlNotice(null); setOlInstallOpen(false); setOlMsg('');
+          return;
+        }
+        setOlInstallOpen(true);
+      }
+      const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
+      const token = sessionStorage.getItem('fastapn_token') || '';
+      const full = kind !== 'ps1';
+      const res = await fetch(`${apiRoot}/api/file-storage/outlook-handler${full ? '' : '/ps1-only'}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const blob = await res.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = full ? 'fastapn-outlook-handler.zip' : 'fastapn-outlook.ps1'; a.style.display = 'none';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+      setOlMsg(full ? 'ดาวน์โหลดแล้ว: fastapn-outlook-handler.zip (ดูในโฟลเดอร์ Downloads)' : 'ดาวน์โหลดแล้ว: fastapn-outlook.ps1 — วางทับที่ D:\\apps\\fastapn-outlook.ps1');
+      if (!full) { try { localStorage.setItem('fastapn_ol_updated', JSON.stringify({ v: Number(olNotice?.latest || 0), at: Date.now() })); } catch (_) { /* เงียบ */ } setOlNotice(null); }
+    } catch (e) { setOlMsg('ดาวน์โหลดไม่สำเร็จ: ' + (e.message || e)); }
+    finally { setOlBusy(false); }
+  };
+  const olSnooze = () => { try { localStorage.setItem('fastapn_ol_snooze', String(Date.now() + 30 * 24 * 3600 * 1000)); } catch (_) { /* เงียบ */ } setOlNotice(null); };
   const spToastSnoozed = (() => { try { return Number(localStorage.getItem('fastapn_sp_toast_snooze') || 0) > Date.now(); } catch (_) { return false; } })();
   const runSpHandlerUpdate = () => {
     try {
       const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       const token = sessionStorage.getItem('fastapn_token') || '';
-      window.location.href = `fastapn-sp://update?v=${spHandlerNotice?.latest || ''}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`;
+      spLaunch(`fastapn-sp://update?v=${spHandlerNotice?.latest || ''}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`); // MARKER_SP_LISTENER_LAUNCH_V1
       // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V2 -- จำว่าสั่งอัปเดตแล้ว + ซ่อน Notice ทันที (Toast ด้วย)
       try { localStorage.setItem('fastapn_sp_updated', JSON.stringify({ v: Number(spHandlerNotice?.latest || 0), at: Date.now() })); } catch (_) { /* เงียบ */ }
       setSpHandlerNotice(null);
@@ -347,16 +442,18 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
     finally { setSpInstallBusy(false); }
   };
   const openSpInstall = () => { setSpInstallOpen(true); downloadSpInstaller(); };
-  const verifySpHandler = () => {
+  const verifySpHandler = (silent) => {
     try {
       const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       const token = sessionStorage.getItem('fastapn_token') || '';
-      window.location.href = `fastapn-sp://update?v=${spHandlerNotice?.latest || 1}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`;
+      spLaunch(`fastapn-sp://update?v=${spHandlerNotice?.latest || 1}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`); // MARKER_SP_LISTENER_LAUNCH_V1
     } catch (_) {}
+    if (silent === true) { [5000, 12000].forEach((ms) => setTimeout(() => { try { if (spReloadRef.current) spReloadRef.current(); } catch (_) {} }, ms)); return; }
     setSpInstallMsg('กำลังตรวจสอบ... (ถ้าเบราว์เซอร์ถามให้เปิดแอป ให้กดอนุญาต)');
     [6000, 14000].forEach((ms) => setTimeout(() => { try { if (spReloadRef.current) spReloadRef.current(); } catch (_) {} }, ms));
     setTimeout(() => setSpInstallMsg((m) => (m.startsWith('กำลังตรวจสอบ') ? 'ยังไม่พบรายงานจาก Handler — ตรวจว่าติดตั้งแล้ว (ขั้นตอนที่ 2) แล้วกดตรวจสอบอีกครั้ง' : m)), 16000);
   };
+  spVerifyRef.current = verifySpHandler; // MARKER_HOMEPAGE_SP_HANDLER_AUTOVERIFY_V1
   // MARKER_HOMEPAGE_NOTIF_MEASURE_ROWS_V1
   // ── วัดความสูงแถวจริงแทนเดาตัวเลข ให้เห็น 5 แถวเป๊ะไม่ว่า Font จริงจะสูงแค่ไหน ──
   const notifListRef = useRef(null);
@@ -364,11 +461,12 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const filteredNotif = useMemo(() => {
     const base = notifFilter === 'All' ? notifications : notifications.filter(n => notifModule(n) === notifFilter);
     // MARKER_HOMEPAGE_SP_HANDLER_NOTICE_V1 -- ปักหมุดบนสุด (หมวด All / VAT)
-    if (spHandlerNotice && (notifFilter === 'All' || notifFilter === 'VAT' || notifFilter === 'GL')) { // MARKER_SP_HANDLER_AP_PERMS_V2 -- ปักใต้หมวด GL ด้วย
-      return [{ id: '__sp_handler__', category: 'sp-handler', created_at: spHandlerNotice.releasedAt }, ...base];
-    }
-    return base;
-  }, [notifications, notifFilter, spHandlerNotice]);
+    const pins = []; // MARKER_HOMEPAGE_OUTLOOK_HANDLER_NOTICE_V1 -- ปักการ์ด Handler บนสุด (SharePoint: All/VAT/GL | Outlook: ทุกหมวดที่ใช้เมล)
+    if (spHandlerNotice && (notifFilter === 'All' || notifFilter === 'VAT' || notifFilter === 'GL')) pins.push({ id: '__sp_handler__', category: 'sp-handler', created_at: spHandlerNotice.releasedAt }); // MARKER_SP_HANDLER_AP_PERMS_V2 -- ปักใต้หมวด GL ด้วย
+    if (olNotice && notifFilter !== 'Feedback') pins.push({ id: '__outlook_handler__', category: 'outlook-handler', created_at: olNotice.releasedAt });
+    if (tlResetDue && (notifFilter === 'All' || notifFilter === 'VAT')) pins.push({ id: '__tl_reset__', category: 'tl-reset', created_at: new Date(tlResetDue.dueAt).toISOString() }); // MARKER_HOMEPAGE_TIMELINE_RESET_NOTICE_V1
+    return pins.length ? [...pins, ...base] : base;
+  }, [notifications, notifFilter, spHandlerNotice, olNotice, tlResetDue]);
   useEffect(() => {
     const el = notifListRef.current;
     if (!el) return;
@@ -640,9 +738,6 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   const [teamMyPerm, setTeamMyPerm] = useState(null);
   const [showTeamAllPopup, setShowTeamAllPopup] = useState(false);
   const [teamPopupFilter, setTeamPopupFilter] = useState('All');
-  // MARKER_HOMEPAGE_TEAM_REALTIME_V1 -- ฟัง 'team_status_updated' (App.js Heartbeat/Login + AuthContext.js Logout มี Broadcast อยู่แล้ว) ให้ Refresh ทันที ไม่ต้องรอ Poll 30 วิ
-  const [teamRefreshTick, setTeamRefreshTick] = useState(0);
-  useRealtimeRefresh(['team_status_updated'], () => setTeamRefreshTick(t => t + 1), 0);
 
   useEffect(() => {
     if (!me) return;
@@ -731,36 +826,14 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
   }, [me, isOwner, notifRefreshTick]); // MARKER_HOMEPAGE_REALTIME_NOTIFICATION_V1
 
   const TEAM_PERMISSION_KEYS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual', 'ApproveBatch'];
+  // MARKER_TEAM_PRESENCE_SHARED_V1 -- ใช้ teamPresence.js (แหล่งเดียวกับ Popup ทีม Online ใน App และ User Management) แทนดึงเอง: อัปเดต Realtime ตรงกันทุกหน้า
+  const teamPresence = useTeamPresence(true);
   useEffect(() => {
-    const loadTeam = async () => {
-      try {
-        const [{ data: roles }, { data: sessions }] = await Promise.all([
-          db.from('user_roles').select('*'),
-          db.from('menu_active_sessions').select('*'),
-        ]);
-        const cutoff = Date.now() - 5 * 60 * 1000; // Online = Activity ใน 5 นาทีล่าสุด
-        const sessByUser = {};
-        (sessions || []).forEach(s => { sessByUser[s.user_name] = s; });
-        const online = [];
-        const offline = [];
-        (roles || []).forEach(r => {
-          const sess = sessByUser[r.username];
-          const lastSeen = sess?.last_seen ? new Date(sess.last_seen).getTime() : 0;
-          // MARKER_HOMEPAGE_TEAM_PERMISSION_VISIBILITY_V1 -- เก็บ Permission Flag ทุกตัวติด entry ไปด้วย
-          // (ใช้กรอง Visibility ตาม Permission Overlap + Filter ตาม Module ใน Popup "ทั้งหมด")
-          const entry = { ...r, menu_id: sess?.menu_id, lastSeen: sess?.last_seen };
-          if (lastSeen >= cutoff) online.push(entry); else offline.push(entry);
-        });
-        setOnlineUsers(online);
-        setOfflineUsers(offline);
-        setTeamMyPerm((roles || []).find(r => r.username === me) || null);
-      } catch (e) { console.error('[load team]', e); }
-      setLoadingTeam(false);
-    };
-    loadTeam();
-    const iv = setInterval(loadTeam, 30000);
-    return () => clearInterval(iv);
-  }, [teamRefreshTick, me]); // MARKER_HOMEPAGE_TEAM_REALTIME_V1
+    setOnlineUsers(teamPresence.onlineUsers);
+    setOfflineUsers(teamPresence.offlineUsers);
+    setTeamMyPerm(teamPresence.roles.find(r => r.username === me) || null);
+    if (teamPresence.loaded) setLoadingTeam(false);
+  }, [teamPresence.onlineUsers, teamPresence.offlineUsers, teamPresence.roles, teamPresence.loaded, me]);
 
   // ซ่อนคนที่ไม่มี Permission Overlap กับ Viewer เลยสักตัว (Owner เห็นทุกคนไม่กรอง)
   const hasTeamPermOverlap = (otherRow) => {
@@ -914,6 +987,34 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                     {filteredNotif.map(n => {
                       const mod = notifModule(n);
                       const modMeta = NOTIF_MODULE_META[mod];
+                      if (n.category === 'tl-reset') { /* MARKER_HOMEPAGE_TIMELINE_RESET_NOTICE_V1 */
+                        return (
+                          <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #f3c98b', borderRadius: '10px', background: '#FFF6E8', flexShrink: 0 }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#FAEEDA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>↺</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontSize: '12px', fontWeight: '500', color: '#8a4a00', margin: '0 0 1px' }}>ถึงเวลา Reset All ของ Timeline ปิดภาษี</p>
+                              <p style={{ fontSize: '11px', color: '#777', margin: 0 }}>ครบ {TL_RESET_DAYS} วันหลังปิด Period VAT ({new Date(tlResetDue.closedAt).toLocaleDateString('th-TH')}) · ล้างค่าทุก BU ที่มี % (คง Enable/Disable)</p>
+                            </div>
+                            <button onClick={() => onGotoTimelineReset && onGotoTimelineReset()} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>Reset All</button>
+                          </div>
+                        );
+                      }
+                      if (n.category === 'outlook-handler') { /* MARKER_HOMEPAGE_OUTLOOK_HANDLER_NOTICE_V1 */
+                        const miss = olNotice?.kind === 'missing'; const o = !miss && olNotice?.outdated ? olNotice.outdated[0] : null;
+                        return (
+                          <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #f3c98b', borderRadius: '10px', background: '#FFF6E8', flexShrink: 0 }}>
+                            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#FAEEDA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '15px', flexShrink: 0 }}>{miss ? '✉️' : '⚠️'}</div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontSize: '12px', fontWeight: '500', color: '#8a4a00', margin: '0 0 1px' }}>{miss ? 'ยังไม่ได้ติดตั้ง Outlook Handler' : 'Outlook Handler เวอร์ชันเก่า'}</p>
+                              <p style={{ fontSize: '11px', color: '#777', margin: 0 }}>{miss ? 'จำเป็นสำหรับเปิดร่างอีเมลใน Outlook (ส่งเมลจากระบบ)' : `เครื่องคุณใช้ v${o ? o.version : '?'} (ล่าสุด v${olNotice.latest}) · ปล่อยมา ${olNotice.daysSinceRelease} วัน`}</p>
+                            </div>
+                            {miss
+                              ? (<><button onClick={() => { setOlInstallOpen(true); downloadOlHandler('zip'); }} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>ติดตั้งเลย</button>
+                                <button onClick={olSnooze} title="เครื่องนี้ติดตั้งแล้ว? ซ่อนการแจ้งเตือน 30 วัน (ระบบจะรู้เวอร์ชันเมื่อใช้ส่งเมลครั้งถัดไป)" style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer', flexShrink: 0 }}>ติดตั้งแล้ว</button></>)
+                              : (<button onClick={async () => { await downloadOlHandler('ps1'); }} disabled={olBusy} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>Update ตอนนี้</button>)}
+                          </div>
+                        );
+                      }
                       if (n.category === 'sp-handler' && spHandlerNotice?.kind === 'missing') {
                         return (
                           <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', border: '0.5px solid #f3c98b', borderRadius: '10px', background: '#FFF6E8', flexShrink: 0 }}>
@@ -923,6 +1024,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
                               <p style={{ fontSize: '11px', color: '#777', margin: 0 }}>จำเป็นสำหรับส่งไฟล์ไป SharePoint และเปิดหน้า Z_Report Reconcile</p>
                             </div>
                             <button onClick={openSpInstall} style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer', flexShrink: 0 }}>ติดตั้งเลย</button>
+                            <button onClick={() => verifySpHandler(true)} title="เครื่องนี้ติดตั้งแล้ว? ให้ระบบตรวจสอบอีกครั้ง" style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #8a4a00', background: '#fff', color: '#8a4a00', cursor: 'pointer', flexShrink: 0 }}>ตรวจสอบ</button>
                           </div>
                         );
                       }
@@ -1015,6 +1117,34 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
           })()}
         </div>
 
+        {/* MARKER_HOMEPAGE_OUTLOOK_HANDLER_NOTICE_V1 -- Popup ติดตั้ง / Update Outlook Handler */}
+        {olInstallOpen && (
+          <div onClick={() => setOlInstallOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10030, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: '460px', maxWidth: '92vw', background: '#fff', borderRadius: '12px', boxShadow: '0 12px 40px rgba(0,0,0,0.25)', padding: '18px 20px' }}>
+              <p style={{ fontSize: '15px', fontWeight: '600', color: '#1a3a5c', margin: '0 0 4px' }}>{olNotice?.kind === 'outdated' ? 'Update Outlook Handler' : 'ติดตั้ง Outlook Handler'}</p>
+              <p style={{ fontSize: '11px', color: '#777', margin: '0 0 12px' }}>ทำครั้งเดียวต่อเครื่อง ไม่ต้องใช้สิทธิ์ Admin</p>
+              {olNotice?.kind === 'outdated' ? (
+                <ol style={{ fontSize: '12px', color: '#333', margin: '0 0 12px', paddingLeft: '18px', lineHeight: 1.7 }}>
+                  <li>เปิดโฟลเดอร์ Downloads เอาไฟล์ <b>fastapn-outlook.ps1</b> ที่เพิ่งโหลด</li>
+                  <li>วางทับไฟล์เดิมที่ <b>D:\apps\fastapn-outlook.ps1</b></li>
+                  <li>ใช้ส่งเมลตามปกติ ระบบจะรายงานเวอร์ชันใหม่ให้เอง</li>
+                </ol>
+              ) : (
+                <ol style={{ fontSize: '12px', color: '#333', margin: '0 0 12px', paddingLeft: '18px', lineHeight: 1.7 }}>
+                  <li>เปิดไฟล์ <b>fastapn-outlook-handler.zip</b> ที่เพิ่งโหลด (โฟลเดอร์ Downloads) แล้ว <b>แตก zip</b></li>
+                  <li>ดับเบิลคลิก <b>setup-fastapn-outlook.bat</b> รอจนขึ้นว่าสำเร็จ</li>
+                  <li>กลับมากด <b>ติดตั้งแล้ว</b> ที่การ์ดแจ้งเตือน (ถ้า Outlook ปิดอยู่ Handler จะเปิดให้เอง)</li>
+                </ol>
+              )}
+              {olMsg && <p style={{ fontSize: '11px', color: olMsg.startsWith('ดาวน์โหลดไม่สำเร็จ') ? '#A32D2D' : '#0F6E56', margin: '0 0 10px' }}>{olMsg}</p>}
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button onClick={() => downloadOlHandler(olNotice?.kind === 'outdated' ? 'ps1' : 'zip')} disabled={olBusy} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer' }}>{olBusy ? 'กำลังโหลด…' : 'ดาวน์โหลดอีกครั้ง'}</button>
+                <button onClick={() => setOlInstallOpen(false)} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer' }}>ปิด</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* MARKER_HOMEPAGE_SP_HANDLER_INSTALL_V1 -- Popup ขั้นตอนติดตั้ง SharePoint Handler */}
         {spInstallOpen && (
           <div onClick={() => setSpInstallOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 10030, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1032,7 +1162,7 @@ function Homepage({ onOpenInbox, onGotoUpload } = {}) {
               {spInstallMsg && <p style={{ fontSize: '11px', color: spInstallMsg.startsWith('ดาวน์โหลดไม่สำเร็จ') || spInstallMsg.startsWith('ยังไม่พบ') ? '#A32D2D' : '#0F6E56', margin: '0 0 10px' }}>{spInstallMsg}</p>}
               <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                 <button onClick={downloadSpInstaller} disabled={spInstallBusy} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer' }}>{spInstallBusy ? 'กำลังโหลด...' : 'ดาวน์โหลดอีกครั้ง'}</button>
-                <button onClick={verifySpHandler} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer' }}>ฉันติดตั้งแล้ว ตรวจสอบ</button>
+                <button onClick={() => verifySpHandler()} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#8a4a00', color: '#fff', cursor: 'pointer' }}>ฉันติดตั้งแล้ว ตรวจสอบ</button>
                 <button onClick={() => setSpInstallOpen(false)} style={{ fontSize: '11px', padding: '6px 12px', borderRadius: '6px', border: '0.5px solid #ccc', background: '#fff', color: '#555', cursor: 'pointer' }}>ปิด</button>
               </div>
             </div>

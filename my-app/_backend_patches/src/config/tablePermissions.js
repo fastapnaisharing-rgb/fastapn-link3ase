@@ -280,6 +280,11 @@ export const tablePermissions = {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
+  // MARKER_TABLEPERMISSIONS_VAT_SIMPLEDRAFT_HOLD_V1 -- ที่พัก Draft Simple (ใช้ร่วมทุก Feature Temp./PDF แยกด้วยคอลัมน์ feature) ทุก User เห็นตรงกัน
+  vat_simpledraft_hold: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
   // MARKER_TABLEPERMISSIONS_IE_SIMPLEVATDRAFT_V1 -- IE Invoice/Simple Tab (Sub-row Real Vendor Add -> Simple)
   ie_simplevatdraft: {
     read: { publicRead: true },

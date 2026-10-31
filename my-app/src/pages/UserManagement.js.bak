@@ -8,6 +8,7 @@
   import { MAINTENANCE_MENU_GROUPS } from '../menuConfig';
   import { DOC_FOLDERS, folderPermOk, folderPermLabel, PERM_TO_FOLDER } from '../docFolderConfig'; // MARKER_DOCFOLDER_CONFIG_V1
   import { broadcastWs, subscribeWs } from '../wsManager';
+  import { useTeamPresence } from '../teamPresence'; // MARKER_TEAM_PRESENCE_SHARED_V1
   import { confirmDialog } from '../confirmDialog';
 
   // MARKER_USERMANAGEMENT_APPROVE_BATCH_PERMISSION_V1
@@ -1835,6 +1836,16 @@ function MinRoleSwitch({ value, onChange, disabled, allowGuest }) { // MARKER_GU
     );
   }
 
+  // MARKER_PROFILE_FOCUS_FIX_V1 -- ย้าย H/F/Group ออกจาก render ของ ProfileInline (ประกาศใน render ทำให้ remount input ทุกครั้งที่พิมพ์ -> โฟกัสหลุด/หน้าเด้ง)
+  const ProfileH = ({ children, sub }) => <div style={{ marginBottom: '14px' }}><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>{children}</div>{sub && <div style={{ fontSize: '11px', color: '#8a96a6', marginTop: '2px' }}>{sub}</div>}</div>;
+  const ProfileF = ({ label, children }) => <div style={{ marginBottom: '12px' }}><label style={{ display: 'block', fontSize: '12px', color: '#666', fontWeight: '500', marginBottom: '4px' }}>{label}</label>{children}</div>;
+  const ProfileGroup = ({ color, title, sub, children }) => (
+    <div style={{ borderLeft: '4px solid ' + color, background: '#F8FAFC', borderRadius: '8px', padding: '12px 16px', marginBottom: '14px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 700, color: '#1a3a5c', marginBottom: '10px' }}>{title} <span style={{ fontWeight: 400, color: '#8a96a6', fontSize: '12px' }}>{sub}</span></div>
+      {children}
+    </div>
+  );
+
   function ProfileInline({ currentUser, userName }) {
     const [username, setUsername] = React.useState('');
     const [newPassword, setNewPassword] = React.useState('');
@@ -1901,15 +1912,7 @@ function MinRoleSwitch({ value, onChange, disabled, allowGuest }) { // MARKER_GU
         {soMsg && <div style={{ background: soMsg.startsWith('✓') ? '#EAF3DE' : '#FCEBEB', color: soMsg.startsWith('✓') ? '#27500A' : '#791F1F', padding: '10px', borderRadius: '8px', fontSize: '12px', marginBottom: '14px' }}>{soMsg}</div>}
         {(() => {
           const card = { background: 'white', borderRadius: '12px', border: '1px solid #e6eaf0', boxShadow: '0 1px 3px rgba(26,58,92,.06)', padding: '18px 22px' };
-          const H = ({ children, sub }) => <div style={{ marginBottom: '14px' }}><div style={{ fontSize: '14px', fontWeight: 700, color: '#1a3a5c' }}>{children}</div>{sub && <div style={{ fontSize: '11px', color: '#8a96a6', marginTop: '2px' }}>{sub}</div>}</div>;
-          const F = ({ label, children }) => <div style={{ marginBottom: '12px' }}><label style={{ ...S.label, marginBottom: '4px' }}>{label}</label>{children}</div>;
           const inp = { ...S.input, marginBottom: 0 };
-          const Group = ({ color, title, sub, children }) => (
-            <div style={{ borderLeft: '4px solid ' + color, background: '#F8FAFC', borderRadius: '8px', padding: '12px 16px', marginBottom: '14px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: '#1a3a5c', marginBottom: '10px' }}>{title} <span style={{ fontWeight: 400, color: '#8a96a6', fontSize: '12px' }}>{sub}</span></div>
-              {children}
-            </div>
-          );
           return (<>
             <div style={{ ...card, display: 'flex', alignItems: 'center', gap: '18px', marginBottom: '16px', background: 'linear-gradient(135deg,#1a3a5c 0%,#2c5a86 100%)', border: 'none' }}>
               <div style={{ position: 'relative', flexShrink: 0 }}>
@@ -1927,26 +1930,26 @@ function MinRoleSwitch({ value, onChange, disabled, allowGuest }) { // MARKER_GU
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '16px', alignItems: 'start' }}>
               <div style={card}>
-                <H sub="ชื่อผู้ใช้และรหัสผ่านสำหรับเข้าระบบ">บัญชีผู้ใช้</H>
-                <F label="Username"><input style={inp} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" /></F>
-                <F label="Email"><input style={{ ...inp, background: '#f5f5f5', color: '#999', cursor: 'not-allowed' }} type="email" value={currentUser?.email || ''} disabled /></F>
+                <ProfileH sub="ชื่อผู้ใช้และรหัสผ่านสำหรับเข้าระบบ">บัญชีผู้ใช้</ProfileH>
+                <ProfileF label="Username"><input style={inp} value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" /></ProfileF>
+                <ProfileF label="Email"><input style={{ ...inp, background: '#f5f5f5', color: '#999', cursor: 'not-allowed' }} type="email" value={currentUser?.email || ''} disabled /></ProfileF>
                 <div style={{ borderTop: '1px solid #eef1f5', margin: '16px 0 14px', paddingTop: '14px', fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>เปลี่ยน Password</div>
-                <F label="Password ใหม่"><input style={inp} type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" /></F>
-                <F label="ยืนยัน Password ใหม่"><input style={inp} type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password ใหม่อีกครั้ง" /></F>
+                <ProfileF label="Password ใหม่"><input style={inp} type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="อย่างน้อย 6 ตัวอักษร" /></ProfileF>
+                <ProfileF label="ยืนยัน Password ใหม่"><input style={inp} type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="พิมพ์ Password ใหม่อีกครั้ง" /></ProfileF>
               </div>
               {/* MARKER_GL_SIGNOFF_PROFILE_UI_V1 -- ผู้ลงนาม: My Job = Prepare by | Report to = Review by (ใช้ใน Detail of Account และหน้าอื่น) */}
               <div style={card}>
-                <H sub="ใช้แสดงในรายงาน และ Module ใช้ Filter ข้อมูล">ข้อมูลผู้ลงนาม &amp; Module</H>
-                <Group color="#2c7be5" title="Prepare by" sub="ผู้จัดทำ · My Job">
-                  <F label="ชื่อ - นามสกุล"><input style={inp} value={so.my_name} onChange={e => setSo({ ...so, my_name: e.target.value })} placeholder="ระบุชื่อ - นามสกุล" /></F>
-                  <F label="ตำแหน่ง"><input style={inp} value={so.my_job} onChange={e => setSo({ ...so, my_job: e.target.value })} placeholder="ระบุตำแหน่ง" /></F>
+                <ProfileH sub="ใช้แสดงในรายงาน และ Module ใช้ Filter ข้อมูล">ข้อมูลผู้ลงนาม &amp; Module</ProfileH>
+                <ProfileGroup color="#2c7be5" title="Prepare by" sub="ผู้จัดทำ · My Job">
+                  <ProfileF label="ชื่อ - นามสกุล"><input style={inp} value={so.my_name} onChange={e => setSo({ ...so, my_name: e.target.value })} placeholder="ระบุชื่อ - นามสกุล" /></ProfileF>
+                  <ProfileF label="ตำแหน่ง"><input style={inp} value={so.my_job} onChange={e => setSo({ ...so, my_job: e.target.value })} placeholder="ระบุตำแหน่ง" /></ProfileF>
                   {/* MARKER_PROFILE_MODULE_TEXT_V1 -- Module = กรอกเอง (ไม่ใช่ Permission) */}
-                  <F label="Module (ใช้ Filter ข้อมูล)"><input style={inp} value={so.module || ''} onChange={e => setSo({ ...so, module: e.target.value })} placeholder="ระบุ Module (คั่นหลายค่าด้วย ,)" /></F>
-                </Group>
-                <Group color="#12a37f" title="Review by" sub="ผู้สอบทาน · Report to">
-                  <F label="ชื่อ - นามสกุล"><input style={inp} value={so.report_to_name} onChange={e => setSo({ ...so, report_to_name: e.target.value })} placeholder="ระบุชื่อ - นามสกุล" /></F>
-                  <F label="ตำแหน่ง"><input style={inp} value={so.report_to_job} onChange={e => setSo({ ...so, report_to_job: e.target.value })} placeholder="ระบุตำแหน่ง" /></F>
-                </Group>
+                  <ProfileF label="Module (ใช้ Filter ข้อมูล)"><input style={inp} value={so.module || ''} onChange={e => setSo({ ...so, module: e.target.value })} placeholder="ระบุ Module (คั่นหลายค่าด้วย ,)" /></ProfileF>
+                </ProfileGroup>
+                <ProfileGroup color="#12a37f" title="Review by" sub="ผู้สอบทาน · Report to">
+                  <ProfileF label="ชื่อ - นามสกุล"><input style={inp} value={so.report_to_name} onChange={e => setSo({ ...so, report_to_name: e.target.value })} placeholder="ระบุชื่อ - นามสกุล" /></ProfileF>
+                  <ProfileF label="ตำแหน่ง"><input style={inp} value={so.report_to_job} onChange={e => setSo({ ...so, report_to_job: e.target.value })} placeholder="ระบุตำแหน่ง" /></ProfileF>
+                </ProfileGroup>
               </div>
             </div>
           </>);
@@ -3102,7 +3105,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const [savedId, setSavedId] = useState(null);
     const [backendOpsSubTab, setBackendOpsSubTab] = useState('deploy');
     const [dashboardUser, setDashboardUser] = useState(null); // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1
-    const [onlineUsernames, setOnlineUsernames] = useState(() => new Set()); // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1
+    const teamPresence = useTeamPresence(true); // MARKER_TEAM_PRESENCE_SHARED_V1 -- แหล่งเดียวกับ Home และ Popup ทีม Online ใน App
+    const onlineUsernames = teamPresence.onlineSet; // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1
     const { currentUser, userName, userPermissions } = useAuth();
     const { isOwner } = useUserRole();
     const { userRole } = useAuth();
@@ -3147,31 +3151,6 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
 
     useEffect(() => { fetchUsers(); fetchBinCount(); }, []);
 
-    // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1 -- Online Status: Pattern เดียวกับ TeamOnlinePopup ใน App.js (menu_active_sessions.last_seen, Cutoff 5 นาที)
-    const fetchOnlineUsers = async () => {
-      try {
-        const { data: sessions } = await db.from('menu_active_sessions').select('*');
-        const cutoff = Date.now() - 5 * 60 * 1000;
-        const online = new Set();
-        (sessions || []).forEach(s => {
-          const lastSeen = s?.last_seen ? new Date(s.last_seen).getTime() : 0;
-          if (lastSeen >= cutoff && s.user_name) online.add(s.user_name);
-        });
-        setOnlineUsernames(online);
-      } catch (e) { console.error('fetch online users:', e); }
-    };
-    useEffect(() => {
-      fetchOnlineUsers();
-      const onlineIv = setInterval(fetchOnlineUsers, 30000);
-      return () => clearInterval(onlineIv);
-    }, []);
-    // MARKER_USERMANAGEMENT_ONLINE_REALTIME_V1 -- เดิมมีแค่ Poll ทุก 30 วิ ทำให้ User ที่เพิ่ง Login ขึ้น Offline ค้างได้นานสุดเกือบ 30 วิ
-    // -- ฟัง Event เดียวกับที่ App.js Broadcast หลัง Heartbeat (last_seen) บันทึกเสร็จแล้วเท่านั้น (MARKER_APP_TEAM_STATUS_REALTIME_AWAIT_BEAT_V1)
-    // -- การันตีว่า Refetch ตอนนี้จะได้ last_seen ล่าสุดแน่ๆ ไม่ใช่ค่าเก่าก่อน Login เหมือน Pattern เดียวกับ TeamOnlinePopup ใน App.js
-    useEffect(() => {
-      const unsubscribe = subscribeWs(['team_status_updated'], () => fetchOnlineUsers());
-      return unsubscribe;
-    }, []);
 
     // MARKER_USERMANAGEMENT_SIGNUP_LISTENER_V1
     // ── Real-time: ฟัง 'signup_approved' — Owner/Admin คนอื่น Approve Signup ──
@@ -3641,8 +3620,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     if (['PERIOD_SELECT', 'EXPIRED_REVIEWED', 'SAVE', 'FIRST_DRAFT', 'DRAFT_NOTE', 'CONFIRM', 'RELEASE', 'SP_SENT'].includes(e)) return { key: 'recon', label: 'Reconcile', color: '#7b5cc4' };
     return { key: 'other', label: 'อื่นๆ', color: '#8a94a3' };
   }
+  // MARKER_TXN_VIEW_BY_BATCH_V1 -- มุมมอง Batch: รวม Transaction ที่ Batch/BU/Module เดียวกันเป็น 1 แถว (ไม่มี Batch = ไม่รวม คงเป็นแถวเดี่ยว)
+  const umGroupByBatch = (rows) => {
+    const out = []; const idx = new Map();
+    rows.forEach((t, i) => {
+      if (!t.batch_id) { out.push({ ...t, _count: 1, _members: [t] }); return; }
+      const k = `${t.batch_id}|${t.bu || ''}|${t.module || ''}`;
+      if (!idx.has(k)) { idx.set(k, out.length); out.push({ ...t, _count: 1, _members: [t], _sumSub: Number(t.sub_items) || 0, _sumMs: 0, _hasMs: false }); const o = out[out.length - 1]; const ms = (t.start_ts && t.end_ts && t.has_fill_start !== false) ? new Date(t.end_ts) - new Date(t.start_ts) : NaN; if (isFinite(ms) && ms >= 0) { o._sumMs = ms; o._hasMs = true; } return; }
+      const o = out[idx.get(k)]; o._count += 1; o._members.push(t); o._sumSub += Number(t.sub_items) || 0;
+      const ms = (t.start_ts && t.end_ts && t.has_fill_start !== false) ? new Date(t.end_ts) - new Date(t.start_ts) : NaN; if (isFinite(ms) && ms >= 0) { o._sumMs += ms; o._hasMs = true; }
+      if (t.start_ts && (!o.start_ts || new Date(t.start_ts) < new Date(o.start_ts))) { o.start_ts = t.start_ts; o.gap_minutes = t.gap_minutes; o.ts = t.ts; }
+      if (t.end_ts && (!o.end_ts || new Date(t.end_ts) > new Date(o.end_ts))) o.end_ts = t.end_ts;
+    });
+    return out;
+  };
   function dashboardModuleStyle(mod) {
-    const MAP = { AP: { bg: '#eaf6f0', color: '#1f8a5f' }, IE: { bg: '#fbeef0', color: '#c2255c' }, VAT: { bg: '#e4e9f3', color: '#2c3d63' }, 'COL-AP': { bg: '#fdf1dc', color: '#9a5b00' } }; // MARKER_USERMANAGEMENT_DASHBOARD_MODULE_COLOR_COLAP_VAT_V1 -- เพิ่มสี VAT และ COL-AP (Doc Collection / AP-DOC) แยกจากสีเทา Default
+    const MAP = { AP: { bg: '#eaf6f0', color: '#1f8a5f' }, IE: { bg: '#fbeef0', color: '#c2255c' }, VAT: { bg: '#e4e9f3', color: '#2c3d63' }, 'COL-AP': { bg: '#fdf1dc', color: '#9a5b00' }, 'SM-VAT': { bg: '#dff3f7', color: '#0e7490' }, 'SM-PP36': { bg: '#efe8fd', color: '#6d28d9' } }; // MARKER_USERMANAGEMENT_DASHBOARD_MODULE_COLOR_COLAP_VAT_V1 -- เพิ่มสี VAT และ COL-AP (Doc Collection / AP-DOC) แยกจากสีเทา Default
     return MAP[mod] || { bg: '#f0f3f7', color: '#667085' };
   }
 
@@ -3653,6 +3646,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState(null);
     const [err, setErr] = useState('');
+    const [txView, setTxView] = useState(() => { try { return localStorage.getItem('um_tx_view') === 'batch' ? 'batch' : 'tx'; } catch (e) { return 'tx'; } }); // MARKER_TXN_VIEW_BY_BATCH_V1
     const [showActions, setShowActions] = useState(false); // MARKER_USERMANAGEMENT_DAILY_DASHBOARD_REDESIGN_V1 -- แถว Action (เข้าเมนู/Login/Logout ฯลฯ) ซ่อนเป็นค่าเริ่มต้น
 
     const todayStr = useMemo(() => toLocalISODate(new Date()), []);
@@ -3684,6 +3678,26 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
         .finally(() => { if (!cancelled) setLoading(false); });
       return () => { cancelled = true; };
     }, [user.username, range.from, range.to, granularity]);
+
+    // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_V1 -- Realtime: รอรับ Event 'user_transactions_updated' / 'activity_log_updated' แล้วดึงข้อมูลใหม่แบบเงียบ (ไม่ขึ้น Loading ไม่กระพริบ)
+    // -- ดึงเฉพาะเมื่อช่วงที่ดูครอบคลุมวันนี้ (ย้อนดูวัน/เดือนเก่าไม่เปลี่ยน ไม่ต้องดึง) | Debounce 1 วิ | มี Poll สำรอง 60 วิ เผื่อ WS หลุด
+    const rtParamsRef = React.useRef({});
+    rtParamsRef.current = { username: user.username, from: range.from, to: range.to, granularity, includesToday: range.from <= todayStr && range.to >= todayStr };
+    useEffect(() => {
+      let timer = null; let seq = 0; let alive = true;
+      const silentRefresh = () => {
+        const p = rtParamsRef.current;
+        if (!p.includesToday) return;
+        const my = ++seq;
+        apiFetch(`/user_transactions/dashboard?username=${encodeURIComponent(p.username)}&from=${p.from}&to=${p.to}&granularity=${p.granularity}`)
+          .then(res => { if (alive && my === seq) setData(res); })
+          .catch(() => { /* เงียบ ไว้ Poll/Event รอบถัดไป */ });
+      };
+      const schedule = () => { if (timer) return; timer = setTimeout(() => { timer = null; silentRefresh(); }, 1000); };
+      const unsub = subscribeWs(['user_transactions_updated', 'activity_log_updated'], schedule);
+      const poll = setInterval(silentRefresh, 60000);
+      return () => { alive = false; unsub(); clearInterval(poll); if (timer) clearTimeout(timer); };
+    }, []);
 
     const avatarColor = dashboardUserColor(user.username || '');
     const initial = (user.username || '?').charAt(0).toUpperCase();
@@ -3855,9 +3869,9 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                     </div>
 
                     {granularity !== 'daily' && summaryRows.length > 0 && (() => { /* MARKER_USERMANAGEMENT_MONTHLY_HR_DASHBOARD_V1 -- กราฟแท่ง Stacked ตาม Module + Donut สัดส่วน (คลิกแท่งเพื่อดูรายวัน) */
-                      const MOD_COLORS = { AP: '#1f8a5f', VAT: '#3b4f78', 'COL-AP': '#d9961a', IE: '#c2255c' };
+                      const MOD_COLORS = { AP: '#1f8a5f', VAT: '#3b4f78', 'COL-AP': '#d9961a', IE: '#c2255c', 'SM-VAT': '#0e7490', 'SM-PP36': '#7c3aed' }; // MARKER_TXN_SM_MODULES_V1
                       const modColor = (m) => MOD_COLORS[m] || '#8a94a3';
-                      const modOrder = ['AP', 'VAT', 'COL-AP', 'IE'];
+                      const modOrder = ['AP', 'VAT', 'SM-VAT', 'SM-PP36', 'COL-AP', 'IE'];
                       const totals = {};
                       summaryRows.forEach((d) => Object.keys(d.modules || {}).forEach((m) => { totals[m] = (totals[m] || 0) + Number(d.modules[m]); }));
                       const mods = Object.keys(totals).sort((x, y) => { const ix = modOrder.indexOf(x), iy = modOrder.indexOf(y); return ((ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy)) || x.localeCompare(y); });
@@ -4006,7 +4020,12 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                             )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                            <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#16232f' }}>รายการ Transaction ({txs.length})</div>
+                            <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#16232f' }}>{txView === 'batch' ? `รายการ Batch (${umGroupByBatch(txs).length}) · ${txs.length} Transaction` : `รายการ Transaction (${txs.length})`}</div>
+                            <div style={{ display: 'inline-flex', border: '1px solid #cfd8e3', borderRadius: '8px', overflow: 'hidden' }}> {/* MARKER_TXN_VIEW_BY_BATCH_V1 */}
+                              {[['tx', 'by Transaction'], ['batch', 'by Batch']].map(([k, lb]) => (
+                                <button key={k} type="button" onClick={() => { setTxView(k); try { localStorage.setItem('um_tx_view', k); } catch (e) { /* ignore */ } }} style={{ border: 'none', padding: '4px 12px', fontSize: '11.5px', cursor: 'pointer', background: txView === k ? '#1a3a5c' : '#ffffff', color: txView === k ? '#ffffff' : '#667085', fontWeight: txView === k ? 700 : 500 }}>{lb}</button>
+                              ))}
+                            </div>
                             <div style={{ flexGrow: 1 }} />
                             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '11.5px', color: '#667085', cursor: 'pointer' }}>
                               <input type="checkbox" checked={showActions} onChange={(e) => setShowActions(e.target.checked)} />
@@ -4029,7 +4048,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                   {granularity === 'daily' ? (
                     (() => { /* MARKER_USERMANAGEMENT_DAILY_DASHBOARD_REDESIGN_V1 -- ตารางรายวันแบบใหม่: 7 คอลัมน์, Action ซ่อนเป็นค่าเริ่มต้น, Action แสดงเวลาเดียว */
                       const txRows = dailyRows.filter((x) => !x.is_timestamp);
-                      const visibleRows = showActions ? dailyRows : txRows;
+                      const visibleRows = txView === 'batch' ? umGroupByBatch(txRows) : (showActions ? dailyRows : txRows); // MARKER_TXN_VIEW_BY_BATCH_V1 -- มุมมอง Batch ไม่แสดงแถว Action
                       const hm = (ts) => String(fmtTime(ts) || '').slice(0, 5);
                       const COLS = '150px minmax(0, 1fr) 70px 90px 80px 110px 110px';
                       if (visibleRows.length === 0) {
@@ -4059,7 +4078,9 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                             const st = dashboardModuleStyle(t.module);
                             const gap = t.gap_minutes != null ? Math.round(t.gap_minutes) : null;
                             const startHm = hm(t.start_ts), endHm = hm(t.end_ts);
+                            const isBatchRow = txView === 'batch' && t._count > 1;
                             const dur = (() => {
+                              if (isBatchRow) { if (!t._hasMs) return '-'; const totalSec = Math.round(t._sumMs / 1000), mm = Math.floor(totalSec / 60), ss = totalSec % 60; return mm > 0 ? `${mm} นาที ${ss} วิ` : `${ss} วิ`; } // MARKER_TXN_VIEW_BY_BATCH_V1 -- รวมเวลาทำงานจริงของทุก Transaction ใน Batch (ไม่รวมช่วงว่าง)
                               if (t.has_fill_start === false) return '-';
                               if (!t.start_ts || !t.end_ts) return '-';
                               const ms = new Date(t.end_ts) - new Date(t.start_ts);
@@ -4074,12 +4095,17 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                                   {t.is_weekend_source && <span title="ทำรายการวันเสาร์-อาทิตย์ นับรวมกับวันจันทร์" style={{ marginLeft: '4px', fontSize: '10px', color: '#6b7fd7', cursor: 'help' }}>📅</span>}
                                 </div>
                                 <div style={{ minWidth: 0 }}>
+                                  {isBatchRow ? (<>
+                                    <div title={t.batch_id || ''} style={{ wordBreak: 'break-word', fontWeight: 600 }}>{t.batch_id}</div>
+                                    <div style={{ fontSize: '10.5px', color: '#8a96a3' }} title={t._members.map((m) => m.invoice_no).filter(Boolean).slice(0, 30).join(', ')}>{t._count} Transaction</div>
+                                  </>) : (<>
                                   <div title={t.invoice_no || ''} style={{ wordBreak: 'break-word' }}>{t.invoice_no || '-'}</div>
                                   <div style={{ fontSize: '10.5px', color: '#8a96a3', wordBreak: 'break-word' }}>{t.batch_id || 'Draft'}</div>
+                                  </>)}
                                 </div>
                                 <div>{t.bu || '-'}</div>
                                 <div>{t.module ? <span style={{ fontSize: '10.5px', fontWeight: 600, padding: '2px 8px', borderRadius: '10px', background: st.bg, color: st.color }}>{t.module}</span> : '-'}</div>
-                                <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{t.sub_items ?? '-'}</div>
+                                <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{isBatchRow ? t._sumSub : (t.sub_items ?? '-')}</div>
                                 <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dur}</div>
                                 <div style={{ textAlign: 'right' }}>
                                   {gap == null

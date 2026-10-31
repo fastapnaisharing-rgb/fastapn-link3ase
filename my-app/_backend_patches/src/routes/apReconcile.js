@@ -774,12 +774,12 @@ router.get("/stale-data", async (req, res) => {
   try {
     if (!requireStaleOwner(req, res)) return;
     const closed = await getApClosedPeriod();
-    if (!closed) return res.json({ closed_period: null, rows: [] });
+    // MARKER_APRECONCILE_STALE_ALL_PERIODS_V1 -- ดึง AP ที่ไม่มี Job Confirm (= ยังไม่มี Expire date Stamp) "ทุก Period" ไม่ใช่เฉพาะที่ปิดแล้ว | period_closed บอกว่าปิดแล้วหรือยัง (ล้างได้เฉพาะที่ปิดแล้ว)
     const q = await pool.query(
-      `SELECT s.branch_cpc_key AS bu, s.period, s.gl_account AS account, COUNT(*)::int AS lines, MAX(s.imported_at) AS last_import,
+      `SELECT s.branch_cpc_key AS bu, s.period, COALESCE(s.period <= $1::text, false) AS period_closed, s.gl_account AS account, COUNT(*)::int AS lines, MAX(s.imported_at) AS last_import,
               EXISTS (SELECT 1 FROM file_storage f WHERE f.module = 'ap-reconcile' AND f.bu = s.branch_cpc_key AND f.ref_id = s.gl_account || '|' || s.period || '|ap' AND f.status <> 'recycled') AS has_job
          FROM ap_cutting_staging s
-        WHERE s.period <= $1 AND s.gl_account = ANY($2::text[]) AND s.branch_cpc_key IS NOT NULL AND ${STALE_NOT_CONFIRMED_SQL}
+        WHERE s.gl_account = ANY($2::text[]) AND s.branch_cpc_key IS NOT NULL AND ${STALE_NOT_CONFIRMED_SQL}
         GROUP BY s.branch_cpc_key, s.period, s.gl_account
         ORDER BY s.period DESC, s.branch_cpc_key, s.gl_account`,
       [closed, [...TARGET_GL_ACCOUNTS]]

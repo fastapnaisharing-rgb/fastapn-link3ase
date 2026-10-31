@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup เสนอค่าใช้จ่าย CT ตอนยังไม่กรอกอะไร</title>
+<style>
+body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#e9ecf1;margin:0;padding:24px;color:#222}
+h3{margin:0 0 8px;font-size:14px;color:#1a3a5c}.note{font-size:12px;color:#666;line-height:1.7;margin:0 0 14px;max-width:1000px}
+.stage{position:relative;max-width:1040px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.15);margin-bottom:22px;padding-bottom:18px}
+.hd{padding:12px 18px;border-bottom:1px solid #eee;font-size:14px;font-weight:600;color:#1a3a5c}.hd small{font-weight:400;color:#888;margin-left:8px}
+.row{display:flex;gap:10px;padding:12px 18px;font-size:11px}
+.f{flex:1}.f label{display:block;font-size:10px;color:#888;margin-bottom:3px}
+.in{border:1px solid #dde;border-radius:6px;padding:7px 8px;background:#fff;min-height:16px;font-size:11px;color:#1a3a5c}
+.in.y{background:#fffde7;border-color:#e6d27a}
+.sug{margin:2px 18px 10px;border:1px solid #f0c48a;background:#FFF8EC;border-radius:9px;padding:9px 12px;font-size:12px;color:#7a4a00}
+.sug b{color:#a35a00}
+.chip{display:flex;align-items:center;gap:10px;margin-top:7px;background:#fff;border:1px solid #e67e22;border-radius:8px;padding:7px 10px;font-size:11px;color:#1a3a5c;cursor:pointer}
+.chip .code{background:#FFF3E0;color:#a35a00;border-radius:10px;padding:1px 8px;font-weight:700}
+.chip .np{margin-left:auto;color:#a35a00;font-weight:700}
+.tbl{margin:0 18px;border:1px solid #eee;border-radius:8px}
+.th,.tr{display:grid;grid-template-columns:140px 90px 1fr 80px;gap:8px;padding:8px 12px;font-size:11px;align-items:center}
+.th{background:#f6f8fa;color:#888}
+mark{background:#fff1d6;color:#b26a00;border-radius:3px;padding:0 2px}
+.cap{font-size:12px;color:#444;margin:0 0 6px;font-weight:600}
+</style></head><body>
+<h3>Mockup — ยังไม่กรองอะไรเลย แต่ระบบรู้ว่า Supplier + สาขานี้เคยใช้ค่าใช้จ่าย CT</h3>
+<p class="note">ตอนเปิด Invoice Detail ที่มี Supplier + สาขาแล้ว (ยังไม่กรอก Item Code / Period) ระบบดู Invoice History ของ Supplier + สาขานั้น ถ้าเคยใช้ Item Code ที่เป็น CT จะเสนอรายการให้ พร้อม Period ถัดไปที่คำนวณไว้แล้ว · คลิกรายการเดียว = ใส่ Item Code + Period ให้ทั้งคู่ (ข้อมูลตัวอย่างสมมติ)</p>
+
+<p class="cap">① เสนอรายการที่เคยใช้ (คลิกเลือก)</p>
+<div class="stage">
+  <div class="hd">Invoice Detail <small>Supplier LKS-T0051 · Branch 5898AB</small></div>
+  <div class="row">
+    <div class="f"><label>Inv date *</label><div class="in y">MM/DD/YYYY</div></div>
+    <div class="f"><label>Invoice num *</label><div class="in y">&nbsp;</div></div>
+    <div class="f" style="flex:2"><label>Period</label><div class="in">&nbsp;</div></div>
+  </div>
+  <div class="sug">
+    <b>Supplier + สาขานี้เคยใช้ค่าใช้จ่ายที่เป็น CT</b> — เลือกเพื่อใส่ Item Code และ Period ให้เลย
+    <div class="chip"><span class="code">C0000703</span><span>ค่าเช่าพื้นที่ (บริษัทนอกเครือ) · งวดล่าสุด <mark>01/11/2026 - 30/11/2026</mark></span><span class="np">⏭ ใช้ → 01/12/2026 - 31/12/2026</span></div>
+  </div>
+  <div class="tbl">
+    <div class="th"><div>Item Code</div><div>Amount</div><div>Description</div><div>Tax Code</div></div>
+    <div class="tr"><div class="in">พิมพ์ /</div><div class="in">&nbsp;</div><div class="in">&nbsp;</div><div class="in">&nbsp;</div></div>
+  </div>
+</div>
+
+<p class="cap">② หลังคลิก</p>
+<div class="stage">
+  <div class="row">
+    <div class="f"><label>Inv date *</label><div class="in y">MM/DD/YYYY</div></div>
+    <div class="f"><label>Invoice num *</label><div class="in y">&nbsp;</div></div>
+    <div class="f" style="flex:2"><label>Period</label><div class="in"><mark>01/12/2026 - 31/12/2026</mark></div></div>
+  </div>
+  <div class="tbl">
+    <div class="th"><div>Item Code</div><div>Amount</div><div>Description</div><div>Tax Code</div></div>
+    <div class="tr"><div class="in">C0000703</div><div class="in">&nbsp;</div><div class="in">5898AB-IB <mark>01/12/2026 - 31/12/2026</mark> (N) ค่าเช่าพื้นที่ …</div><div class="in">&nbsp;</div></div>
+  </div>
+</div>
+</body></html>

@@ -126,6 +126,125 @@ router.get("/invoice-history", async (req, res, next) => {
   }
 });
 
+// MARKER_SUPPLIER_BRANCH_USAGE_V1
+// ── GET /api/supplier-branch-usage?supplier_code=&bu=&module= ──
+// นับจำนวนครั้งที่ Supplier Code นี้เคยใช้แต่ละ Branch IB ใน Invoice History (bucket_list status='done')
+// Branch IB Code = ส่วนหน้าเครื่องหมาย '-' ของ form_data.branchIBLabel (เช่น "589816-ชื่อสาขา" -> 589816)
+// ไม่นับ '-' (Direct) และ 'IB-ALL' -- ไม่จำกัดช่วงเวลา (ไม่ผูกกับ Recent/History) และไม่ผูกกับ User
+router.get("/supplier-branch-usage", async (req, res, next) => {
+  try {
+    const supplierCode = String(req.query.supplier_code || "").trim();
+    if (!supplierCode) {
+      return res.status(400).json({ error: "ต้องระบุ supplier_code" });
+    }
+    const bu = String(req.query.bu || "").trim();
+    const moduleName = String(req.query.module || "AP").trim();
+
+    const values = [supplierCode, moduleName];
+    let buCond = "";
+    if (bu) {
+      values.push(bu);
+      buCond = `AND LOWER(TRIM(bl.bu)) = LOWER(TRIM($${values.length}))`;
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT ib_code, COUNT(*)::int AS use_count, MAX(used_at) AS last_used
+      FROM (
+        SELECT
+          -- MARKER_SUPPLIER_BRANCH_DIRECT_FALLBACK_V1 -- BU ที่ไม่มี IB (branchIBLabel ว่าง/'-') ใช้รหัสสาขา Direct (branchDirectLabel) แทน
+          TRIM(split_part(
+            CASE WHEN COALESCE(bl.form_data->>'branchIBLabel', '') NOT IN ('', '-', 'IB-ALL')
+                 THEN bl.form_data->>'branchIBLabel'
+                 ELSE COALESCE(bl.form_data->>'branchDirectLabel', '') END,
+            '-', 1)) AS ib_code,
+          COALESCE(bl.exported_at, bl.created_at) AS used_at
+        FROM bucket_list bl
+        WHERE bl.status = 'done'
+          AND bl.supplier_code = $1
+          AND bl.module = $2
+          ${buCond}
+      ) t
+      WHERE ib_code <> ''
+      GROUP BY ib_code
+      ORDER BY last_used DESC, use_count DESC
+      `,
+      values
+    );
+
+    // MARKER_SUPPLIER_BRANCH_CONTRACT_V1 -- สาขาที่ผูกสัญญาของ Supplier นี้ (contract_list.auto_ib) -- ค่าเช่า/ค่าบริการ (Item CT) มักมีสัญญาผูกสาขา
+    const vendorLike = bu ? `${bu}-${supplierCode}` : `%-${supplierCode}`;
+    const { rows: ctRows } = await pool.query(
+      `SELECT DISTINCT TRIM(auto_ib) AS ib_code
+         FROM contract_list
+        WHERE vendor_code ILIKE $1 AND COALESCE(TRIM(auto_ib), '') <> ''`,
+      [vendorLike]
+    );
+    const map = new Map();
+    // MARKER_SUPPLIER_BRANCH_RECENT_V1 -- rank = ลำดับความล่าสุด (1 = สาขาที่ Supplier นี้ลงล่าสุด) ; use_count ยังส่งไปเหมือนเดิม
+    rows.forEach((r, i) => map.set(r.ib_code, { ib_code: r.ib_code, use_count: r.use_count, last_used: r.last_used, recent_rank: i + 1, has_contract: false }));
+    ctRows.forEach(r => {
+      const cur = map.get(r.ib_code);
+      if (cur) cur.has_contract = true;
+      else map.set(r.ib_code, { ib_code: r.ib_code, use_count: 0, last_used: null, recent_rank: 0, has_contract: true });
+    });
+    res.json([...map.values()]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// MARKER_ITEM_DESC_HISTORY_V1
+// ── GET /api/item-description-history?item_code=&supplier_code=&bu=&ib= ──
+// Description 5 รายการล่าสุดที่เคยคีย์ด้วย Item Code นี้ (Invoice History = bucket_list status='done')
+// ตัดบรรทัด VAT อัตโนมัติ (VAT7%-...) และ Description ว่างออก, ตัดซ้ำตาม Description+Period
+router.get("/item-description-history", async (req, res, next) => {
+  try {
+    const itemCode = String(req.query.item_code || "").trim();
+    if (!itemCode) return res.status(400).json({ error: "ต้องระบุ item_code" });
+    const supplierCode = String(req.query.supplier_code || "").trim();
+    const bu = String(req.query.bu || "").trim();
+
+    const values = [itemCode];
+    let extra = "";
+    if (supplierCode) { values.push(supplierCode); extra += ` AND bl.supplier_code = $${values.length}`; }
+    if (bu) { values.push(bu); extra += ` AND LOWER(TRIM(bl.bu)) = LOWER(TRIM($${values.length}))`; }
+    // MARKER_ITEM_DESC_HISTORY_SAME_EXPENSE_V1 -- "ค่าใช้จ่ายตัวเดียวกัน" = Item Code + Supplier + Branch IB เดียวกัน (ส่ง ib = รหัส Branch IB เช่น 5898AB)
+    const ib = String(req.query.ib || "").trim();
+    if (ib) { values.push(ib); extra += ` AND UPPER(TRIM(split_part(bl.form_data->>'branchIBLabel', '-', 1))) = UPPER(TRIM($${values.length}))`; }
+
+    const { rows } = await pool.query(
+      `
+      SELECT ln->>'desc' AS description, bl.period, bl.inv_date, bl.invoice_no,
+             bl.form_data->>'backDesc1' AS back1, bl.form_data->>'backDesc2' AS back2, bl.form_data->>'backDesc3' AS back3
+      FROM bucket_list bl
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(bl.lines) = 'array' THEN bl.lines ELSE '[]'::jsonb END) AS ln
+      WHERE bl.status = 'done' AND bl.module = 'AP'
+        AND UPPER(TRIM(ln->>'itemCode')) = UPPER(TRIM($1))
+        AND COALESCE(TRIM(ln->>'desc'), '') <> ''
+        AND ln->>'desc' NOT ILIKE 'VAT7%-%'
+        ${extra}
+      ORDER BY COALESCE(bl.exported_at, bl.created_at) DESC
+      LIMIT 40
+      `,
+      values
+    );
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      const k = `${r.description}||${r.period || ""}||${r.back1 || ""}||${r.back2 || ""}||${r.back3 || ""}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(r);
+      if (out.length >= 5) break;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ── GET /api/legacy_poc_history/:id — Field เต็มสำหรับ Detail Popup (Owner/Admin) ──
 router.get("/legacy_poc_history/:id", async (req, res, next) => {
   try {

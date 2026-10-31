@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup Header VAT Resource from Operation</title>
+<style>
+  :root{--bg:#f3f2ee;--card:#fff;--ink:#1f2933;--mute:#7b8794;--line:#e6e4dc;--navy:#1a3a5c;--green:#2fb58a;--blue:#3b82f6;--orange:#f08a24}
+  *{box-sizing:border-box}
+  body{margin:0;padding:24px 16px 56px;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI","Noto Sans Thai",system-ui,sans-serif}
+  h1.pg{font-size:18px;margin:0 0 4px}p.sub{margin:0 0 20px;color:var(--mute);font-size:13px}
+  .cap{font-size:12px;color:var(--mute);margin:22px 0 8px;font-weight:600}
+  .hd{background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:14px 22px 14px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+  .acc{border-left:4px solid var(--green);padding-left:14px}
+  .eyebrow{font-size:11px;letter-spacing:.14em;font-weight:700;color:var(--green)}
+  .ttl{font-size:28px;line-height:1.15;font-weight:800;color:var(--navy);margin:2px 0}
+  .ttl b{color:var(--green)}
+  .desc{font-size:12px;color:var(--mute)}
+  .grow{flex:1}
+  .steps{display:flex;gap:6px;align-items:center;margin-top:12px;flex-wrap:wrap;width:100%}
+  .pill{display:inline-flex;align-items:center;gap:8px;border:1px solid #d9dde3;border-radius:99px;padding:5px 14px 5px 6px;font-size:13px;color:#5b6572;background:#fff}
+  .pill i{width:22px;height:22px;border-radius:50%;background:#eef0f4;display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:700;color:#6b7480}
+  .pill.on{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:700}
+  .pill.on i{background:var(--green);color:#fff}
+  .arr{color:#b6bcc6;font-size:12px}
+  .chip{border-radius:99px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap}
+  .chip.per{background:#eaf1fb;color:var(--navy)}
+  .chip.open{background:#e3f4e8;color:#1f6b33}
+  .btn{height:34px;border-radius:8px;border:1px solid #d5dbe3;background:#fff;color:var(--navy);font-weight:700;font-size:13px;padding:0 14px;cursor:pointer}
+  .kpi{display:flex;gap:10px;flex-wrap:wrap}
+  .k{display:flex;align-items:center;gap:8px;border-radius:10px;padding:6px 12px;font-size:12px;color:#4a5568}
+  .k b{font-size:16px;color:var(--ink)}
+  .k.p{background:#eaf1fb}.k.s{background:#e6f5ee}.k.a{background:#fdeee0}
+  .k em{font-style:normal;width:8px;height:8px;border-radius:50%;display:inline-block}
+  .k.p em{background:var(--blue)}.k.s em{background:var(--green)}.k.a em{background:var(--orange)}
+  /* B: dark banner */
+  .hdB{background:linear-gradient(100deg,#13304d,#1a3a5c 55%,#1f5a6e);border-radius:14px;padding:18px 24px;color:#fff;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  .hdB .ic{width:48px;height:48px;border-radius:14px;background:rgba(255,255,255,.12);display:grid;place-items:center;font-size:24px}
+  .hdB .eyebrow{color:#7ee0bf}
+  .hdB .ttl{color:#fff;font-size:26px}.hdB .ttl b{color:#7ee0bf}
+  .hdB .desc{color:#b9c8d8}
+  .hdB .chip.per{background:rgba(255,255,255,.14);color:#fff}
+  .hdB .btn{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.3)}
+  .hdB .k{background:rgba(255,255,255,.1);color:#d5e1ee}.hdB .k b{color:#fff}
+</style>
+</head>
+<body>
+<h1 class="pg">Mockup Header · VAT Resource from Operation</h1>
+<p class="sub">แนวเดียวกับหัว I-Expense (แถบเขียวด้านซ้าย / ตัวเล็กบน / ชื่อใหญ่ตัวเน้นสี / คำอธิบาย / ขั้นตอน) · ลอง 3 แบบ เลือกแบบที่ชอบได้เลย (ใช้ร่วมกันได้ เช่น A + ชิปตัวเลขจาก C)</p>
+
+<p class="cap">แบบ A · เหมือนหัว I-Expense (แนะนำ) — ชื่อใหญ่ + ขั้นตอนทำงาน + Period ด้านขวา</p>
+<div class="hd" style="flex-direction:column;align-items:stretch;gap:0">
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <div class="acc">
+      <div class="eyebrow">VAT CONTROLLER</div>
+      <div class="ttl">VAT Resource - <b>Operation</b></div>
+      <div class="desc">รวมรายการ Popvat / Simple / ADI จาก Operation เพื่อสร้างไฟล์ส่งเข้าระบบ</div>
+    </div>
+    <span class="grow"></span>
+    <span class="chip per">Period: OCT-26</span>
+  </div>
+  <div class="steps">
+    <span class="pill on"><i>1</i>เลือก BU</span><span class="arr">›</span>
+    <span class="pill"><i>2</i>Operation Zone</span><span class="arr">›</span>
+    <span class="pill"><i>3</i>Generate file</span><span class="arr">›</span>
+    <span class="pill"><i>4</i>Bucket / Backup</span>
+  </div>
+</div>
+
+<p class="cap">แบบ B · แบนเนอร์เข้ม (Navy) — เด่นสุด มีไอคอน + ตัวเลขสรุป + ปุ่มกลับเมื่อมาจากหน้าอื่น</p>
+<div class="hdB">
+  <div class="ic">📦</div>
+  <div>
+    <div class="eyebrow">VAT CONTROLLER</div>
+    <div class="ttl">VAT Resource - <b>Operation</b></div>
+    <div class="desc">BU ที่เลือก: CR-RR · Popvat / Simple / ADI → Generate file</div>
+  </div>
+  <span class="grow" style="flex:1"></span>
+  <button class="btn">↩ กลับไป Timeline</button>
+  <span class="chip per">Period: OCT-26</span>
+</div>
+
+<p class="cap">แบบ C · แถบเรียบ + ชิปตัวเลขสรุปในหัว (Popvat / Simple / ADI)</p>
+<div class="hd">
+  <div class="acc">
+    <div class="eyebrow">VAT CONTROLLER</div>
+    <div class="ttl" style="font-size:24px">VAT Resource - <b>Operation</b></div>
+    <div class="desc">BU: CR-RR</div>
+  </div>
+  <div class="kpi">
+    <span class="k p"><em></em>Popvat <b>8</b></span>
+    <span class="k s"><em></em>Simple <b>0</b></span>
+    <span class="k a"><em></em>ADI <b>0</b></span>
+  </div>
+  <span class="grow"></span>
+  <button class="btn">↩ กลับไป …</button>
+  <span class="chip per">Period: OCT-26</span>
+</div>
+</body>
+</html>

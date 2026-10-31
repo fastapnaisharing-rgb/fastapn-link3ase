@@ -54,7 +54,7 @@ export const VAT_CONTROLLER_MENU = {
       { id: 'vat-dashboard',    icon: '📊', label: 'Dashboard' },
       { id: 'vat-freeze',       icon: '🧊', label: 'Freeze' }, // MARKER_MENU_VAT_FREEZE_V1
       { id: 'vat-upload-file',  icon: '📤', label: 'Upload file' },
-      { id: 'vat-monthly-report', icon: '🗓️', label: 'Monthly Report' },
+      { id: 'vat-monthly-report', icon: '🧰', label: 'VAT Toolbox' }, // MARKER_VAT_TOOLBOX_V1 -- เปลี่ยนชื่อจาก Monthly Report (id เดิมเพื่อไม่กระทบสิทธิ์)
     ]},
     { label: 'Backup', icon: '🗄️', items: [
       { id: 'vat-backup-transaction',  icon: '💳', label: 'Transaction' },
@@ -96,6 +96,7 @@ export const GL_FUNCTIONAL_MENU = {
   groups: [
     { label: 'Reconcile', icon: '🔗', items: [
       { id: 'gl-ap-recon', icon: '🧾', label: 'Account Payable Recon.', requiredPermissions: ['Manual', 'IE', 'I-Pro'] }, // MARKER_GL_ITEM_PERMISSIONS_V1
+      { id: 'gl-generate-macro', icon: '⚙️', label: 'Generate by GL Macro', requiredPermissions: ['GL', 'Manual', 'VAT', 'I-Pro'] }, // MARKER_GL_GENERATE_MACRO_MENU_V1 -- เข้าได้เมื่อมีสิทธิ์ใดสิทธิ์หนึ่ง (IE ไม่รวม)
     ]},
     { label: 'Account', icon: '📒', items: [ // MARKER_GL_DETAIL_OF_ACCOUNT_MENU_V1
       { id: 'gl-detail-of-account', icon: '🔎', label: 'Detail of Account', requiredPermissions: ['GL'] }, // เข้าได้เฉพาะ Permission GL เท่านั้น

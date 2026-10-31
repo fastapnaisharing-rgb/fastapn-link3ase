@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';           // MARKER_SPC_RESOURCE_HEADER_V1
 import { useUserRole } from '../contexts/useUserRole';
+import { spLaunch } from '../spHandlerAutoUpdate'; // MARKER_SP_LISTENER_LAUNCH_V1
 
 const API_ROOT = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
 const DEST = 'recon';
@@ -23,7 +24,7 @@ const badName = (n) => !n || n === '.' || n === '..' || /[\\/:*?"<>|]/.test(n);
 
 function fmtSize(n) { if (!n) return ''; if (n < 1024) return n + ' B'; if (n < 1048576) return Math.round(n / 1024) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; }
 function fmtTime(t) { if (!t) return ''; try { return new Date(t).toLocaleString('th-TH', { day: 'numeric', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; } }
-function launch(uri) { const a = document.createElement('a'); a.href = uri; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove(); }
+function launch(uri) { spLaunch(uri); } // MARKER_SP_LISTENER_LAUNCH_V1
 const extOf = (n) => (String(n).split('.').pop() || '').toLowerCase();
 const isExcel = (n) => ['xlsx', 'xlsm', 'xls', 'csv'].includes(extOf(n));
 

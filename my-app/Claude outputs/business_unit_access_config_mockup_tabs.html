@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup Config สิทธิ์ปุ่ม Business Unit</title>
+<style>
+  :root{--bg:#f3f2ee;--ink:#1f2933;--mute:#7b8794;--line:#e6e4dc;--navy:#1a3a5c;--green:#2fb58a}
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px 16px 48px;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI","Noto Sans Thai",system-ui,sans-serif}
+  .cap{font-size:12px;color:var(--mute);margin:18px 0 8px;font-weight:600}
+  .bar{display:flex;gap:6px;align-items:center;justify-content:flex-end;max-width:760px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px}
+  .b{height:30px;border-radius:7px;border:1px solid #d5dbe3;background:#fff;color:#4a5568;font-weight:600;font-size:12px;padding:0 12px}
+  .b.t{background:#0f6e56;color:#fff;border-color:#0f6e56}.b.i{background:#5dcaa5;color:#1a3a5c;border-color:#5dcaa5}.b.n{background:#1a3a5c;color:#fff;border-color:#1a3a5c}
+  .b.cfg{width:30px;padding:0;font-size:15px;color:var(--navy);border-color:var(--navy);background:#fff}
+  .ov{background:rgba(20,30,50,.45);border-radius:14px;padding:26px;display:flex;justify-content:center;max-width:760px}
+  .md{background:#fff;border-radius:16px;width:100%;box-shadow:0 18px 50px rgba(20,30,50,.28);overflow:hidden}
+  .mh{padding:16px 22px;background:linear-gradient(180deg,#f7f9fc,#fff);border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+  .mh .ic{width:38px;height:38px;border-radius:11px;background:#eaf1fb;display:grid;place-items:center;font-size:19px}
+  .mh h2{margin:0;font-size:16px;color:var(--navy)}.mh .s{font-size:12px;color:var(--mute)}
+  .sec{margin:14px 22px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .sh{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#f6f7f9}
+  .sh b{font-size:13px;color:var(--navy)}
+  .sh .cnt{margin-left:auto;font-size:11px;font-weight:700;background:var(--navy);color:#fff;border-radius:99px;padding:2px 10px}
+  .btns{display:flex;gap:6px}.btns span{font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px}
+  .p1{background:#e3f6ee;color:#0f6e56}.p2{background:#fdeaea;color:#a33}.p3{background:#eaf1fb;color:var(--navy)}
+  .rule{font-size:11px;color:var(--mute);padding:8px 14px 0}
+  .list{display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px 12px}
+  .u{display:inline-flex;align-items:center;gap:8px;border:1px solid #d9dde3;border-radius:99px;padding:3px 6px 3px 4px;font-size:12px;background:#fff}
+  .u i{width:22px;height:22px;border-radius:50%;background:var(--navy);color:#fff;display:grid;place-items:center;font-style:normal;font-size:11px;font-weight:700}
+  .u small{font-size:10px;font-weight:700;color:#6b7480;background:#eef0f4;border-radius:99px;padding:0 7px}
+  .u x{color:#b0b6c0;cursor:pointer;font-size:14px;line-height:1;padding:0 4px}
+  .u.role{border-color:#cfe6dc;background:#f2fbf7}
+  .add{display:inline-flex;align-items:center;gap:6px;border:1px dashed var(--green);color:#0f6e56;border-radius:99px;padding:3px 12px;font-size:12px;font-weight:700;background:#fff}
+  .mf{display:flex;gap:10px;align-items:center;padding:16px 22px 18px}
+  .mf .sum{font-size:12px;color:var(--mute);margin-right:auto}
+  .btn2{height:38px;border-radius:10px;padding:0 22px;font-size:13px;font-weight:700;border:1px solid #d5dbe3;background:#fff;color:#4a5568}
+  .btn2.pri{background:var(--navy);border-color:var(--navy);color:#fff}
+
+  .tabs{display:flex;gap:24px;padding:0 22px;border-bottom:1px solid var(--line);margin-top:6px}
+  .tabs a{position:relative;display:inline-flex;align-items:center;gap:8px;padding:12px 2px 12px;font-size:13.5px;font-weight:600;color:#7b8794;cursor:pointer}
+  .tabs a .cnt{min-width:24px;height:20px;border-radius:99px;display:inline-grid;place-items:center;font-size:11px;font-weight:700;padding:0 7px;background:#eef0f4;color:#6b7480}
+  .tabs a.on{color:var(--navy)}
+  .tabs a.on .cnt{background:var(--navy);color:#fff}
+  .tabs a.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:3px;border-radius:3px 3px 0 0;background:var(--green)}
+  .pane{display:none}.pane.on{display:block}
+  .sec{margin:16px 22px 0}
+  .list{min-height:120px;align-content:flex-start}
+</style>
+</head>
+<body>
+<p class="cap">① ปุ่มใหม่ ⚙ (แสดงเฉพาะผู้มีสิทธิ์ตั้ง Config) อยู่ข้างปุ่ม Recycle Bin / Template / Import / New</p>
+<div class="bar">
+  <button class="b">🗑 Recycle Bin</button><button class="b t">⬇ Template</button><button class="b i">📂 Import</button><button class="b n">+ New</button><button class="b cfg" title="Config สิทธิ์ปุ่ม">⚙</button>
+</div>
+
+<p class="cap">② หน้าต่าง Config แบบ 3 Tab — กดสลับดูรายชื่อว่า "ตอนนี้ใครเข้าถึงปุ่มกลุ่มนั้นได้บ้าง" เพิ่ม/ลบรายชื่อได้ (ลองกดแท็บได้เลย)</p>
+<div class="ov">
+  <div class="md">
+    <div class="mh"><div class="ic">🔐</div><div><h2>Config สิทธิ์ใช้งานปุ่ม · Business Unit</h2><div class="s">กำหนดว่าใครเห็นและกดปุ่มเหล่านี้ได้</div></div></div>
+
+    <div class="tabs" id="tabs">
+      <a class="on" data-t="1">⬇ Template + Import<span class="cnt">4</span></a>
+      <a data-t="2">🗑 Recycle Bin<span class="cnt">2</span></a>
+      <a data-t="3">＋ New<span class="cnt">3</span></a>
+    </div>
+    <div class="pane on" id="p1"><div class="sec">
+      <div class="sh"><b>1 · Template + Import</b><span class="btns"><span class="p1">⬇ Template</span><span class="p1">📂 Import</span></span><span class="cnt">4 คน</span></div>
+      <div class="rule">ค่าเริ่มต้น: Owner / Admin / Editor</div>
+      <div class="list">
+        <span class="u role"><i>O</i>karn<small>Owner</small></span>
+        <span class="u"><i>S</i>srtangmo<small>Admin</small><x>×</x></span>
+        <span class="u"><i>P</i>pimchanok<small>Editor</small><x>×</x></span>
+        <span class="u"><i>N</i>nattapong<small>Editor</small><x>×</x></span>
+        <span class="add">＋ เพิ่มผู้ใช้</span>
+      </div>
+    </div></div>
+
+    <div class="pane" id="p2"><div class="sec">
+      <div class="sh"><b>2 · Recycle Bin</b><span class="btns"><span class="p2">🗑 Recycle Bin</span></span><span class="cnt">2 คน</span></div>
+      <div class="rule">ค่าเริ่มต้น: Owner / Admin</div>
+      <div class="list">
+        <span class="u role"><i>O</i>karn<small>Owner</small></span>
+        <span class="u"><i>S</i>srtangmo<small>Admin</small><x>×</x></span>
+        <span class="add">＋ เพิ่มผู้ใช้</span>
+      </div>
+    </div></div>
+
+    <div class="pane" id="p3"><div class="sec">
+      <div class="sh"><b>3 · New</b><span class="btns"><span class="p3">+ New</span></span><span class="cnt">3 คน</span></div>
+      <div class="rule">ค่าเริ่มต้น: Owner / Admin / Editor</div>
+      <div class="list">
+        <span class="u role"><i>O</i>karn<small>Owner</small></span>
+        <span class="u"><i>S</i>srtangmo<small>Admin</small><x>×</x></span>
+        <span class="u"><i>P</i>pimchanok<small>Editor</small><x>×</x></span>
+        <span class="add">＋ เพิ่มผู้ใช้</span>
+      </div>
+    </div></div>
+
+    <div class="mf"><span class="sum">Owner เข้าถึงได้เสมอ (ลบไม่ได้)</span><button class="btn2">ยกเลิก</button><button class="btn2 pri">บันทึก</button></div>
+  </div>
+</div>
+<script>
+document.querySelectorAll('#tabs a').forEach(a=>a.onclick=()=>{
+  document.querySelectorAll('#tabs a').forEach(x=>x.classList.toggle('on',x===a));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='p'+a.dataset.t));
+});
+</script></body>
+</html>

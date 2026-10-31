@@ -15,6 +15,7 @@ import { broadcastWs, subscribeWs } from '../wsManager';
 import { confirmDialog } from '../confirmDialog';
 // MARKER_REJECT_CHAT_DRAWER_V1
 import BatchChatDrawer from './BatchChatDrawer';
+import { spLaunchAsync } from '../spHandlerAutoUpdate'; // MARKER_SP_LISTENER_LAUNCH_V1
 
 // MARKER_FLEXIBLE_DATE_PARSER_V1
 // ── รับพิมพ์วันที่ได้หลาย Format (DDMMYYYY, DD/MM/YYYY, MM/DD/YYYY, ────────
@@ -672,7 +673,7 @@ function StatusDropdown({ value, onChange, options, style }) {
   );
 }
 
-function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '', onSaveBranch, branchOptions = {} }) {
+function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '', onSaveBranch, branchOptions = {}, supplierCode = '' }) { // MARKER_BRANCH_FREQUENT_BY_SUPPLIER_V1
   usePopupOpenTracker(show);
   const [query, setQuery]         = useState('');
   const [active, setActive]       = useState(-1);
@@ -681,6 +682,62 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
   const [form, setForm]           = useState({});
   const [formError, setFormError] = useState('');
   const [saving, setSaving]       = useState(false);
+  // MARKER_SIMPLE_COMPANY_FROM_BU_V1 -- ลำดับ Simple Company: Branch List (Head Office / Company ตรงกัน) ก่อน -> Company Info ของ BU (company_list) เป็นตัวถัดไป
+  const [buCompanies, setBuCompanies] = useState([]);
+  useEffect(() => {
+    if (!show) return;
+    let off = false;
+    apiFetch('/company_list').then((res) => { if (!off) setBuCompanies(Array.isArray(res) ? res : []); }).catch(() => { /* ignore */ });
+    return () => { off = true; };
+  }, [show]);
+  // MARKER_BRANCH_FREQUENT_BY_SUPPLIER_V1 -- สาขาที่ Supplier นี้เคยใช้ (นับจาก Branch IB ใน Invoice History ผ่าน Backend) -> ดันขึ้นบนสุด + ป้ายจำนวนครั้ง
+  const [branchUsage, setBranchUsage] = useState({});
+  useEffect(() => {
+    const sc = String(supplierCode || '').trim();
+    if (!show || !sc) { setBranchUsage({}); return; }
+    let off = false;
+    const qs = new URLSearchParams({ supplier_code: sc, bu: bu || '', module: 'AP' }).toString();
+    apiFetch(`/supplier-branch-usage?${qs}`).then((rows) => {
+      if (off) return;
+      const m = {};
+      (Array.isArray(rows) ? rows : []).forEach(r => { const k = String(r.ib_code || '').trim(); if (k) m[k] = { cnt: Number(r.use_count) || 0, ct: !!r.has_contract, rank: Number(r.recent_rank) || 0 }; }); // MARKER_BRANCH_CONTRACT_V1
+      setBranchUsage(m);
+    }).catch(() => { if (!off) setBranchUsage({}); });
+    return () => { off = true; };
+  }, [show, supplierCode, bu]);
+  const buEnglishName = (bu) => {
+    // Simple Company ของ BU: ค่าที่กรอกใน Company Info ก่อน ไม่มี -> "Segment3-ENGLISH COMPANY NAME" (Format เดียวกับ branchFillFromCompany ใน BusinessUnit.js)
+    const k = String(bu || '').trim().toLowerCase();
+    if (!k) return '';
+    const c = (buCompanies || []).find((x) => String(x['bu'] || '').trim().toLowerCase() === k);
+    if (!c) return '';
+    const direct = String(c['Simple Company'] || '').trim();
+    if (direct) return direct;
+    const seg = String(c['SEGMENT3'] || '').trim(); const eng = String(c['ENGLISH COMPANY NAME'] || '').trim();
+    return (seg && eng) ? `${seg}-${eng}` : '';
+  };
+  // MARKER_SIMPLE_COMPANY_BU_MATCH_V1 -- BU Matching: Branch อื่นที่ BU เดียวกัน -> Simple Company ที่พบมากที่สุด (ก่อนใช้ Company Info ของ BU)
+  const branchSimpleByBu = (bu) => {
+    const k = String(bu || '').trim().toLowerCase();
+    if (!k) return '';
+    const cnt = new Map();
+    for (const b of (branchItems || [])) {
+      if (String(b['bu'] || '').trim().toLowerCase() !== k) continue;
+      const v = String(b['Simple Company'] || '').trim();
+      if (v) cnt.set(v, (cnt.get(v) || 0) + 1);
+    }
+    let best = ''; let n = 0;
+    cnt.forEach((c, v) => { if (c > n) { n = c; best = v; } });
+    return best;
+  };
+  const buSimpleResolve = (bu) => branchSimpleByBu(bu) || buEnglishName(bu);
+  const handleBuBlur = () => {
+    setForm((f) => {
+      if (String(f['Simple Company'] || '').trim()) return f;
+      const n = buSimpleResolve(f['bu']);
+      return n ? { ...f, 'Simple Company': n } : f;
+    });
+  };
   const [sortField, setSortField] = useState('BU-Branch');
   const [sortDir, setSortDir]     = useState('asc');
   // MARKER_BRANCH_FORM_LOGIC_V2
@@ -789,7 +846,11 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
         String(i['BU-Branch'] ?? '').toLowerCase().includes(q))
     : buFiltered;
 
+  const usageOf = (it) => { const u = branchUsage[String(it['Branch Code'] ?? '').trim()]; return u ? (u.ct ? 1000000 : 0) + (u.rank ? 100000 - u.rank : (u.cnt || 0)) : 0; }; // MARKER_BRANCH_CONTRACT_V1 -- สาขาที่มีสัญญาขึ้นก่อน แล้วค่อยเรียงตามจำนวนครั้งที่ใช้
+  const hasContractOf = (it) => !!branchUsage[String(it['Branch Code'] ?? '').trim()]?.ct; // MARKER_BRANCH_FREQUENT_BY_SUPPLIER_V1
   const filtered = [...filtered0].sort((a, b) => {
+    const ua = usageOf(a), ub = usageOf(b);
+    if (ua !== ub) return ub - ua; // ใช้บ่อยขึ้นก่อน (มากไปน้อย) ที่เหลือเรียงตามคอลัมน์เดิม
     const va = String(a[sortField] ?? ''), vb = String(b[sortField] ?? '');
     const cmp = va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' });
     return sortDir === 'asc' ? cmp : -cmp;
@@ -913,7 +974,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
       'Group-P': String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || ''),
       'BU-TaxID': String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || ''),
       '%': String(f['%'] || '').trim() ? f['%'] : (match['%'] || ''),
-      'Simple Company': String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || ''),
+      'Simple Company': String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (String(match['Simple Company'] || '').trim() || buSimpleResolve(String(f['bu'] || '').trim() || match['bu'] || '') || ''),
     }));
   };
   // MARKER_BRANCH_HANDLEBUBRANCHBLUR_CLOSURE_FIX_V1 -- อ่าน/เขียนจาก State ล่าสุดเสมอ
@@ -950,8 +1011,9 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
         next['Group-P'] = String(f['Group-P'] || '').trim() ? f['Group-P'] : (match['Group-P'] || '');
         next['BU-TaxID'] = String(f['BU-TaxID'] || '').trim() ? f['BU-TaxID'] : (match['BU-TaxID'] || '');
         next['%'] = String(f['%'] || '').trim() ? f['%'] : (match['%'] || '');
-        next['Simple Company'] = String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (match['Simple Company'] || '');
+        next['Simple Company'] = String(f['Simple Company'] || '').trim() ? f['Simple Company'] : (String(match['Simple Company'] || '').trim() || buSimpleResolve(next['bu']) || '');
       }
+      if (!String(next['Simple Company'] || '').trim()) { const __bn = buSimpleResolve(next['bu']); if (__bn) next['Simple Company'] = __bn; } // MARKER_SIMPLE_COMPANY_FROM_BU_V1
       if (!String(f['Simple Brand Code'] || '').trim() && branchCodeVal && rawName) {
         next['Simple Brand Code'] = `${branchCodeVal}-${rawName}`;
       }
@@ -1211,7 +1273,7 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
                           })()}
                         </div>
                       ) : (
-                        <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} onBlur={key === 'Company for Show in Report Display' ? handleCompanyBlur : key === 'BU-Branch' ? handleBuBranchBlur : undefined} style={inputBare} />
+                        <input value={form[key] || ''} readOnly={isReadOnly} onChange={e => !isReadOnly && setField(key, e.target.value)} onBlur={key === 'Company for Show in Report Display' ? handleCompanyBlur : key === 'BU-Branch' ? handleBuBranchBlur : key === 'bu' ? handleBuBlur : undefined} style={inputBare} />
                       )}
                     </div>
                   </React.Fragment>
@@ -1359,12 +1421,13 @@ function BranchSearchPopup({ show, onClose, onSelect, branchItems = [], bu = '',
             <tbody>
               {filtered.map((item, i) => {
                 const isAct = i === active, isClosed = item['status'] === 'Closed';
+                const useCnt = usageOf(item); const hasCt = hasContractOf(item); // MARKER_BRANCH_FREQUENT_BY_SUPPLIER_V1
                 return (
                   <tr key={item.id || i} data-row={i} onClick={() => !isClosed && onSelect(item, { isIB: false })} onMouseEnter={() => !isClosed && setActive(i)}
-                    style={{ background: isAct ? '#eef3fb' : 'white', cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}>
+                    style={{ background: isAct ? '#eef3fb' : (useCnt > 0 ? '#fffaf0' : 'white'), cursor: isClosed ? 'not-allowed' : 'pointer', borderBottom: '0.5px solid #f3f4f6', opacity: isClosed ? 0.5 : 1 }}>
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap' }}><span style={{ background: isAct ? '#1a3a5c' : '#f0f3f8', color: isAct ? 'white' : '#1a3a5c', borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: '600' }}>{item['Branch Code'] || '-'}</span></td>
                     <td style={{ padding: '9px 12px', color: '#555', fontSize: '11px' }}>{item['Branch Direct'] || '-'}</td>
-                    <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '220px' }}>{item['Company for Show in Report Display'] || '-'}</td>
+                    <td style={{ padding: '9px 12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>{item['Company for Show in Report Display'] || '-'}{(() => { const u = branchUsage[String(item['Branch Code'] ?? '').trim()]; return (u && u.cnt > 0) ? <span title={`Supplier นี้เคยลงสาขานี้ ${u.cnt} ครั้ง${u.rank === 1 ? ' (ล่าสุด)' : ''}`} style={{ marginLeft: '6px', background: u.rank === 1 ? '#FFF8E1' : '#f6f7f9', color: u.rank === 1 ? '#b7791f' : '#667', border: u.rank === 1 ? '0.5px solid #f0c040' : '0.5px solid #dde', borderRadius: '10px', padding: '1px 8px', fontSize: '10px', fontWeight: '600' }}>{'\u2605'} {u.cnt}</span> : null; })() /* MARKER_BRANCH_FAV_STAR_V1 */}{hasCt && <span title="สาขานี้มีสัญญาของ Supplier นี้ (Contract List)" style={{ marginLeft: '6px', background: '#FFF3E0', color: '#a35a00', border: '0.5px solid #e67e22', borderRadius: '10px', padding: '1px 8px', fontSize: '10px', fontWeight: '600' }}>สัญญา</span>}</td>
                     <td style={{ padding: '9px 12px', color: '#778', fontSize: '11px' }}>{item['BU-Branch'] || '-'}</td>
                     <td style={{ padding: '9px 12px' }}><span style={{ fontSize: '10px', padding: '2px 7px', borderRadius: '20px', fontWeight: '500', background: isClosed ? '#FCEBEB' : '#EAF3DE', color: isClosed ? '#791F1F' : '#27500A' }}>{item['status'] || 'Active'}</span></td>
                     <td style={{ padding: '7px 12px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -3359,7 +3422,50 @@ const fmtMo = (y, m) => {
   return `${pd(from.getDate())}/${pd(from.getMonth()+1)}/${from.getFullYear()} - ${pd(to.getDate())}/${pd(to.getMonth()+1)}/${to.getFullYear()}`;
 };
 
-function PeriodPicker({ value, onChange, recentValues = [] }) {
+// MARKER_ITEM_HISTORY_NEXT_PERIOD_V1 -- คำนวณ Period ถัดไปจากข้อความ Period "DD/MM/YYYY - DD/MM/YYYY"
+// เต็มเดือน (วันที่ 1 ถึงวันสุดท้ายของเดือนเดียวกัน) = รายเดือน -> เดือนถัดไปเต็มเดือน (นับวันสุดท้ายตามเดือนจริง ข้ามปีได้)
+// ไม่เต็มเดือน -> รอบชนรอบ: ครบ 1 เดือนพอดี (เช่น 15/10-14/11) -> 15/11-14/12 | รอบอื่น -> เริ่มวันถัดจากวันสุดท้ายเดิม ยาวเท่าเดิม | วันเดียว -> +1 เดือน (ไม่เกินวันสุดท้ายของเดือนนั้น) | อ่านไม่ออก -> ''
+// MARKER_PERIOD_MONTH_YEAR_V1 -- รองรับ Period แบบ "MM/YYYY" (เช่น 11/2026) และช่วง "MM/YYYY - MM/YYYY" ด้วย (นอกจาก DD/MM/YYYY)
+const PERIOD_ANY_RE = /\d{1,2}\/\d{1,2}\/\d{4}\s*-\s*\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\/\d{1,2}\/\d{4}|(?<![\d/])\d{1,2}\/\d{4}(?:\s*-\s*\d{1,2}\/\d{4})?(?![\d/])/;
+const periodMY = (t) => { const m = String(t || '').trim().match(/^(\d{1,2})\/(\d{4})$/); return m && +m[1] >= 1 && +m[1] <= 12 ? +m[2] * 12 + (+m[1] - 1) : null; };
+const fmtMY = (i) => `${String((i % 12) + 1).padStart(2, '0')}/${Math.floor(i / 12)}`;
+const periodEndDate = (t) => { const i = periodMY(t); return i != null ? new Date(Math.floor(i / 12), (i % 12) + 1, 0) : parsePeriodDt(t); };
+const parsePeriodDt = (t) => { const m = String(t || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (!m) return null; const d = new Date(+m[3], +m[2] - 1, +m[1]); return (d.getFullYear() === +m[3] && d.getMonth() === +m[2] - 1 && d.getDate() === +m[1]) ? d : null; };
+const nextPeriodText = (period) => {
+  const parts = String(period || '').split(/\s*-\s*/).map(x => x.trim()).filter(Boolean);
+  if (parts.length && parts.length <= 2 && parts.every((x) => periodMY(x) != null)) { // งวดแบบเดือน/ปี : เลื่อนไปตามจำนวนเดือนของงวดเดิม
+    const a = periodMY(parts[0]), b = parts.length === 2 ? periodMY(parts[1]) : a;
+    if (b < a) return '';
+    const span = b - a + 1;
+    return parts.length === 1 ? fmtMY(a + span) : `${fmtMY(a + span)} - ${fmtMY(b + span)}`;
+  }
+  if (parts.length === 1) {
+    const a = parsePeriodDt(parts[0]); if (!a) return '';
+    const last = new Date(a.getFullYear(), a.getMonth() + 2, 0).getDate();
+    return fmtDt(new Date(a.getFullYear(), a.getMonth() + 1, Math.min(a.getDate(), last)));
+  }
+  if (parts.length !== 2) return '';
+  const a = parsePeriodDt(parts[0]), b = parsePeriodDt(parts[1]);
+  if (!a || !b || b < a) return '';
+  const fullMonth = a.getDate() === 1 && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+    && b.getDate() === new Date(b.getFullYear(), b.getMonth() + 1, 0).getDate();
+  if (fullMonth) return fmtMo(a.getFullYear(), a.getMonth() + 1);
+  // รอบชนรอบ (ส่วนมาก): งวดถัดไปเริ่มวันถัดจากวันสุดท้ายของงวดก่อน
+  const addMo = (d, n) => { const last = new Date(d.getFullYear(), d.getMonth() + n + 1, 0).getDate(); return new Date(d.getFullYear(), d.getMonth() + n, Math.min(d.getDate(), last)); };
+  const oneMonthCycle = (() => { const e = addMo(a, 1); return b.getTime() === new Date(e.getFullYear(), e.getMonth(), e.getDate() - 1).getTime(); })();
+  if (oneMonthCycle) {
+    // รอบรายเดือนแบบไม่ตรงต้นเดือน เช่น 15/10 - 14/11 -> 15/11 - 14/12
+    const na = addMo(a, 1), e2 = addMo(a, 2);
+    return `${fmtDt(na)} - ${fmtDt(new Date(e2.getFullYear(), e2.getMonth(), e2.getDate() - 1))}`;
+  }
+  // รอบอื่น: เริ่มวันถัดจากวันสุดท้ายเดิม ความยาวเท่าเดิม
+  const spanDays = Math.round((b - a) / 86400000) + 1;
+  const na = new Date(b.getFullYear(), b.getMonth(), b.getDate() + 1);
+  const nb = new Date(na.getFullYear(), na.getMonth(), na.getDate() + spanDays - 1);
+  return `${fmtDt(na)} - ${fmtDt(nb)}`;
+};
+
+function PeriodPicker({ value, onChange, recentValues = [], nextAction = null }) {
   const [open, setOpen]     = useState(false);
   const [vy, setVy]         = useState(new Date().getFullYear());
   const [vm, setVm]         = useState(new Date().getMonth());
@@ -3370,6 +3476,8 @@ function PeriodPicker({ value, onChange, recentValues = [] }) {
   // ── Period Quick List: กด "/" ตอน Field ว่าง เพื่อเปิด List ค่าที่เคยกรอกใน Batch นี้ ──
   const [showQuickList, setShowQuickList] = useState(false);
   const ref = useRef(null);
+  const [showNextList, setShowNextList] = useState(false);   // MARKER_NEXT_PERIOD_POPOVER_V1 -- รายการงวดถัดไปของค่าใช้จ่ายแต่ละตัว (hover ไอคอน)
+  const nextListTimer = useRef(null);
 
   useEffect(() => {
     if (!open && !showQuickList) return;
@@ -3451,7 +3559,7 @@ function PeriodPicker({ value, onChange, recentValues = [] }) {
   return (
     <div ref={ref} style={{ position:'relative', display:'flex', flexDirection:'column', gap:'3px', flexShrink:0 }}>
       <label style={{ fontSize:'11px', color:'#888' }}>Period</label>
-      <div style={{ display:'flex', alignItems:'center' }}>
+      <div style={{ display:'flex', alignItems:'center', position:'relative' }}>
         <input type="text" value={value}
           onChange={e => {
             const newVal = e.target.value;
@@ -3462,7 +3570,34 @@ function PeriodPicker({ value, onChange, recentValues = [] }) {
             setShowQuickList(false);
             onChange(newVal);
           }}
-          style={{ height:'30px', padding:'0 8px', fontSize:'12px', borderRadius:'6px 0 0 6px', outline:'none', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', width:'190px', boxSizing:'border-box' }} />
+          style={{ height:'30px', padding:'0 8px', fontSize:'12px', borderRadius:'6px 0 0 6px', outline:'none', border:'0.5px solid #ddd', background:'white', color:'#1a3a5c', width:'190px', boxSizing:'border-box', paddingRight: nextAction ? '34px' : '8px' }} />
+        {/* MARKER_NEXT_PERIOD_IN_PERIOD_FIELD_V1 -- ปุ่ม Next Period อยู่ในช่อง Period (ซ้ายของไอคอนปฏิทิน) */}
+        {nextAction && (
+          <button type="button" onClick={() => { if (Array.isArray(nextAction.items) && nextAction.items.length > 0) { setShowNextList(v => !v); } else if (nextAction.onClick) { nextAction.onClick(); } }}
+            onMouseEnter={() => { clearTimeout(nextListTimer.current); setShowNextList(true); }}
+            onMouseLeave={() => { nextListTimer.current = setTimeout(() => setShowNextList(false), 250); }} disabled={!nextAction.enabled} title={(Array.isArray(nextAction.items) && nextAction.items.length > 0) ? undefined : nextAction.title} /* MARKER_NEXT_PERIOD_ONE_POPUP_V1 -- มี List ให้เลือกแล้ว = ไม่แสดง Tooltip ซ้อน (เอาอย่างเดียว) */
+            style={{ position:'absolute', right:'32px', top:'3px', width:'24px', height:'24px', padding:0, borderRadius:'5px', border: nextAction.warn ? '1px solid #c0392b' : nextAction.enabled ? '1px solid #e67e22' : '0.5px solid #ddd', background: nextAction.warn ? '#fdecea' : nextAction.enabled ? '#FFF3E0' : '#f5f5f5', color: nextAction.warn ? '#c0392b' : nextAction.enabled ? '#a35a00' : '#bbb', cursor: nextAction.enabled ? 'pointer' : 'not-allowed', fontSize:'11px', fontWeight:700, display:'flex', alignItems:'center', justifyContent:'center' }}>
+            ⏭
+          </button>
+        )}
+        {nextAction && showNextList && Array.isArray(nextAction.items) && nextAction.items.length > 0 && (
+          <div onMouseEnter={() => { clearTimeout(nextListTimer.current); setShowNextList(true); }}
+            onMouseLeave={() => { nextListTimer.current = setTimeout(() => setShowNextList(false), 250); }}
+            style={{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:10000, background:'white', border:'0.5px solid #e67e22', borderRadius:'8px', boxShadow:'0 6px 20px rgba(26,58,92,0.18)', minWidth:'420px', padding:'4px 0' }}>
+            <div style={{ padding:'5px 10px', fontSize:'10px', color:'#a35a00', fontWeight:700, borderBottom:'0.5px solid #f3e3cf' }}>ค่าใช้จ่ายที่ Supplier + สาขานี้เคยใช้ — คลิกแถว = ใส่ Item Code ในบรรทัด พร้อมงวดของตัวเอง</div>
+            {nextAction.items.map((it, i) => (
+              <div key={i} onClick={() => { nextAction.onPick && nextAction.onPick(it); setShowNextList(false); }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#FFF3E0'; }} onMouseLeave={e => { e.currentTarget.style.background = 'white'; }}
+                style={{ display:'flex', alignItems:'center', gap:'8px', padding:'6px 10px', fontSize:'11px', cursor:'pointer', color:'#1a3a5c', borderBottom:'0.5px solid #f6f6f6' }}>
+                <span style={{ background:'#FFF3E0', color:'#a35a00', borderRadius:'9px', padding:'0 7px', fontWeight:700, flexShrink:0 }}>{it.code}</span>
+                <span style={{ flex:1, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.name}</span>
+                <span style={{ color:'#888', whiteSpace:'nowrap' }}>{it.oldP}</span>
+                <span style={{ color:'#a35a00', fontWeight:700 }}>→</span>
+                <span style={{ color:'#a35a00', fontWeight:700, whiteSpace:'nowrap' }}>{it.nextP}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <button onClick={() => setOpen(o => !o)} title="เลือกช่วงเวลา"
           style={{ height:'30px', width:'28px', borderRadius:'0 6px 6px 0', border:'0.5px solid #ddd', borderLeft:'none', background:'#f5f7fa', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', color:'#888', flexShrink:0 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -3553,7 +3688,7 @@ const CONTRACT_FIELDS = [
 ];
 const CONTRACT_RUN_OPTS = ['SC','D1','D2','D3','D4'];
 
-function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetchCollection, userName = '' }) {
+function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetchCollection, userName = '', detected = false }) { // MARKER_CONTRACT_AUTO_DETECT_V1
   usePopupOpenTracker(show);
   const { isOwner, isAdmin, isEditor } = useUserRole();
   const canEdit = isOwner || isAdmin || isEditor;
@@ -3815,6 +3950,7 @@ function ContractPopup({ show, onClose, onSelect, vendorCode = '', bu = '', fetc
         <div style={{ flex:1 }}>
           <div style={{ fontSize:'13px', fontWeight:'500', color:'#1a3a5c' }}>Contract / Serial Code</div>
           <div style={{ fontSize:'11px', color:'#aaa' }}>{filtered.length} รายการ{vendorCode ? ` · ${vendorCode}` : bu ? ` · BU: ${bu}` : ''}</div>
+          {detected && <div style={{ marginTop:'4px', fontSize:'11px', fontWeight:'600', color:'#a35a00', background:'#FFF3E0', border:'0.5px solid #e67e22', borderRadius:'6px', padding:'3px 8px', display:'inline-block' }}>ตรวจพบว่า Supplier นี้ผูกสัญญาอยู่ กรุณาเลือกสัญญา</div>}
         </div>
         {canEdit && (
           <>
@@ -5060,6 +5196,65 @@ function CtaDueDatePopup({ show, ctaValue = '', batchDueDate = '', onConfirm, on
             style={{ padding: '8px 18px', borderRadius: '8px', border: '1.5px solid #166534', background: paid ? '#166534' : 'white', color: paid ? 'white' : '#166534', fontSize: '13px', fontWeight: 700, cursor: batchDueDate ? 'pointer' : 'not-allowed', opacity: batchDueDate ? 1 : 0.5 }}>{paid ? 'Paid ✓' : 'Paid'}</button>
           <button type="button" onClick={doConfirm} disabled={!canConfirm}
             style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: canConfirm ? '#1a3a5c' : '#C5CCD8', color: canConfirm ? 'white' : '#5B6678', fontSize: '13px', fontWeight: 700, cursor: canConfirm ? 'pointer' : 'not-allowed' }}>ตัดบัญชี</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// MARKER_CHANGE_DUE_BULK_V1 -- Popup เปลี่ยน Due Date ให้ทุกแถวที่ติ๊ก Checkbox ใน Batch Bucket
+function ChangeDueBulkPopup({ show, count = 0, onConfirm, onCancel }) {
+  const [dueText, setDueText] = useState('');
+  const pickerRef = useRef(null);
+  useEffect(() => { if (show) setDueText(''); }, [show]);
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [show]);
+  if (!show) return null;
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const fmt4 = (iso) => {
+    const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}-${MON[parseInt(m[2], 10) - 1]}-${m[1]}` : String(iso || '');
+  };
+  const due = parseFlexibleDate(dueText) || '';
+  const bad = !!dueText.trim() && !due;
+  const doConfirm = () => { if (due) onConfirm(due); };
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 10006, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div style={{ background: 'white', borderRadius: '12px', width: '420px', maxWidth: '94vw', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', overflow: 'hidden' }}>
+        <div style={{ padding: '16px 22px', borderBottom: '0.5px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ flex: 1, fontSize: '15px', fontWeight: 600, color: '#1a3a5c' }}>Change Due</div>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: '#1E3A8A', background: '#DBE6FB', borderRadius: '999px', padding: '3px 10px' }}>{count} รายการที่เลือก</div>
+        </div>
+        <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <label style={{ fontSize: '12px', fontWeight: 500, color: '#333' }}>Due Date ใหม่</label>
+          <div style={{ position: 'relative' }}>
+            <input type="text" value={dueText} autoFocus
+              placeholder="พิมพ์ได้ เช่น 05/11/2026 หรือ 5-Nov-2026 หรือกดปฏิทิน"
+              onChange={(e) => setDueText(e.target.value)}
+              onBlur={() => { if (due) setDueText(fmt4(due)); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); doConfirm(); } }}
+              style={{ width: '100%', height: '38px', boxSizing: 'border-box', border: `1.5px solid ${bad ? '#B91C1C' : '#9AA6B8'}`, borderRadius: '8px', padding: '0 38px 0 10px', fontSize: '14px', background: 'white', color: '#1B2430' }} />
+            <button type="button" title="เลือกจากปฏิทิน"
+              onClick={() => { try { pickerRef.current?.showPicker?.(); } catch (e) { pickerRef.current?.focus(); } }}
+              style={{ position: 'absolute', right: '6px', top: '5px', width: '28px', height: '28px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '16px' }}>📅</button>
+            <input ref={pickerRef} type="date" tabIndex={-1} value={due || ''}
+              onChange={(e) => { if (e.target.value) setDueText(fmt4(e.target.value)); }}
+              style={{ position: 'absolute', right: '6px', bottom: 0, width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }} />
+          </div>
+          <div style={{ fontSize: '11px', color: bad ? '#B91C1C' : '#666' }}>
+            {bad ? 'รูปแบบวันที่ไม่ถูกต้อง (เช่น 05/11/2026 หรือ 5-Nov-2026)' : `Due Date ของทุกรายการที่ติ๊กจะถูกเปลี่ยนเป็นวันเดียวกัน${due ? ` : ${fmt4(due)}` : ''}`}
+          </div>
+        </div>
+        <div style={{ padding: '14px 22px', background: '#F6F7F9', borderTop: '0.5px solid #e5e7eb', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+          <button type="button" onClick={onCancel}
+            style={{ padding: '8px 18px', borderRadius: '8px', border: '1px solid #9AA6B8', background: 'white', color: '#333', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>ยกเลิก</button>
+          <button type="button" onClick={doConfirm} disabled={!due}
+            style={{ padding: '8px 20px', borderRadius: '8px', border: 'none', background: due ? '#1a3a5c' : '#C5CCD8', color: due ? 'white' : '#5B6678', fontSize: '13px', fontWeight: 700, cursor: due ? 'pointer' : 'not-allowed' }}>ยืนยัน</button>
         </div>
       </div>
     </div>
@@ -6364,6 +6559,16 @@ function InvoiceDetailPopup({ show, onClose, batchDueDate = '', form, setField, 
     i => String(i.code ?? '').trim().toUpperCase() === String(line1.itemCode ?? '').trim().toUpperCase()
   );
   const requiresContract = String(currentItemData?.spi1 ?? '').toUpperCase().includes('CT');
+  // MARKER_NEXT_PERIOD_CT_FAVORITE_GATE_V1 -- Supplier นี้มี Favorite Item Code ที่เป็น CT ไหม (รู้ล่วงหน้าได้ว่าควรโชว์ Next Period หรือไม่)
+  const ctFavItems = (() => {
+    const taxKey = (vendorInfo?.['Tax ID']?.trim() || vendorInfo?.['Supplier Number']?.trim() || '');
+    if (!taxKey) return [];
+    return itemcodeItems.filter(i => Array.isArray(i.favorite_taxids) && i.favorite_taxids.includes(taxKey) && String(i.spi1 ?? '').toUpperCase().includes('CT'));
+  })();
+  const ctFavKey = ctFavItems.map(i => String(i.code || '')).join(',');
+  const supplierHasCtFav = ctFavItems.length > 0;
+  // MARKER_NEXT_PERIOD_FAV_VS_HISTORY_V1 -- เทียบ Favorite CT กับ Invoice History (Supplier + สาขาเดียวกัน): มีงวดใน History จริงถึงโชว์ไอคอน
+  const [favNextPeriod, setFavNextPeriod] = useState(null);
 
   // ── เลือกสัญญาจาก ContractPopup → ดึง CDes+BDes ใส่ Back Description 1/2/3 ─
   // (อันไหนไม่มีข้อมูล ไม่ต้องใส่/ไม่แก้ของเดิม)
@@ -6380,6 +6585,269 @@ function InvoiceDetailPopup({ show, onClose, batchDueDate = '', form, setField, 
     });
     setShowContractPopup(false);
     if (item?.auto_ib?.trim()) onResolveBranch(`${item.auto_ib.trim()}+`);
+  };
+
+  // MARKER_CONTRACT_AUTO_DETECT_V1 -- หลังกรอก Inv date + Invoice num (ช่องเหลือง) ใน Invoice Detail -> ตรวจ contract_list ของ Supplier นี้
+  // ถ้ามีสัญญา -> เด้ง Popup สัญญาพร้อมข้อความ "ตรวจพบว่าผูกสัญญาอยู่" (เด้งครั้งเดียวต่อชุด Supplier/Branch ต่อการเปิด Invoice Detail และไม่เด้งถ้า Back Description 1 ถูกกรอกแล้ว)
+  const contractAutoAskedRef = useRef('');
+  const [contractDetected, setContractDetected] = useState(false);
+  // MARKER_CONTRACT_AUTO_ON_BLUR_V1 -- เด้งเมื่อ "ออกจากช่อง" Inv date / Invoice num แล้วเท่านั้น (ไม่เด้งระหว่างที่ยังพิมพ์/อยู่ในช่อง)
+  const [contractBlurTick, setContractBlurTick] = useState(0);
+  useEffect(() => {
+    if (!show) return undefined;
+    const onOut = (e) => { if (e.target && (e.target === invoiceNumRef.current || e.target === invDateRef.current)) setContractBlurTick((t) => t + 1); };
+    document.addEventListener('focusout', onOut);
+    return () => document.removeEventListener('focusout', onOut);
+  }, [show]);
+  useEffect(() => {
+    if (!show) { contractAutoAskedRef.current = ''; return; }
+    const sup = String(form?.supplierCode || '').trim();
+    const invDt = String(form?.invDate || '').trim();
+    const invNo = String(form?.invoiceNum || '').trim();
+    // ช่องสีเหลืองที่ต้องกรอกก่อน: Inv date (วันที่ครบ) + Invoice num
+    if (!bu || !sup || !String(form?.branchNo || '').trim() || invDt.length < 10 || !invNo) return;
+    const key = `${bu}|${sup}|${String(form.branchNo).trim()}`.toUpperCase();
+    if (contractAutoAskedRef.current === key) return;
+    if (String(form?.backDesc1 || '').trim()) return;
+    let off = false;
+    // หน่วงเล็กน้อยหลังออกจากช่อง ; ถ้ายังอยู่ในช่อง Inv date / Invoice num ไม่เด้ง (รอ focusout แล้วค่อยตรวจใหม่)
+    const timer = setTimeout(async () => {
+      if (off) return;
+      const ae = document.activeElement;
+      if (ae && (ae === invoiceNumRef.current || ae === invDateRef.current)) return;
+      contractAutoAskedRef.current = key;
+      try {
+        // MARKER_CONTRACT_AUTO_DETECT_FIX_V2 -- รองรับทั้ง Supplier Code ที่มี BU นำหน้าแล้ว (LKS-T0051) และยังไม่มี (T0051) กัน Query ผิดเป็น LKS-LKS-T0051
+        const supU = sup.toUpperCase(), buU = String(bu).toUpperCase();
+        const codes = supU.startsWith(buU + '-') ? [supU, supU.slice(buU.length + 1)] : [`${buU}-${supU}`, supU];
+        let found = false;
+        for (const vc of codes) {
+          if (!vc) continue;
+          const { data, error } = await db.from('contract_list').select('id').ilike('vendor_code', vc).limit(1);
+          if (off) return;
+          if (error) { console.warn('[contract auto-detect]', error); continue; }
+          if (data?.length) { found = true; break; }
+        }
+        if (!found) return;
+        setContractDetected(true);
+        setShowContractPopup(true);
+      } catch (e) { console.warn('[contract auto-detect]', e); }
+    }, 400);
+    return () => { off = true; clearTimeout(timer); };
+  }, [show, bu, form?.supplierCode, form?.branchNo, form?.invDate, form?.invoiceNum, contractBlurTick]);
+
+  // MARKER_ITEM_HISTORY_NEXT_PERIOD_V1 -- ปุ่ม Next Period (เฉพาะ Item CT): ดึง Description ล่าสุดที่คีย์ด้วย Item Code นี้ + Supplier นี้
+  // คำนวณ Period ถัดไป + จำลอง Description ใหม่ แสดงเป็น Tooltip ให้ตัดสินใจก่อนกดใช้
+  const [nextPeriodHint, setNextPeriodHint] = useState(null);
+  const [nextPeriodTick, setNextPeriodTick] = useState(0);   // กดตอนยังไม่มีข้อมูล -> ดึงใหม่แล้วใส่ให้ทันที
+  const [nextPeriodNote, setNextPeriodNote] = useState('');
+  const nextPeriodPendingRef = useRef(false);
+  const applyNextPeriodRef = useRef(null);
+  const periodNowRef = useRef('');          // ค่า Period ปัจจุบัน (ให้ effect อ่านได้โดยไม่ต้องรีเฟตช์)
+  const nextPeriodAutoKeyRef = useRef('');  // กันใส่ Period อัตโนมัติซ้ำของ Supplier+สาขา+Item Code เดิม
+  periodNowRef.current = String(form?.period || '').trim();
+  useEffect(() => {
+    const ic = String(line1?.itemCode || '').trim();
+    const sup = String(form?.supplierCode || '').trim();
+    if (!show || !requiresContract || !ic || !sup) { setNextPeriodHint(null); if (!ic) nextPeriodAutoKeyRef.current = ''; return; }
+    let off = false;
+    (async () => {
+      try {
+        // MARKER_NEXT_PERIOD_SAME_EXPENSE_V1 -- ค่าใช้จ่ายตัวเดียวกัน = Item Code + Supplier + Branch IB เดียวกัน
+        const ibRaw = String(form?.branchIBLabel || '').trim();
+        const ibCode = (ibRaw && ibRaw !== '-' && ibRaw !== 'IB-ALL') ? ibRaw.split('-')[0].trim() : '';
+        const qs = new URLSearchParams({ item_code: ic, supplier_code: sup, bu: bu || '', ...(ibCode ? { ib: ibCode } : {}) }).toString();
+        const rows = await apiFetch(`/item-description-history?${qs}`);
+        if (off) return;
+        // คำนวณจาก 5 รายการย้อนหลัง: เลือกรายการที่มีงวด "ล่าสุดจริง" (วันสิ้นสุดงวดมากสุด) แล้วนับต่อจากงวดนั้น
+        let best = null;
+        for (const h of (Array.isArray(rows) ? rows : [])) {
+          // MARKER_NEXT_PERIOD_FROM_DESC_STRUCTURE_V1 -- ยึดโครงสร้าง Description: หาตำแหน่งงวดในข้อความ Description ก่อน (ช่วงวันที่ DD/MM/YYYY - DD/MM/YYYY หรือวันที่เดี่ยว) ไม่เจอค่อยใช้คอลัมน์ Period
+          const dTxt = String(h.description || '');
+          const mm = dTxt.match(PERIOD_ANY_RE);
+          const oldP = mm ? mm[0].trim() : String(h.period || '').trim();
+          const nextP = nextPeriodText(oldP);
+          if (!nextP) continue;
+          const endTxt = oldP.split(/\s*-\s*/).pop();
+          const endDt = periodEndDate(endTxt);
+          const endMs = endDt ? endDt.getTime() : 0;
+          if (!best || endMs > best.endMs) best = { h, oldP, nextP, endMs };
+        }
+        if (best) {
+          const { h, oldP, nextP } = best;
+          const origDesc = String(h.description || '');
+          const nextDesc = (oldP && origDesc.includes(oldP)) ? origDesc.split(oldP).join(nextP) : origDesc;
+          // ถ้ารายการเดิมผูกสัญญา (Back Description 1-3 จากสัญญา) -> ผูกมาด้วย (แทนงวดเก่าเป็นงวดใหม่ถ้ามีอยู่ในข้อความ)
+          const sw = (t) => { const x = String(t || ''); return (oldP && x.includes(oldP)) ? x.split(oldP).join(nextP) : x; };
+          const hintObj = { oldP, nextP, nextDesc, backs: [sw(h.back1), sw(h.back2), sw(h.back3)], total: (Array.isArray(rows) ? rows.length : 0) };
+          setNextPeriodHint(hintObj);
+          // MARKER_NEXT_PERIOD_AUTO_FILL_V1 -- เลือก Item CT แล้ว Period เด้งใส่ให้เอง (เฉพาะช่อง Period ว่าง และครั้งแรกของ Supplier+สาขา+Item Code นั้น) ปุ่มยังกดซ้ำได้
+          const autoKey = `${sup}|${ibCode}|${ic.toUpperCase()}`;
+          if (false && requiresContract && !periodNowRef.current && nextPeriodAutoKeyRef.current !== autoKey) {   // ปิดแล้ว: ใช้ Popup Confirm ราย Line แทน
+            nextPeriodAutoKeyRef.current = autoKey;
+            nextPeriodPendingRef.current = false;
+            applyNextPeriodRef.current && applyNextPeriodRef.current(hintObj);
+          }
+          if (nextPeriodPendingRef.current) { nextPeriodPendingRef.current = false; setNextPeriodNote(''); applyNextPeriodRef.current && applyNextPeriodRef.current(hintObj); }
+          return;
+        }
+        setNextPeriodHint(null);
+        if (nextPeriodPendingRef.current) { nextPeriodPendingRef.current = false; setNextPeriodNote('ยังไม่มีประวัติของค่าใช้จ่ายนี้ที่คำนวณงวดถัดไปได้'); setTimeout(() => setNextPeriodNote(''), 3500); }
+      } catch (e) { if (!off) { setNextPeriodHint(null); if (nextPeriodPendingRef.current) { nextPeriodPendingRef.current = false; setNextPeriodNote('ดึงประวัติไม่สำเร็จ ลองใหม่อีกครั้ง'); setTimeout(() => setNextPeriodNote(''), 3500); } } }
+    })();
+    return () => { off = true; };
+  }, [show, requiresContract, line1?.itemCode, form?.supplierCode, form?.branchIBLabel, bu, nextPeriodTick]);
+  const computeFavNextPeriod = async () => {
+    // MARKER_NEXT_PERIOD_PER_EXPENSE_LIST_V1 -- คำนวณแยกค่าใช้จ่ายแต่ละตัว (Favorite CT ที่มีประวัติ) แล้วแสดงใน Tooltip ว่าแต่ละตัวจะไปงวดไหนต่อ
+    const sup0 = String(form?.supplierCode || '').trim();
+    if (!sup0 || !ctFavItems.length) return null;
+    const ibRaw0 = String(form?.branchIBLabel || '').trim();
+    const ib0 = (ibRaw0 && ibRaw0 !== '-' && ibRaw0 !== 'IB-ALL') ? ibRaw0.split('-')[0].trim() : '';
+    const items = [];
+    try {
+      const results = await Promise.all(ctFavItems.slice(0, 8).map(async (f) => {
+        const qs = new URLSearchParams({ item_code: String(f.code || ''), supplier_code: sup0, bu: bu || '', ...(ib0 ? { ib: ib0 } : {}) }).toString();
+        try { return { f, rows: await apiFetch(`/item-description-history?${qs}`) }; } catch (e) { return { f, rows: [] }; }
+      }));
+      for (const { f, rows } of results) {
+        let best = null;
+        for (const h of (Array.isArray(rows) ? rows : [])) {
+          const dTxt = String(h.description || '');
+          const mm = dTxt.match(PERIOD_ANY_RE);
+          const oldP = mm ? mm[0].trim() : String(h.period || '').trim();
+          const nextP = nextPeriodText(oldP);
+          if (!nextP) continue;
+          const endDt = periodEndDate(oldP.split(/\s*-\s*/).pop());
+          const endMs = endDt ? endDt.getTime() : 0;
+          if (!best || endMs > best.endMs) best = { code: String(f.code || ''), name: String(f.description || '').trim(), oldP, nextP, endMs };
+        }
+        if (best) items.push(best);
+      }
+    } catch (e) { /* ignore */ }
+    if (!items.length) return null;
+    items.sort((a, b) => b.endMs - a.endMs);
+    return { ...items[0], items };
+  };
+  useEffect(() => {
+    if (!show || !ctFavKey || !form?.supplierCode) { setFavNextPeriod(null); return; }
+    let off = false;
+    computeFavNextPeriod().then(bp => { if (!off) setFavNextPeriod(bp); });
+    return () => { off = true; };
+    // eslint-disable-next-line
+  }, [show, ctFavKey, form?.supplierCode, form?.branchIBLabel, bu]);
+  const applyNextPeriod = (hintArg) => {
+    // MARKER_NEXT_PERIOD_ONLY_V1 -- ใส่เฉพาะ "Period" (Description ประกอบ Period จาก form.period เอง) ไม่แตะ Description อื่น/สัญญา
+    // MARKER_NEXT_PERIOD_CLICK_ANYTIME_V1 -- กดได้ทันที: ถ้ายังไม่มีข้อมูล -> ดึงประวัติใหม่แล้วใส่ให้เลย (ไม่มีประวัติ = แจ้งที่ Tooltip)
+    const h = (hintArg && hintArg.nextP) ? hintArg : nextPeriodHint;
+    if (!h && !String(line1?.itemCode || '').trim()) {
+      // MARKER_NEXT_PERIOD_FROM_FAVORITES_V1 -- ยังไม่มี Item Code: เช็ก Favorite Item ของ Supplier ที่เป็น CT "เบื้องหลัง" (ไม่เปิดรายการ Favorite)
+      // แล้วคำนวณงวดถัดไปจากประวัติของ CT เหล่านั้น (สาขาเดียวกัน) ใส่เฉพาะช่อง Period
+      if (!ctFavItems.length) { setNextPeriodNote('Supplier นี้ไม่มีค่าใช้จ่าย CT ที่เคยใช้'); setTimeout(() => setNextPeriodNote(''), 3500); return; }
+      (async () => {
+        const bp = favNextPeriod || await computeFavNextPeriod();
+        if (bp) { setNextPeriodNote(''); setField('period', bp.nextP); }
+        else { setNextPeriodNote('ยังไม่มีประวัติ CT ของสาขานี้ที่คำนวณงวดถัดไปได้'); setTimeout(() => setNextPeriodNote(''), 3500); }
+      })();
+      return;
+    }
+    if (!h && !requiresContract) { setNextPeriodNote('Item Code นี้ไม่ใช่ CT จึงไม่คำนวณ Next Period'); setTimeout(() => setNextPeriodNote(''), 3500); return; }
+    if (!h) { nextPeriodPendingRef.current = true; setNextPeriodTick(t => t + 1); return; }
+    setNextPeriodNote('');
+    setField('period', h.nextP);
+    // ถ้า Description ถูกล็อกจากการพิมพ์เอง -> แทนที่เฉพาะส่วนงวดในข้อความนั้น
+    const code = String(line1?.itemCode || '').trim().toUpperCase();
+    if (line1?._descTypedFor && line1._descTypedFor === code && typeof line1._descTyped === 'string') {
+      const re = /\d{1,2}\/\d{1,2}\/\d{4}\s*-\s*\d{1,2}\/\d{1,2}\/\d{4}|\d{1,2}\/\d{1,2}\/\d{4}/;
+      const oldTxt = h.oldP;
+      let t = line1._descTyped;
+      t = (oldTxt && t.includes(oldTxt)) ? t.split(oldTxt).join(h.nextP) : t.replace(re, h.nextP);
+      setLine1Field('_descTyped', t);
+    }
+  };
+  applyNextPeriodRef.current = applyNextPeriod;
+
+  // MARKER_LINE_PERIOD_CONFIRM_POPUP_V1 -- เลือก Item CT ในบรรทัด -> คำนวณงวดถัดไปของค่าใช้จ่ายตัวนั้น (Supplier + สาขา + Item Code เดียวกัน) -> Popup ให้ Confirm
+  // ยืนยัน = ใส่งวดใน Description ของบรรทัดนั้นเท่านั้น (แต่ละบรรทัดงวดเหลื่อมกันได้)
+  const [periodConfirm, setPeriodConfirm] = useState(null);   // { idx, code, name, oldP, nextP }
+  const linePeriodPrevRef = useRef({});                       // idx -> Item Code ล่าสุดที่เห็น
+  const linePeriodAskedRef = useRef({});                      // idx|code -> ถามไปแล้ว
+  const fetchNextPeriodForItem = async (code) => {
+    const sup0 = String(form?.supplierCode || '').trim();
+    if (!sup0 || !code) return null;
+    const ibRaw0 = String(form?.branchIBLabel || '').trim();
+    const ib0 = (ibRaw0 && ibRaw0 !== '-' && ibRaw0 !== 'IB-ALL') ? ibRaw0.split('-')[0].trim() : '';
+    const qs = new URLSearchParams({ item_code: code, supplier_code: sup0, bu: bu || '', ...(ib0 ? { ib: ib0 } : {}) }).toString();
+    let rows = [];
+    try { rows = await apiFetch(`/item-description-history?${qs}`); } catch (e) { return null; }
+    // MARKER_LINE_PERIOD_MULTI_STREAM_V1 -- ค่าไฟอาจมีหลายชุดข้อมูล (หลายมิเตอร์/หลายรอบ): แยกชุดจากข้อความ Description (ตัดงวดออก) + Back Description แล้วเอางวดล่าสุดของแต่ละชุด
+    const re2 = new RegExp(PERIOD_ANY_RE.source);
+    const streams = new Map();
+    for (const h of (Array.isArray(rows) ? rows : [])) {
+      const dTxt = String(h.description || '');
+      const mm = dTxt.match(re2);
+      const oldP = mm ? mm[0].trim() : String(h.period || '').trim();
+      const nextP = nextPeriodText(oldP);
+      if (!nextP) continue;
+      const endDt = periodEndDate(oldP.split(/\s*-\s*/).pop());
+      const endMs = endDt ? endDt.getTime() : 0;
+      const label = dTxt.replace(re2, '').replace(/\s+/g, ' ').trim();
+      const key = label + '||' + [h.back1, h.back2, h.back3].map(x => String(x || '').trim()).join('|');
+      const cur = streams.get(key);
+      if (!cur || endMs > cur.endMs) streams.set(key, { oldP, nextP, endMs, label });
+    }
+    const list = Array.from(streams.values()).sort((x, y) => y.endMs - x.endMs);
+    return list.length ? list : null;
+  };
+  const linesCodeKey = lines.map(l => String(l.itemCode || '').trim().toUpperCase()).join('|');
+  useEffect(() => {
+    if (!show) { linePeriodPrevRef.current = {}; linePeriodAskedRef.current = {}; setPeriodConfirm(null); return; }
+    lines.forEach((l, idx) => {
+      const code = String(l.itemCode || '').trim().toUpperCase();
+      const prev = linePeriodPrevRef.current[idx];
+      linePeriodPrevRef.current[idx] = code;
+      if (!code || prev === code) return;                          // ไม่เปลี่ยน Item Code
+      if (String(l.amount || '').trim() || l._periodOverride || l._isAutoVatLine) return;   // บรรทัดที่กรอกแล้ว/โหลดมา ไม่ถาม
+      const item = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === code);
+      if (!item || !String(item.spi1 ?? '').toUpperCase().includes('CT')) return;     // เฉพาะ Item CT ที่เลือกครบแล้ว
+      const askKey = idx + '|' + code;
+      if (linePeriodAskedRef.current[askKey]) return;
+      linePeriodAskedRef.current[askKey] = true;
+      fetchNextPeriodForItem(code).then(list => {
+        if (!list) return;
+        // MARKER_LINE_PERIOD_AUTO_SINGLE_V1 -- ชุดข้อมูลเดียว = ใส่งวดให้เองเลย (ไม่ต้อง Confirm) | มี 2 ชุดขึ้นไป = Popup ให้เลือก
+        if (list.length === 1) {
+          const v = String(list[0].nextP || '').trim();
+          if (v) {
+            idx === 0 ? setLine1Field('_periodOverride', v) : setLineField(idx, '_periodOverride', v);
+            if (!periodNowRef.current) setField('period', v);
+          }
+          return;
+        }
+        setPeriodConfirm({ idx, code, name: String(item.description || '').trim(), cands: list, sel: 0, oldP: list[0].oldP, nextP: list[0].nextP });
+      });
+    });
+    // eslint-disable-next-line
+  }, [show, linesCodeKey]);
+  // MARKER_NEXT_PERIOD_OWN_PERIOD_PICK_V1 -- คลิกค่าใช้จ่ายจากรายการที่ไอคอน Next Period: ใส่ Item Code นั้นในบรรทัด (บรรทัดว่างแรก หรือเพิ่มบรรทัดใหม่) พร้อม "งวดของตัวเอง"
+  const pickExpensePeriod = (it) => {
+    if (!it) return;
+    const code = String(it.code || '').trim().toUpperCase();
+    const item = itemcodeItems.find(i => String(i.code ?? '').trim().toUpperCase() === code) || { code: it.code };
+    let idx = lines.findIndex(l => !String(l.itemCode || '').trim());
+    if (idx < 0) { idx = lines.length; setLines(prev => [...prev, emptyLine('L')]); }
+    selectFavoriteItem(item, idx, 'itemCode');
+    idx === 0 ? setLine1Field('_periodOverride', it.nextP) : setLineField(idx, '_periodOverride', it.nextP);
+    linePeriodAskedRef.current[idx + '|' + code] = true;       // กัน Popup/Auto ซ้ำ
+    if (!periodNowRef.current) setField('period', it.nextP);
+  };
+  const confirmLinePeriod = () => {
+    if (!periodConfirm) return;
+    const v = String(periodConfirm.nextP || '').trim();
+    if (v) {
+      periodConfirm.idx === 0 ? setLine1Field('_periodOverride', v) : setLineField(periodConfirm.idx, '_periodOverride', v);
+      if (!String(form?.period || '').trim()) setField('period', v);   // ให้คอลัมน์ Period ของ Invoice มีค่า (ใช้เป็นประวัติ)
+    }
+    setPeriodConfirm(null);
   };
 
   // ── Back Description 1: ถ้าพิมพ์ตรงกับ Serial Code หรือ BDes1 ของสัญญาที่มี ──
@@ -6472,6 +6940,7 @@ function InvoiceDetailPopup({ show, onClose, batchDueDate = '', form, setField, 
   const calcLine = (line, itemcodeItems, vendorInfo, form, accountCpcRules = []) => {
     // MARKER_INVOICEDETAIL_LINE_IB_CTXMENU_V3 -- Interbranch ระดับ Line: ใช้ Branch ของ Line นี้แทนของหัว Invoice (เหมือนกด IB ปกติ: Desc/CPC/Tax Code คำนวณตาม IB)
     if (line._ibLineForm) form = { ...form, ...line._ibLineForm };
+    if (line._periodOverride) form = { ...form, period: line._periodOverride };   // MARKER_LINE_PERIOD_OVERRIDE_V1 -- งวดของบรรทัดนี้ (Confirm จาก Popup) ใช้แทน Period หัวฟอร์ม
     if (!line.itemCode?.trim()) return { ...line, desc: '', account: '', taxCode: '', whtCode: '', vat: '', wht: '', total: '' };
     const itemData = itemcodeItemsMapPerf.get(line.itemCode.trim().toUpperCase());
     if (!itemData) return line;
@@ -6923,6 +7392,49 @@ function InvoiceDetailPopup({ show, onClose, batchDueDate = '', form, setField, 
             )}
           </div>
         )}
+        {/* MARKER_LINE_PERIOD_CONFIRM_POPUP_V1 -- Popup Confirm งวดของบรรทัด */}
+        {periodConfirm && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setPeriodConfirm(null); }}>
+            <div style={{ width: '470px', background: 'white', borderRadius: '12px', boxShadow: '0 20px 60px rgba(26,58,92,0.3)', overflow: 'hidden' }}
+              onKeyDown={(e) => { if (e.key === 'Escape') setPeriodConfirm(null); if (e.key === 'Enter') confirmLinePeriod(); }}>
+              <div style={{ padding: '13px 18px', borderBottom: '1px solid #f0f0f0' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#1a3a5c' }}>ยืนยันงวด — {periodConfirm.name || periodConfirm.code} ({periodConfirm.code})</div>
+                <div style={{ fontSize: '11px', color: '#999', marginTop: '2px' }}>คำนวณจากประวัติของ Supplier + สาขานี้ · ใช้เฉพาะบรรทัดนี้</div>
+              </div>
+              <div style={{ padding: '14px 18px', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {Array.isArray(periodConfirm.cands) && periodConfirm.cands.length > 1 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                    <div style={{ color: '#a35a00', fontSize: '11px', fontWeight: 700 }}>พบ {periodConfirm.cands.length} ชุดข้อมูล — เลือกชุดที่ต้องการ</div>
+                    {periodConfirm.cands.map((c, i) => (
+                      <div key={i} onClick={() => setPeriodConfirm(p => ({ ...p, sel: i, oldP: c.oldP, nextP: c.nextP }))}
+                        style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 9px', borderRadius: '7px', cursor: 'pointer', fontSize: '11px', border: periodConfirm.sel === i ? '1px solid #e67e22' : '1px solid #e8e8e8', background: periodConfirm.sel === i ? '#FFF3E0' : 'white', color: '#1a3a5c' }}>
+                        <span style={{ width: '12px', height: '12px', borderRadius: '50%', border: '1.5px solid #e67e22', background: periodConfirm.sel === i ? '#e67e22' : 'white', flexShrink: 0 }} />
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.label}>{c.label || '(ไม่มีข้อความเพิ่มเติม)'}</span>
+                        <span style={{ color: '#888', whiteSpace: 'nowrap' }}>{c.oldP}</span>
+                        <span style={{ color: '#a35a00', fontWeight: 700 }}>→ {c.nextP}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <span style={{ width: '70px', color: '#888', fontSize: '11px' }}>งวดล่าสุด</span>
+                  <div style={{ flex: 1, border: '1px solid #e0e0e0', borderRadius: '7px', padding: '6px 9px', color: '#1a3a5c', background: '#fafbfc' }}>{periodConfirm.oldP}</div>
+                </div>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <span style={{ width: '70px', color: '#888', fontSize: '11px' }}>งวดถัดไป</span>
+                  <input autoFocus value={periodConfirm.nextP} onChange={e => setPeriodConfirm(p => ({ ...p, nextP: e.target.value }))}
+                    style={{ flex: 1, border: '1px solid #e67e22', borderRadius: '7px', padding: '6px 9px', background: '#FFF3E0', color: '#a35a00', fontWeight: 700, fontSize: '12px', outline: 'none' }} />
+                </div>
+                <div style={{ color: '#999', fontSize: '11px' }}>แก้ไขงวดได้ก่อนยืนยัน</div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '10px 18px', background: '#fafbfc' }}>
+                <button type="button" onClick={() => setPeriodConfirm(null)} style={{ border: '1px solid #ccc', borderRadius: '7px', padding: '6px 16px', fontSize: '12px', color: '#555', background: 'white', cursor: 'pointer' }}>ข้าม</button>
+                <button type="button" onClick={confirmLinePeriod} style={{ border: '1px solid #1a3a5c', borderRadius: '7px', padding: '6px 16px', fontSize: '12px', color: 'white', background: '#1a3a5c', cursor: 'pointer' }}>ยืนยัน</button>
+              </div>
+            </div>
+          </div>
+        )}
         <BranchSearchPopup
           show={lineIbPickIdx >= 0}
           onClose={() => setLineIbPickIdx(-1)}
@@ -7315,7 +7827,9 @@ function InvoiceDetailPopup({ show, onClose, batchDueDate = '', form, setField, 
                 </div>
               )}
             </div>
-            <PeriodPicker value={form?.period || ''} onChange={v => setField('period', v)} recentValues={recentPeriods} />
+            <PeriodPicker value={form?.period || ''} onChange={v => setField('period', v)} recentValues={recentPeriods}
+              nextAction={(requiresContract || favNextPeriod) ? { items: (!nextPeriodHint && favNextPeriod) ? (favNextPeriod.items || []) : [], onPick: (it) => pickExpensePeriod(it), enabled: true, warn: !!nextPeriodNote && !nextPeriodHint, onClick: () => applyNextPeriod(),
+                title: nextPeriodNote ? nextPeriodNote : (!nextPeriodHint && favNextPeriod) ? `Next Period — ค่าใช้จ่ายที่เคยใช้ (เทียบ Favorite CT กับ History)\n${(favNextPeriod.items || []).map(it => `${it.code} ${it.name}\n   ${it.oldP}  →  ${it.nextP}`).join('\n')}\n(กด = ใส่งวดของรายการล่าสุด ${favNextPeriod.nextP})` : nextPeriodHint ? `Next Period (คำนวณจากโครงสร้าง Description ของ ${nextPeriodHint.total} รายการย้อนหลัง)\n${nextPeriodHint.oldP}  →  ${nextPeriodHint.nextP}` : 'Next Period — กดเพื่อใส่งวดถัดไปในช่อง Period (คำนวณจากค่าใช้จ่าย CT ที่ Supplier นี้เคยใช้)' } : null} />
             {/* MARKER_APCONTROLLER_CUSTOMIZE_INVOICE_V1 */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flexShrink: 0 }}>
               <label style={fieldLabel}>&nbsp;</label>
@@ -8149,8 +8663,9 @@ function InvoiceDetailPopup({ show, onClose, batchDueDate = '', form, setField, 
         />
         <ContractPopup
           show={showContractPopup}
-          onClose={() => setShowContractPopup(false)}
-          onSelect={handleSelectContract}
+          detected={contractDetected}
+          onClose={() => { setShowContractPopup(false); setContractDetected(false); }}
+          onSelect={(it) => { setContractDetected(false); handleSelectContract(it); }}
           vendorCode={form?.supplierCode || ''}
           bu={bu}
           fetchCollection={fetchCollection}
@@ -9228,7 +9743,8 @@ function BucketItemPopup({ buInfo = null, show, onClose, invoice, mode = 'view',
       const v = String(it?.value ?? '').trim().toUpperCase();
       return (v === 'CTA-AP' || v === 'CTA-C/V' || v === 'CTA-NN') ? v : '';
     };
-    if (!ctaOverride) {
+    // MARKER_CTA_EDIT_INVOICE_NO_POPUP_V1 -- Popup Due Date / Paid / Index ขึ้นเฉพาะ Step Invoice Detail (Submit) เท่านั้น -- Edit Invoice ไม่ถามซ้ำ
+    if (false && !ctaOverride) {
       const ctaFoundB = cleanedLines.map(getCtaValueB).find(Boolean);
       if (ctaFoundB) { setCtaPopup({ ctaValue: ctaFoundB }); return; }
     }
@@ -13962,6 +14478,18 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     if (el) { el.style.left = bucketTipPos.current.x + 'px'; el.style.top = bucketTipPos.current.y + 'px'; }
   };
   const hideBucketTip = () => { clearTimeout(bucketTipTimer.current); setBucketTip(null); };
+  // MARKER_BUCKET_ROW_TOOLTIP_AUTOHIDE_V1 -- ลบ/คลิกในแถวแล้วแถวหายไปโดยไม่มี mouseleave -> Tooltip ค้าง: ซ่อนเมื่อกดเมาส์ และซ่อนเมื่อเมาส์ไม่ได้อยู่บนแถว Bucket
+  useEffect(() => {
+    const onDown = () => { clearTimeout(bucketTipTimer.current); setBucketTip(null); };
+    const onMove = (e) => {
+      if (!bucketTipRef.current) return;
+      const t = e.target;
+      if (!(t && t.closest && t.closest('tr[data-bkey]'))) { clearTimeout(bucketTipTimer.current); setBucketTip(null); }
+    };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('mousemove', onMove, true);
+    return () => { document.removeEventListener('mousedown', onDown, true); document.removeEventListener('mousemove', onMove, true); clearTimeout(bucketTipTimer.current); };
+  }, []);
   const renderBucketTip = (inv) => {
     const fm = (v) => (v != null && v !== '' && !isNaN(parseFloat(v))) ? parseFloat(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
     const fd = inv?.form_data || {};
@@ -14124,6 +14652,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   const [bucketViewMode, setBucketViewMode] = useState('invoice');
   // ── Batch Bucket Summary: Collapse/Expand (Default ยุบไว้ก่อน) ──
   const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const [showChangeDue, setShowChangeDue] = useState(false); // MARKER_CHANGE_DUE_BULK_V1
   const [showSendToModal, setShowSendToModal] = useState(false); // ✅ Send To modal
   const branchJustResolved = useRef(false); // ✅ ป้องกัน blur ยิงซ้ำหลัง resolveBranch
 
@@ -14143,7 +14672,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
   // ── Escape -> กลับ Batch Setup / End -> ไป Batch Preview (ต้องไม่มี Popup อื่นเปิดอยู่) ──
   useEffect(() => {
     const handleGlobalKeydown = (e) => {
-      const anyPopupOpen = showInvoiceDetail || showSupplierPopup || showBranchPopup || bucketPopup.show || showSendToModal;
+      const anyPopupOpen = showInvoiceDetail || showSupplierPopup || showBranchPopup || bucketPopup.show || showSendToModal || showChangeDue;
       if (anyPopupOpen) return;
 
       if (e.key === 'Enter') {
@@ -14172,7 +14701,7 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     };
     window.addEventListener('keydown', handleGlobalKeydown);
     return () => window.removeEventListener('keydown', handleGlobalKeydown);
-  }, [showInvoiceDetail, showSupplierPopup, showBranchPopup, bucketPopup.show, showSendToModal, form.supplierCode, form.branchNo, invoices.length, onBack, onNext]);
+  }, [showInvoiceDetail, showSupplierPopup, showBranchPopup, bucketPopup.show, showSendToModal, showChangeDue, form.supplierCode, form.branchNo, invoices.length, onBack, onNext]);
   const HEADER_FOCUS_ORDER = [
     ['supplierCode',  supplierCodeRef],
     ['branchNo',      branchNoRef],
@@ -14959,6 +15488,34 @@ function InvoiceEntry({ batchConfig, invoices, setInvoices, onNext, onBack = () 
     setSelectedRows(new Set());
   };
 
+  // MARKER_CHANGE_DUE_BULK_V1 -- เปลี่ยน Due Date ให้ทุกแถวที่ติ๊ก Checkbox (form_data.dueDate)
+  const handleChangeDueSelected = async (newIso) => {
+    if (batchConfig?.viewOnly) {
+      confirmDialog.alert('โหมดดูอย่างเดียว (View Only) — ไม่สามารถเปลี่ยน Due Date ได้', { variant: 'warning' });
+      return;
+    }
+    if (!selectedRows.size || !newIso) return;
+    const targets = invoices.filter((inv, i) => selectedRows.has(inv.id || inv._localId || i));
+    try {
+      const synced = targets.filter(inv => inv._synced && inv.id);
+      const results = await Promise.all(synced.map(inv =>
+        db.from('bucket_list').update({ form_data: { ...(inv.form_data || {}), dueDate: newIso } }).eq('id', inv.id)));
+      const failed = results.find(r => r && r.error);
+      if (failed) throw failed.error;
+      if (synced.length) { try { broadcastWs('bucket_item_updated', { ids: synced.map(inv => inv.id) }); } catch (e) { console.error('[broadcast bucket_item_updated]', e); } }
+    } catch (err) {
+      confirmDialog.alert('เปลี่ยน Due Date ไม่สำเร็จ: ' + (err?.message || JSON.stringify(err)), { variant: 'danger' });
+      return;
+    }
+    setInvoices(list => {
+      const next = list.map((inv, i) => selectedRows.has(inv.id || inv._localId || i)
+        ? { ...inv, form_data: { ...(inv.form_data || {}), dueDate: newIso } } : inv);
+      saveLocalBucket(next);
+      return next;
+    });
+    setShowChangeDue(false);
+  };
+
   // MARKER_EDITGROUP_RESPLIT_V1 -- แก้ไขทั้งกลุ่ม (รวม Invoice ที่ Split จาก Submit เดียวกันมาแก้พร้อมกัน)
   const handleEditGroup = (groupItems) => {
     if (!groupItems || groupItems.length === 0) return;
@@ -15723,7 +16280,7 @@ const handleSelectBranch = (item, meta = {}) => {
         quickVendors={quickVendors}
         initialViewCode={supplierViewCode}
       />
-      <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} />
+      <BranchSearchPopup show={showBranchPopup} onClose={() => setShowBranchPopup(false)} onSelect={handleSelectBranch} branchItems={branchItems} bu={batchConfig?.bu || ''} onSaveBranch={handleSaveBranch} branchOptions={branchOptions} supplierCode={form.supplierCode} />
 
       <BucketItemPopup
         buInfo={batchConfig?.buInfo || null} // MARKER_ITEMCODE_GROUPBOOK_V1
@@ -15781,6 +16338,7 @@ const handleSelectBranch = (item, meta = {}) => {
           </div>
         </div>
       )}
+      <ChangeDueBulkPopup show={showChangeDue} count={selectedRows.size} onConfirm={handleChangeDueSelected} onCancel={() => setShowChangeDue(false)} />
       <SendToModal
         show={showSendToModal}
         onClose={() => setShowSendToModal(false)}
@@ -15894,6 +16452,12 @@ const handleSelectBranch = (item, meta = {}) => {
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: '90px', height: '30px', padding: '0 12px', borderRadius: '6px', border: '0.5px solid #f7c1c1', background: '#FCEBEB', color: '#791F1F', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                   Delete
+                </button>
+                {/* MARKER_CHANGE_DUE_BULK_V1 */}
+                <button onClick={() => setShowChangeDue(true)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: '90px', height: '30px', padding: '0 12px', borderRadius: '6px', border: '0.5px solid #e8d9a8', background: '#FFF8E6', color: '#7A5B00', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                  Change Due
                 </button>
                 <button onClick={() => setShowSendToModal(true)}
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', minWidth: '90px', height: '30px', padding: '0 12px', borderRadius: '6px', border: '0.5px solid #c5d8f0', background: '#eef4fb', color: '#1a3a5c', fontSize: '12px', fontWeight: '500', cursor: 'pointer' }}>
@@ -18621,14 +19185,18 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
       `sendMode=${encodeURIComponent(sendMode)}`,
     ].filter(Boolean).join('&');
     const uri = `fastapn://${params}`;
-    // detect fastapn:// protocol via window blur
-    let handled = false;
-    const t = setTimeout(() => { if (!handled) setShowInstallGuide(true); }, 1500);
-    window.addEventListener('blur', function onBlur() {
-      handled = true; clearTimeout(t); setShowSendConfirm(true);
-      window.removeEventListener('blur', onBlur);
-    }, { once: true });
-    window.location.href = uri;
+    // MARKER_SP_LISTENER_LAUNCH_V1 -- ส่งผ่าน Listener ในเครื่อง (ไม่มีกล่อง Open) | ถ้าไม่ได้ -> ใช้ลิงก์ fastapn:// เดิม + ตรวจจับด้วย blur
+    spLaunchAsync(uri).then((viaListener) => {
+      if (viaListener) { setShowSendConfirm(true); return; }
+      // detect fastapn:// protocol via window blur
+      let handled = false;
+      const t = setTimeout(() => { if (!handled) setShowInstallGuide(true); }, 1500);
+      window.addEventListener('blur', function onBlur() {
+        handled = true; clearTimeout(t); setShowSendConfirm(true);
+        window.removeEventListener('blur', onBlur);
+      }, { once: true });
+      window.location.href = uri;
+    });
   };
 
   const handleConfirmSent = async () => {

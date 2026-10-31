@@ -128,6 +128,7 @@ export async function checkAndCleanupFileStorage() {
        AND module != 'ap-export'
        AND module != 'invoice-register'
        AND module != 'ie-macrologic'
+       AND module != 'gl-macro' -- MARKER_FILESTORAGE_GLMACRO_V1
        AND created_at < NOW() - (retention_days * 3.0 / 7.0) * INTERVAL '1 day'`
   );
 
@@ -176,6 +177,7 @@ export async function checkAndCleanupFileStorage() {
        AND module != 'ap-export'
        AND module != 'invoice-register'
        AND module != 'ie-macrologic'
+       AND module != 'gl-macro' -- MARKER_FILESTORAGE_GLMACRO_V1
        AND created_at < NOW() - retention_days * INTERVAL '1 day'`
   );
 
@@ -189,6 +191,14 @@ export async function checkAndCleanupFileStorage() {
        AND created_at < NOW() - INTERVAL '48 hours'`
   );
 
+  // MARKER_FILESTORAGE_GLMACRO_V1 -- gl-macro (Generate by GL Macro): ไม่มี Recycle Bin ลบตรงหลัง 48 ชม. นับจาก created_at
+  const { rows: toDeleteGlMacro } = await pool.query(
+    `SELECT id, file_path FROM file_storage
+     WHERE module = 'gl-macro'
+       AND status = 'active'
+       AND created_at < NOW() - INTERVAL '48 hours'`
+  );
+
   // MARKER_FILESTORAGE_VATMAIL_RETENTION_3DAYS_V1
   // ── vat-mail (ไฟล์แนบ Auto Mail / Config Email): ปกติลบทันทีหลังผู้ใช้ยืนยันหลังเปิด Draft ──
   // ── ถ้าไม่มีใครลบ (ปิดหน้าเว็บก่อนกดยืนยัน ฯลฯ) ให้ลบทิ้งเองหลัง 3 วัน นับจาก created_at ──
@@ -198,7 +208,7 @@ export async function checkAndCleanupFileStorage() {
        AND created_at < NOW() - INTERVAL '3 days'`
   );
 
-  const toDelete = [...toDeleteApproved, ...toDeleteInvoiceRegister, ...toDeleteOther, ...toDeleteApExportImages, ...toDeleteIeMacroLogic, ...toDeleteVatMail];
+  const toDelete = [...toDeleteApproved, ...toDeleteInvoiceRegister, ...toDeleteOther, ...toDeleteApExportImages, ...toDeleteIeMacroLogic, ...toDeleteGlMacro, ...toDeleteVatMail];
 
   for (const row of toDelete) {
     try {
@@ -340,6 +350,9 @@ router.post("/generate-raw", async (req, res) => {
 
     if (!bu || !refId || !fileBase64) {
       return res.status(400).json({ error: "ข้อมูลไม่ครบ (ต้องมี bu, refId, fileBase64)" });
+    }
+    if (module === "gl-macro" && !canUseGlMacro(req)) { // MARKER_FILESTORAGE_GLMACRO_V1
+      return res.status(403).json({ error: "ไม่มีสิทธิ์ใช้งาน Generate by GL Macro" });
     }
 
     // ── Decode Base64 กลับเป็นไฟล์ต้นฉบับตรงๆ (Byte ต่อ Byte ไม่มีการแปลงใดๆ) ──
@@ -672,8 +685,15 @@ router.post("/delete-by-ref", async (req, res) => {
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { rows } = await pool.query(`SELECT file_path FROM file_storage WHERE id = $1`, [id]);
+    const { rows } = await pool.query(`SELECT file_path, module, owner_username FROM file_storage WHERE id = $1`, [id]);
     if (rows.length === 0) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+    if (rows[0].module === "gl-macro") { // MARKER_FILESTORAGE_GLMACRO_ALLJOB_V2 -- คนอื่นเห็น/ดาวน์โหลดได้แต่ลบไม่ได้
+      const delUser = await getUsernameByEmail(req.user.email);
+      const delRole = (req.user && req.user.appRole) || "";
+      if (rows[0].owner_username !== delUser && delRole !== "Owner" && delRole !== "Admin") {
+        return res.status(403).json({ error: "ลบได้เฉพาะไฟล์ของตัวเอง" });
+      }
+    }
     try {
       if (fs.existsSync(rows[0].file_path)) fs.unlinkSync(rows[0].file_path);
     } catch (err) {
@@ -689,13 +709,13 @@ router.delete("/:id", async (req, res) => {
 
 // MARKER_OUTLOOK_HANDLER_VERSION_V1 -- เวอร์ชัน Outlook Handler (v2 = เปิด Outlook ให้เองถ้ายังไม่เปิด + รายงานเวอร์ชันกลับ Backend) | ทุกครั้งที่แก้สคริปต์ Handler ให้เพิ่มเลขนี้ + เวลาปล่อย
 // MARKER_OUTLOOK_HANDLER_BODYPATH_V1 -- v3 = รองรับพารามิเตอร์ bodyPath (path ใต้ /api/ ของ Backend) : Handler ดึงเนื้อเมล HTML จาก Backend ด้วย Token ผู้ใช้ แล้วใช้เป็น HTMLBody (เนื้อเมลใหญ่ไม่ติดขีดจำกัดความยาวของ URL fastapn://) | ดึงไม่สำเร็จ = บังคับเป็น Draft ไม่ส่งเอง
-const OUTLOOK_HANDLER_VERSION = 3;
-const OUTLOOK_HANDLER_RELEASED_AT = "2026-10-16T01:00:00.000Z";
+const OUTLOOK_HANDLER_VERSION = 4; // MARKER_OUTLOOK_HANDLER_PING_V1 -- v4 = รองรับ ping=1 (รายงานเวอร์ชันกลับ Backend แล้วออก ไม่เปิดเมล) ให้หน้า Home ตรวจว่าเครื่องติดตั้ง Handler หรือยัง
+const OUTLOOK_HANDLER_RELEASED_AT = "2026-10-25T16:10:00.000Z";
 
 // -- GET /api/file-storage/outlook-handler --
 router.get("/outlook-handler", async (req, res) => {
   try {
-    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ver=${OUTLOOK_HANDLER_VERSION};try{$rb=(@{version=$ver;machine=$env:COMPUTERNAME}|ConvertTo-Json -Compress);Invoke-RestMethod -Uri "$api/api/file-storage/outlook-handler/report" -Method Post -Headers @{Authorization="Bearer $tok"} -ContentType 'application/json' -Body $rb -TimeoutSec 5|Out-Null}catch{}\r\n  if(-not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)){if(Get-Process -Name olk -ErrorAction SilentlyContinue){throw 'ตรวจพบ New Outlook (olk.exe) ซึ่งไม่รองรับ กรุณาสลับเป็น Classic Outlook'};Start-Process 'outlook.exe';for($w=0;$w -lt 30 -and -not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue);$w++){Start-Sleep -Seconds 1};Start-Sleep -Seconds 3}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$bp=$p['bodyPath'];if($bp -and $bp.StartsWith('/api/')){try{$rw=Invoke-WebRequest -Uri ($api+$bp) -Headers @{Authorization="Bearer $tok"} -UseBasicParsing -TimeoutSec 60;$ft=[System.Text.Encoding]::UTF8.GetString($rw.RawContentStream.ToArray());if($ft){$p['bodyHtml']=$ft}else{throw 'empty body'}}catch{$mode='draft';"$(Get-Date -Format s) bodyPath=$bp err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}};$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display();try{$mail.GetInspector.Activate()}catch{};try{Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FaFg{[DllImport("user32.dll")]public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);}' -ErrorAction SilentlyContinue;[FaFg]::keybd_event(0x12,0,0,[UIntPtr]::Zero);[FaFg]::keybd_event(0x12,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150;$ws=New-Object -ComObject WScript.Shell;[void]$ws.AppActivate([string]$subj);$mail.GetInspector.Activate()}catch{}}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;
+    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ver=${OUTLOOK_HANDLER_VERSION};try{$rb=(@{version=$ver;machine=$env:COMPUTERNAME}|ConvertTo-Json -Compress);Invoke-RestMethod -Uri "$api/api/file-storage/outlook-handler/report" -Method Post -Headers @{Authorization="Bearer $tok"} -ContentType 'application/json' -Body $rb -TimeoutSec 5|Out-Null}catch{}\r\n  if($p['ping'] -eq '1'){exit}\r\n  if(-not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)){if(Get-Process -Name olk -ErrorAction SilentlyContinue){throw 'ตรวจพบ New Outlook (olk.exe) ซึ่งไม่รองรับ กรุณาสลับเป็น Classic Outlook'};Start-Process 'outlook.exe';for($w=0;$w -lt 30 -and -not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue);$w++){Start-Sleep -Seconds 1};Start-Sleep -Seconds 3}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$bp=$p['bodyPath'];if($bp -and $bp.StartsWith('/api/')){try{$rw=Invoke-WebRequest -Uri ($api+$bp) -Headers @{Authorization="Bearer $tok"} -UseBasicParsing -TimeoutSec 60;$ft=[System.Text.Encoding]::UTF8.GetString($rw.RawContentStream.ToArray());if($ft){$p['bodyHtml']=$ft}else{throw 'empty body'}}catch{$mode='draft';"$(Get-Date -Format s) bodyPath=$bp err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}};$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display();try{$mail.GetInspector.Activate()}catch{};try{Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FaFg{[DllImport("user32.dll")]public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);}' -ErrorAction SilentlyContinue;[FaFg]::keybd_event(0x12,0,0,[UIntPtr]::Zero);[FaFg]::keybd_event(0x12,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150;$ws=New-Object -ComObject WScript.Shell;[void]$ws.AppActivate([string]$subj);$mail.GetInspector.Activate()}catch{}}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;
     const reg = `Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn]\r\n@="FastAPN Outlook Handler"\r\n"URL Protocol"=""\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn\\DefaultIcon]\r\n@="powershell.exe,0"\r\n\r\n[HKEY_CURRENT_USER\\Software\\Classes\\fastapn\\shell\\open\\command]\r\n@="wscript.exe //B //Nologo \\"D:\\\\apps\\\\fastapn-run-hidden.vbs\\" \\"D:\\\\apps\\\\fastapn-outlook.ps1\\" \\"%1\\""`;
     const setupPs1 = `\uFEFF# FastAPN Outlook Handler - Setup ทั้งหมดในตัวเดียว\r\n# วิธีใช้: คลิกขวาไฟล์นี้ -> Run with PowerShell (ไม่ต้อง Admin)\r\n$ErrorActionPreference = "Stop"\r\n$sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path\r\nWrite-Host "=== FastAPN Outlook Handler Setup ===" -ForegroundColor Cyan\r\ntry {\r\n    if (-not (Test-Path "D:\\apps")) {\r\n        New-Item -ItemType Directory -Path "D:\\apps" -Force | Out-Null\r\n        Write-Host "[1/3] สร้างโฟลเดอร์ D:\\apps เรียบร้อย" -ForegroundColor Green\r\n    } else {\r\n        Write-Host "[1/3] โฟลเดอร์ D:\\apps มีอยู่แล้ว" -ForegroundColor Yellow\r\n    }\r\n    $ps1Source = Join-Path $sourceDir "fastapn-outlook.ps1"\r\n    if (-not (Test-Path $ps1Source)) { throw "ไม่พบไฟล์ fastapn-outlook.ps1 ที่ $ps1Source" }\r\n    Copy-Item $ps1Source -Destination "D:\\apps\\fastapn-outlook.ps1" -Force\r\n    Write-Host "[2/3] ก๊อป fastapn-outlook.ps1 ไปที่ D:\\apps\\ เรียบร้อย" -ForegroundColor Green\r\n    $vbsSource = Join-Path $sourceDir "fastapn-run-hidden.vbs"\r\n    if (-not (Test-Path $vbsSource)) { throw "ไม่พบไฟล์ fastapn-run-hidden.vbs ที่ $vbsSource" }\r\n    Copy-Item $vbsSource -Destination "D:\\apps\\fastapn-run-hidden.vbs" -Force\r\n    $regSource = Join-Path $sourceDir "install-fastapn-handler.reg"\r\n    if (-not (Test-Path $regSource)) { throw "ไม่พบไฟล์ install-fastapn-handler.reg ที่ $regSource" }\r\n    reg import "$regSource" *>$null; if ($LASTEXITCODE -ne 0) { throw "reg import failed (exit code $LASTEXITCODE)" }\r\n    Write-Host "[3/3] Import Registry เรียบร้อย" -ForegroundColor Green\r\n    Write-Host ""\r\n    Write-Host "=== ติดตั้งสำเร็จ! กลับไปกดปุ่ม เปิด Outlook Draft ได้เลย ===" -ForegroundColor Cyan\r\n} catch {\r\n    Write-Host ""\r\n    Write-Host "=== เกิดข้อผิดพลาด ===" -ForegroundColor Red\r\n    Write-Host $_.Exception.Message -ForegroundColor Red\r\n}\r\nWrite-Host ""\r\nRead-Host "กด Enter เพื่อปิดหน้าต่างนี้"`;
     const readme = `FastAPN Outlook Handler\r\n=======================\r\nวิธีติดตั้ง (แนะนำ - ขั้นตอนเดียว):\r\n1. ดับเบิลคลิกไฟล์ setup-fastapn-outlook.bat\r\n2. รอจนขึ้น "ติดตั้งสำเร็จ!" แล้วกด Enter ปิดหน้าต่าง\r\n3. กลับมากดปุ่ม เปิด Outlook Draft ได้เลย`;
@@ -717,7 +737,7 @@ router.get("/outlook-handler", async (req, res) => {
 // -- GET /api/file-storage/outlook-handler/ps1-only --
 router.get("/outlook-handler/ps1-only", async (req, res) => {
   try {
-    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ver=${OUTLOOK_HANDLER_VERSION};try{$rb=(@{version=$ver;machine=$env:COMPUTERNAME}|ConvertTo-Json -Compress);Invoke-RestMethod -Uri "$api/api/file-storage/outlook-handler/report" -Method Post -Headers @{Authorization="Bearer $tok"} -ContentType 'application/json' -Body $rb -TimeoutSec 5|Out-Null}catch{}\r\n  if(-not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)){if(Get-Process -Name olk -ErrorAction SilentlyContinue){throw 'ตรวจพบ New Outlook (olk.exe) ซึ่งไม่รองรับ กรุณาสลับเป็น Classic Outlook'};Start-Process 'outlook.exe';for($w=0;$w -lt 30 -and -not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue);$w++){Start-Sleep -Seconds 1};Start-Sleep -Seconds 3}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$bp=$p['bodyPath'];if($bp -and $bp.StartsWith('/api/')){try{$rw=Invoke-WebRequest -Uri ($api+$bp) -Headers @{Authorization="Bearer $tok"} -UseBasicParsing -TimeoutSec 60;$ft=[System.Text.Encoding]::UTF8.GetString($rw.RawContentStream.ToArray());if($ft){$p['bodyHtml']=$ft}else{throw 'empty body'}}catch{$mode='draft';"$(Get-Date -Format s) bodyPath=$bp err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}};$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display();try{$mail.GetInspector.Activate()}catch{};try{Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FaFg{[DllImport("user32.dll")]public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);}' -ErrorAction SilentlyContinue;[FaFg]::keybd_event(0x12,0,0,[UIntPtr]::Zero);[FaFg]::keybd_event(0x12,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150;$ws=New-Object -ComObject WScript.Shell;[void]$ws.AppActivate([string]$subj);$mail.GetInspector.Activate()}catch{}}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;;
+    const ps1 = `\uFEFF# FastAPN Outlook Handler\r\n# วางไว้ที่ D:\\apps\\fastapn-outlook.ps1\r\nparam([string]$Uri)\r\ntry {\r\n  $raw=($Uri -replace '^fastapn://','') -replace '/$',''; $p=@{}\r\n  foreach($x in $raw -split '&'){$kv=$x -split '=',2; if($kv.Count -eq 2){$p[$kv[0]]=[System.Uri]::UnescapeDataString($kv[1])}}\r\n  $to=$p['to'];$cc=$p['cc'];$subj=$p['subject'];$body=$p['body'];$ids=$p['attachIds'] -split ',';$namesRaw=$p['attachNames'] -split ',';$tok=$p['token'];$api=$p['apiBase'].TrimEnd('/');$mode=$p['sendMode']\r\n  if(-not(Test-Path 'D:\\apps')){New-Item -ItemType Directory -Path 'D:\\apps'|Out-Null}\r\n  $tmp='D:\\tmp\\fastapn-attach'; if(-not(Test-Path $tmp)){New-Item -ItemType Directory -Path $tmp|Out-Null}\r\n  $paths=@()\r\n  for($i=0;$i -lt $ids.Count;$i++){$id=$ids[$i].Trim();if(-not $id){continue};$url="$api/api/file-storage/$id/download";$rawName=if($namesRaw.Count -gt $i -and $namesRaw[$i]){[System.Uri]::UnescapeDataString($namesRaw[$i])}else{"$id.xls"};$safeName=[System.IO.Path]::GetFileName($rawName);if(-not $safeName){$safeName="$id.xls"};$f="$tmp\\$safeName"\r\n    try{Invoke-WebRequest -Uri $url -Headers @{Authorization="Bearer $tok"} -OutFile $f -UseBasicParsing;$paths+=$f}catch{"$(Get-Date -Format s) id=$id url=$url err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}}\r\n  $ver=${OUTLOOK_HANDLER_VERSION};try{$rb=(@{version=$ver;machine=$env:COMPUTERNAME}|ConvertTo-Json -Compress);Invoke-RestMethod -Uri "$api/api/file-storage/outlook-handler/report" -Method Post -Headers @{Authorization="Bearer $tok"} -ContentType 'application/json' -Body $rb -TimeoutSec 5|Out-Null}catch{}\r\n  if($p['ping'] -eq '1'){exit}\r\n  if(-not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue)){if(Get-Process -Name olk -ErrorAction SilentlyContinue){throw 'ตรวจพบ New Outlook (olk.exe) ซึ่งไม่รองรับ กรุณาสลับเป็น Classic Outlook'};Start-Process 'outlook.exe';for($w=0;$w -lt 30 -and -not(Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue);$w++){Start-Sleep -Seconds 1};Start-Sleep -Seconds 3}\r\n  $ol=New-Object -ComObject Outlook.Application;$mail=$ol.CreateItem(0)\r\n  $mail.To=$to;if($cc){$mail.CC=$cc};$mail.Subject=$subj;$bodyHtml=$body -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\r\n','<br>' -replace '\n','<br>';$bp=$p['bodyPath'];if($bp -and $bp.StartsWith('/api/')){try{$rw=Invoke-WebRequest -Uri ($api+$bp) -Headers @{Authorization="Bearer $tok"} -UseBasicParsing -TimeoutSec 60;$ft=[System.Text.Encoding]::UTF8.GetString($rw.RawContentStream.ToArray());if($ft){$p['bodyHtml']=$ft}else{throw 'empty body'}}catch{$mode='draft';"$(Get-Date -Format s) bodyPath=$bp err=$($_.Exception.Message)" | Out-File -FilePath "$tmp\\debug.log" -Append -Encoding utf8}};$hr=$p['bodyHtml'];if($hr){$mail.HTMLBody=$hr}else{$mail.HTMLBody='<div style="font-family:Tahoma;font-size:10pt">' + $bodyHtml + '</div>'} \r\n  foreach($path in $paths){if(Test-Path $path){$mail.Attachments.Add($path)|Out-Null}}\r\n  try{$mail.Recipients.ResolveAll()|Out-Null}catch{}\r\n  if($mode -eq 'send'){$mail.Send()}else{$mail.Display();try{$mail.GetInspector.Activate()}catch{};try{Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class FaFg{[DllImport("user32.dll")]public static extern void keybd_event(byte b,byte s,uint f,UIntPtr e);}' -ErrorAction SilentlyContinue;[FaFg]::keybd_event(0x12,0,0,[UIntPtr]::Zero);[FaFg]::keybd_event(0x12,0,2,[UIntPtr]::Zero);Start-Sleep -Milliseconds 150;$ws=New-Object -ComObject WScript.Shell;[void]$ws.AppActivate([string]$subj);$mail.GetInspector.Activate()}catch{}}\r\n}catch{Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.MessageBox]::Show("FastAPN Error: $_","Error")}`;;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="fastapn-outlook.ps1"');
     res.send(Buffer.from(ps1, 'utf8'));
@@ -756,6 +776,7 @@ const spCanUse = async (req) => {
   const u = req.user || {};
   if (u.appRole === "Owner") return true;
   const p = u.permissions || {};
+  if (p.GL === true) return true; // MARKER_SP_HANDLER_PROFILE_V1 -- มีแค่ Permission GL ก็โหลด/ใช้ Handler (ปลายทาง gl/doh) ได้
   try {
     let vatOk = !!p.VAT;
     const r = await pool.query("SELECT id FROM user_roles WHERE email = $1 LIMIT 1", [u.email]);
@@ -769,6 +790,34 @@ const spCanUse = async (req) => {
   } catch (_) { return false; }
 };
 const spDeny = (res) => res.status(403).json({ error: "เฉพาะ Owner / ผู้ที่เข้า VAT Control (Document Access) ได้ / ผู้มีสิทธิ์ที่เปิดไว้ใน GL Access" });
+// MARKER_SP_HANDLER_PROFILE_V1 -- ตารางปลายทาง Handler: key -> ชื่อโฟลเดอร์ที่ล็อกไว้ + ทางเข้า (entry) + กลุ่มสิทธิ์ | เพิ่ม Permission/ปลายทางใหม่ = เพิ่มแถวที่นี่ที่เดียว
+// กลุ่ม vat = ทางเข้า "VAT Controller" (I-Pro / IE / Manual / VAT) | กลุ่ม gl = ทางเข้า "_Taii" (GL)
+const SP_DEST_TABLE = {
+  recon:  { label: "Z_Report Reconcile",                   entry: "VAT Controller", group: "vat" },
+  upload: { label: "Z_AllSystemUpload",                    entry: "VAT Controller", group: "vat" },
+  ap:     { label: "Z_Report Reconcile - Account Payable", entry: "",               group: "vat" },
+  gl:     { label: "Reconcile_Backup",                     entry: "_Taii",          group: "gl" },
+  doh:    { label: "Z_Backup_DOH",                         entry: "_Taii",          group: "gl" },
+};
+const spGroupsOf = async (req) => {
+  const u = req.user || {}; const p = u.permissions || {};
+  if (u.appRole === "Owner") return { vat: true, gl: true };
+  let vat = false;
+  try {
+    vat = !!p.VAT;
+    const r = await pool.query("SELECT id FROM user_roles WHERE email = $1 LIMIT 1", [u.email]);
+    const uid = r.rows[0] && r.rows[0].id;
+    if (uid) { const o = await pool.query("SELECT allowed FROM doc_access_override WHERE user_id = $1 AND folder_key = 'vat'", [uid]); if (o.rows.length) vat = !!o.rows[0].allowed; }
+    if (!vat) vat = !!(await glAccessFor(u));
+  } catch (_) { /* ไม่ได้ = ไม่นับกลุ่ม vat */ }
+  return { vat, gl: p.GL === true };
+};
+const spProfileOf = async (req) => {
+  const g = await spGroupsOf(req);
+  const dests = Object.keys(SP_DEST_TABLE).filter((k) => g[SP_DEST_TABLE[k].group]).map((k) => ({ key: k, label: SP_DEST_TABLE[k].label, entry: SP_DEST_TABLE[k].entry, group: SP_DEST_TABLE[k].group }));
+  const hash = dests.map((d) => d.key).sort().join(",");   // ใช้เทียบว่าโปรไฟล์ในเครื่องตรงกับสิทธิ์ปัจจุบันไหม
+  return { version: 1, hash, dests, groups: g };
+};
 
 // -- GET /api/file-storage/sp-handler --  // MARKER_SP_HANDLER_ROUTES_V1
 // ชุดติดตั้ง FastAPN SharePoint Handler (zip) -- ผ่าน verifyAuthLocal ปกติ (ต้อง Login) ไม่มี Endpoint Public
@@ -777,6 +826,7 @@ router.get("/sp-handler", async (req, res) => {
   try {
     const zip = new JSZip();
     for (const [name, b64] of Object.entries(SP_HANDLER_FILES)) zip.file(name, Buffer.from(b64, "base64"));
+    { const prof = await spProfileOf(req); if (!prof.dests.length) return spDeny(res); zip.file("fastapn-sp-profile.json", "\uFEFF" + JSON.stringify({ version: prof.version, hash: prof.hash, dests: prof.dests }, null, 2)); } // MARKER_SP_HANDLER_PROFILE_V1
     const buf = await zip.generateAsync({ type: "nodebuffer" });
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", 'attachment; filename="fastapn-sp-handler.zip"');
@@ -791,7 +841,7 @@ router.get("/sp-handler/version", (req, res) => { res.json({ version: SP_HANDLER
 pool.query(`CREATE TABLE IF NOT EXISTS tool_handler_status (
   username text NOT NULL, tool text NOT NULL, machine text NOT NULL, version int NOT NULL,
   first_reported_at timestamptz NOT NULL DEFAULT now(), reported_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (username, tool, machine))`).then(() => pool.query(`ALTER TABLE tool_handler_status ADD COLUMN IF NOT EXISTS ip text`)).catch((e) => console.error("[migrate tool_handler_status]:", e.message));
+  PRIMARY KEY (username, tool, machine))`).then(() => pool.query(`ALTER TABLE tool_handler_status ADD COLUMN IF NOT EXISTS ip text`)).then(() => pool.query(`ALTER TABLE tool_handler_status ADD COLUMN IF NOT EXISTS profile_hash text`)).catch((e) => console.error("[migrate tool_handler_status]:", e.message)); // MARKER_SP_HANDLER_PROFILE_V1
 // MARKER_SP_HANDLER_PER_MACHINE_V1 -- IP ของเครื่องที่เรียก (ใช้จับคู่เครื่องที่ Handler รายงาน กับเครื่องที่เปิดเว็บอยู่)
 function spClientIp(req) {
   const xf = String((req.headers && req.headers["x-forwarded-for"]) || "").split(",")[0].trim();
@@ -807,10 +857,11 @@ router.post("/sp-handler/report", async (req, res) => {
     const version = parseInt(req.body && req.body.version, 10);
     const machine = String((req.body && req.body.machine) || "").slice(0, 64).trim() || "?";
     if (!username || !Number.isFinite(version) || version < 1) return res.status(400).json({ error: "ข้อมูลไม่ถูกต้อง" });
+    const profHash = String((req.body && req.body.profileHash) || "").slice(0, 80); // MARKER_SP_HANDLER_PROFILE_V1
     await pool.query(
-      `INSERT INTO tool_handler_status (username, tool, machine, version, ip) VALUES ($1,'sp',$2,$3,$4)
-       ON CONFLICT (username, tool, machine) DO UPDATE SET version = EXCLUDED.version, ip = EXCLUDED.ip, reported_at = now()`,
-      [username, machine, version, spClientIp(req)]
+      `INSERT INTO tool_handler_status (username, tool, machine, version, ip, profile_hash) VALUES ($1,'sp',$2,$3,$4,$5)
+       ON CONFLICT (username, tool, machine) DO UPDATE SET version = EXCLUDED.version, ip = EXCLUDED.ip, profile_hash = EXCLUDED.profile_hash, reported_at = now()`,
+      [username, machine, version, spClientIp(req), profHash]
     );
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -824,15 +875,17 @@ pool.query(`CREATE TABLE IF NOT EXISTS sp_tree_meta (
   dest text PRIMARY KEY, synced_at timestamptz NOT NULL DEFAULT now(), synced_by text, machine text, total int NOT NULL DEFAULT 0)`).catch((e) => console.error("[migrate sp_tree_meta]:", e.message));
 
 // ลิงก์ฐานของ SharePoint (ไว้เปิด Excel Online) ตั้งใน .env: SP_WEB_BASE_RECON / SP_WEB_BASE_UPLOAD = URL โฟลเดอร์นั้นบน SharePoint (ไม่ต้องมี / ท้าย)
-const SP_DESTS = ["recon", "upload", "ap", "gl", "doh"]; // MARKER_SP_HANDLER_DEST_GL_DOH_V1 -- gl = Z_Detail of Account, doh = Z_Backup_DOH (ใต้ _Taii\Reconcile_Backup)
+const SP_DESTS = ["recon", "upload", "ap", "gl", "doh"]; // MARKER_SP_HANDLER_PROFILE_V1 -- ตารางจริงอยู่ที่ SP_DEST_TABLE // MARKER_SP_HANDLER_DEST_GL_DOH_V1 -- gl = Z_Detail of Account, doh = Z_Backup_DOH (ใต้ _Taii\Reconcile_Backup)
 // // MARKER_SP_HANDLER_DEST_AP_V1 -- ap = Z_Report Reconcile - Account Payable (GL Report)
 // MARKER_SP_DEST_GL_GUARD_V1 -- dest gl/doh (Z_Detail of Account / Z_Backup_DOH) เข้าได้เฉพาะ Owner หรือผู้มี Permission GL | ตรวจที่ทุก Route ใต้ /sp-handler ที่ส่ง dest มา (query หรือ body)
-router.use("/sp-handler", (req, res, next) => {
+router.use("/sp-handler", async (req, res, next) => { // MARKER_SP_HANDLER_PROFILE_V1 -- ด่านกัน dest ทุกตัวตามกลุ่มสิทธิ์ (vat = recon/upload/ap | gl = gl/doh)
   const d = String((req.query && req.query.dest) || (req.body && req.body.dest) || "");
-  if (d !== "gl" && d !== "doh") return next();
-  const u = req.user || {};
-  if (u.appRole === "Owner" || (u.permissions && u.permissions.GL === true)) return next();
-  return res.status(403).json({ error: "เมนูนี้เข้าได้เฉพาะผู้ที่มีสิทธิ์ GL" });
+  try {
+    const g = await spGroupsOf(req);
+    if (SP_DEST_TABLE[d]) { if (g[SP_DEST_TABLE[d].group]) return next(); return res.status(403).json({ error: SP_DEST_TABLE[d].group === "gl" ? "เมนูนี้เข้าได้เฉพาะผู้ที่มีสิทธิ์ GL" : "ปลายทางนี้เข้าได้เฉพาะผู้ที่มีสิทธิ์ VAT / IE / Manual / I-Pro" }); }
+    if (!d && g.gl && !g.vat && !["", "/", "/profile", "/report", "/my-status", "/ps1-only", "/version"].includes(req.path)) return res.status(403).json({ error: "ต้องระบุปลายทางที่ผู้ใช้มีสิทธิ์" });   // คนที่มีแค่ GL ห้ามชนเส้นทางที่ default เป็น recon
+  } catch (_) { /* ตรวจไม่ได้ = ใช้ด่านเดิมของแต่ละ Route */ }
+  return next();
 });
 const spWebBase = (dest) => String((dest === "upload" ? process.env.SP_WEB_BASE_UPLOAD : dest === "ap" ? process.env.SP_WEB_BASE_AP : dest === "gl" ? process.env.SP_WEB_BASE_GL : dest === "doh" ? process.env.SP_WEB_BASE_DOH : process.env.SP_WEB_BASE_RECON) || "").replace(/\/+$/, "");
 
@@ -1178,15 +1231,25 @@ router.get("/sp-handler/my-status", async (req, res) => {
   try {
     const username = await getUsernameByEmail(req.user.email);
     const { rows } = await pool.query(
-      `SELECT machine, version, reported_at, ip FROM tool_handler_status WHERE username=$1 AND tool='sp' ORDER BY reported_at DESC`, [username]);
+      `SELECT machine, version, reported_at, ip, profile_hash FROM tool_handler_status WHERE username=$1 AND tool='sp' ORDER BY reported_at DESC`, [username]);
     // MARKER_SP_HANDLER_PER_MACHINE_V1 -- เช็กตามเครื่องที่เปิดเว็บ: เอาเฉพาะรายงานที่ IP ตรงกับผู้เรียก (ไม่ใช่ทุกเครื่องของบัญชี) | ไม่รู้ IP = ใช้ทั้งบัญชีแบบเดิม
     const clientIp = spClientIp(req);
     const allRows = rows;
     const mine = clientIp ? allRows.filter((r) => r.ip && r.ip === clientIp) : allRows;
     const outdated = mine.filter((r) => r.version < SP_HANDLER_VERSION);
+    const curProf = await spProfileOf(req); const profileStale = mine.filter((r) => r.version >= SP_HANDLER_VERSION && (r.profile_hash || "") !== curProf.hash); // MARKER_SP_HANDLER_PROFILE_V1 -- Permission เปลี่ยนแต่โปรไฟล์ในเครื่องยังไม่ตรง
     const daysSinceRelease = Math.max(0, Math.floor((Date.now() - new Date(SP_HANDLER_RELEASED_AT).getTime()) / 86400000));
     // MARKER_SP_HANDLER_INSTALLED_V1 -- installed=false เมื่อ Backend ไม่เคยได้รับรายงานจากผู้ใช้นี้เลย (Home ใช้แจ้งให้ติดตั้ง Handler)
-    res.json({ latest: SP_HANDLER_VERSION, releasedAt: SP_HANDLER_RELEASED_AT, daysSinceRelease, machines: mine, allMachines: allRows, clientIp, outdated, installed: allRows.length > 0 }); // MARKER_SP_HANDLER_INSTALLED_USER_LEVEL_V1 -- ผู้ใช้เคยมีเครื่องใดรายงานแล้ว = ติดตั้งแล้ว (ไม่ผูก IP) | outdated ยังเช็กตามเครื่อง
+    res.json({ latest: SP_HANDLER_VERSION, releasedAt: SP_HANDLER_RELEASED_AT, daysSinceRelease, machines: mine, allMachines: allRows, clientIp, outdated, profileStale, profileHash: curProf.hash, needUpdate: outdated.length > 0 || profileStale.length > 0, installed: allRows.length > 0 }); // MARKER_SP_HANDLER_INSTALLED_USER_LEVEL_V1 -- ผู้ใช้เคยมีเครื่องใดรายงานแล้ว = ติดตั้งแล้ว (ไม่ผูก IP) | outdated ยังเช็กตามเครื่อง
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// -- GET /api/file-storage/sp-handler/profile -- MARKER_SP_HANDLER_PROFILE_V1 -- โปรไฟล์ปลายทางของผู้ใช้ตาม Permission (Handler เขียนลง fastapn-sp-profile.json ตอน update)
+router.get("/sp-handler/profile", async (req, res) => {
+  try {
+    const prof = await spProfileOf(req);
+    if (!prof.dests.length) return spDeny(res);
+    res.json({ version: prof.version, hash: prof.hash, dests: prof.dests });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1475,6 +1538,91 @@ router.get("/:id/download-ie-macrologic", async (req, res) => {
   }
 });
 
+// MARKER_FILESTORAGE_GLMACRO_V1
+// ── Generate by GL Macro: สิทธิ์ = Owner/Admin หรือมี Permission ใดอย่างหนึ่งใน GL / Manual / VAT / I-Pro (IE ไม่รวม) ──
+function canUseGlMacro(req) {
+  const appRole = req.user?.appRole || "";
+  if (appRole === "Owner" || appRole === "Admin") return true;
+  const p = req.user?.permissions || {};
+  return ["GL", "Manual", "VAT", "I-Pro"].some((k) => p[k] === true);
+}
+
+// ── GET /api/file-storage/gl-macro-jobs?scope=mine|all ──
+// scope=all ใช้ได้เฉพาะ Owner/Admin (คนอื่นขอมาก็ Fallback เป็น mine เงียบๆ)
+router.get("/gl-macro-jobs", async (req, res) => {
+  if (!canUseGlMacro(req)) return res.status(403).json({ error: "ไม่มีสิทธิ์ใช้งานเมนูนี้" });
+  const username = await getUsernameByEmail(req.user.email);
+  const appRole = req.user.appRole || "";
+  const isPrivileged = appRole === "Owner" || appRole === "Admin";
+  const scope = req.query.scope === "all" ? "all" : "mine"; // MARKER_FILESTORAGE_GLMACRO_ALLJOB_V2 -- All Job เปิดให้ทุกคนที่ผ่าน canUseGlMacro แต่เห็นเฉพาะ Permission เดียวกัน
+  try {
+    const myPerms = ["GL", "Manual", "VAT", "I-Pro"].filter((k) => req.user?.permissions?.[k] === true);
+    let rows;
+    if (scope === "all" && appRole === "Owner") {
+      ({ rows } = await pool.query(
+        `SELECT id, bu, file_name, ref_id, owner_username, created_at
+         FROM file_storage WHERE module = 'gl-macro' ORDER BY created_at DESC`
+      ));
+    } else if (scope === "all") {
+      ({ rows } = await pool.query(
+        `SELECT fs.id, fs.bu, fs.file_name, fs.ref_id, fs.owner_username, fs.created_at
+         FROM file_storage fs
+         LEFT JOIN user_roles ur ON ur.username = fs.owner_username
+         WHERE fs.module = 'gl-macro'
+           AND (fs.owner_username = $1
+                OR EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE (ur.permissions->>k)::boolean IS TRUE))
+         ORDER BY fs.created_at DESC`,
+        [username, myPerms]
+      ));
+    } else {
+      ({ rows } = await pool.query(
+        `SELECT id, bu, file_name, ref_id, owner_username, created_at
+         FROM file_storage WHERE module = 'gl-macro' AND owner_username = $1 ORDER BY created_at DESC`,
+        [username]
+      ));
+    }
+    res.json(rows.map((r) => ({ ...r, is_mine: r.owner_username === username, can_delete: r.owner_username === username || isPrivileged })));
+  } catch (err) {
+    console.error("GET /file-storage/gl-macro-jobs error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /api/file-storage/:id/download-gl-macro ──
+router.get("/:id/download-gl-macro", async (req, res) => {
+  if (!canUseGlMacro(req)) return res.status(403).json({ error: "ไม่มีสิทธิ์ใช้งานเมนูนี้" });
+  const username = await getUsernameByEmail(req.user.email);
+  const { id } = req.params;
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM file_storage WHERE id = $1 AND module = 'gl-macro'`, [id]
+    );
+    const record = rows[0];
+    if (!record) return res.status(404).json({ error: "ไม่พบไฟล์นี้" });
+    const appRole = req.user.appRole || "";
+    const isPrivileged = appRole === "Owner" || appRole === "Admin";
+    if (record.owner_username !== username && appRole !== "Owner") { // MARKER_FILESTORAGE_GLMACRO_ALLJOB_V2 -- เจ้าของไฟล์ต้องมี Permission ตรงกับผู้เรียกอย่างน้อย 1 ตัว
+      const myPerms = ["GL", "Manual", "VAT", "I-Pro"].filter((k) => req.user?.permissions?.[k] === true);
+      const { rows: okRows } = await pool.query(
+        `SELECT 1 FROM user_roles ur WHERE ur.username = $1
+           AND EXISTS (SELECT 1 FROM unnest($2::text[]) k WHERE (ur.permissions->>k)::boolean IS TRUE)`,
+        [record.owner_username, myPerms]
+      );
+      if (okRows.length === 0) return res.status(403).json({ error: "ไม่มีสิทธิ์ดาวน์โหลดไฟล์นี้" });
+    }
+    if (!fs.existsSync(record.file_path)) {
+      return res.status(404).json({ error: "ไม่พบไฟล์จริงบน Server (อาจถูกลบไปแล้ว)" });
+    }
+    const xlsxBuffer = zlib.gunzipSync(fs.readFileSync(record.file_path));
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(record.file_name)}"; filename*=UTF-8''${encodeURIComponent(record.file_name)}`);
+    res.send(xlsxBuffer);
+  } catch (err) {
+    console.error("GET /file-storage/:id/download-gl-macro error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // MARKER_FILESTORAGE_APRECONCILE_LIST_V2
 // ── GET /api/file-storage/ap-reconcile-jobs?scope=mine|all ──────────────────────
 // ── แยกเป็น Route ของตัวเอง ไม่ผูก/ไม่เรียกใช้ Endpoint ของ ie-macrologic-jobs เลย
@@ -1667,6 +1815,41 @@ async function doaRecalcAutoExclude(bu, account) {
   }
 }
 
+// MARKER_GL_DOA_COVER_CONFIG_V1 -- Cover ของ Reconcile: Type 1/2/3 ตั้งระดับ BU (account = '') + ปรับต่อ Account ได้ | ไม่ตั้ง = Default (BU = Type 3 แบบเดิม, Account = ตาม BU) | ใช้ร่วมกันทั้ง BU
+pool.query(`CREATE TABLE IF NOT EXISTS doa_cover_config (
+  bu TEXT NOT NULL, account TEXT NOT NULL DEFAULT '', cover_type INT NOT NULL,
+  updated_by TEXT, updated_at TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY (bu, account))`)
+  .catch((e) => console.error("[migrate doa_cover_config]:", e.message));
+router.get("/doa-cover", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const bu = String(req.query.bu || "").trim();
+    if (!bu) return res.status(400).json({ error: "ต้องระบุ BU" });
+    const q = await pool.query("SELECT account, cover_type FROM doa_cover_config WHERE bu = $1", [bu]);
+    const accounts = {}; let bu_type = null;
+    q.rows.forEach((r) => { if (r.account === "") bu_type = r.cover_type; else accounts[r.account] = r.cover_type; });
+    res.json({ bu, bu_type, accounts });
+  } catch (e) { console.error("[doa-cover GET]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+router.post("/doa-cover", async (req, res) => {
+  if (!doaGlOnly(req, res)) return;
+  try {
+    const b = req.body || {}; const bu = String(b.bu || "").trim().slice(0, 50); const account = String(b.account || "").trim().slice(0, 50);
+    if (!bu || DOA_NON_GL_BUS.has(bu)) return res.status(400).json({ error: "BU ไม่ถูกต้อง" });
+    const t = Number(b.type); const me = String((req.user && req.user.email) || "").toLowerCase();
+    if (account && (b.type == null || b.type === "" || b.type === "default")) { // Account กลับเป็น Default (ตาม BU)
+      await pool.query("DELETE FROM doa_cover_config WHERE bu = $1 AND account = $2", [bu, account]);
+      return res.json({ ok: true, bu, account, type: null });
+    }
+    if (![1, 2, 3].includes(t)) return res.status(400).json({ error: "Type ต้องเป็น 1, 2 หรือ 3" });
+    await pool.query(
+      `INSERT INTO doa_cover_config (bu, account, cover_type, updated_by) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (bu, account) DO UPDATE SET cover_type = EXCLUDED.cover_type, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+      [bu, account, t, me]);
+    res.json({ ok: true, bu, account, type: t });
+  } catch (e) { console.error("[doa-cover POST]", e.message); res.status(500).json({ error: "Internal server error" }); }
+});
+
 router.get("/doa-config", async (req, res) => {
   if (!doaGlOnly(req, res)) return;
   try {
@@ -1737,7 +1920,9 @@ pool.query(`CREATE TABLE IF NOT EXISTS doa_tb_backup (
   .then(() => pool.query(`ALTER TABLE doa_tb_backup DROP CONSTRAINT IF EXISTS doa_tb_backup_bu_period_key`))
   .then(() => pool.query(`ALTER TABLE doa_tb_backup ADD COLUMN IF NOT EXISTS owner TEXT NOT NULL DEFAULT ''`)) // MARKER_GL_DOA_BACKUP_PER_USER_V1 -- เก็บต่อ User: แต่ละคนมีไฟล์ของตัวเอง (owner = อีเมลผู้โยน) ไม่ทับกัน | owner ว่าง = ไฟล์เดิมก่อนแยก User (ทุกคนอ่านได้ จนกว่าจะหมดอายุ)
   .then(() => pool.query(`DROP INDEX IF EXISTS doa_tb_backup_uq_kind`))
-  .then(() => pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS doa_tb_backup_uq_owner ON doa_tb_backup (bu, period, kind, owner)`))
+  .then(() => pool.query(`ALTER TABLE doa_tb_backup ADD COLUMN IF NOT EXISTS account TEXT NOT NULL DEFAULT ''`)) // MARKER_GL_DOA_BACKUP_BY_ACCOUNT_V1 -- Detail backup แยกต่อ Account ('' = ไฟล์เดิมทั้ง BU)
+  .then(() => pool.query(`DROP INDEX IF EXISTS doa_tb_backup_uq_owner`))
+  .then(() => pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS doa_tb_backup_uq_owner_acc ON doa_tb_backup (bu, period, kind, owner, account)`))
   .catch((e) => console.error("[migrate doa_tb_backup]:", e.message));
 const DOA_SIMPLE_MONTHS = Math.max(1, parseInt(process.env.DOA_SIMPLE_MONTHS || "1", 10) || 1);
 // MARKER_GL_DOA_RECLAIM_V1 -- ลบข้อมูลแล้วคืนพื้นที่ทันที: PostgreSQL ไม่คืนพื้นที่ให้ตารางเองจนกว่าจะ VACUUM FULL (ตาราง doa_tb_backup เล็ก ล็อกชั่วครู่) | เรียกต่อกันพร้อมกันได้ ไม่ซ้อน
@@ -1749,10 +1934,17 @@ const doaReclaimNow = async () => {
 };
 const purgeDoaBackup = () => pool.query("DELETE FROM doa_tb_backup WHERE expires_at < NOW()").then((r) => { if (r && r.rowCount) return doaReclaimNow(); }).catch((e) => console.error("[purge doa_tb_backup]:", e.message));
 // MARKER_GL_DOA_EXPIRY_END_OF_MONTH_V1 -- Simple/Detail หมดอายุ "สิ้นเดือนของ (งวด + N เดือน)" เช่น งวด 2026.09 + 1 = สิ้นเดือน 10.2026 (ไม่นับจากวันที่อัปโหลด); แก้แถวเดิมครั้งเดียวตอนเริ่ม
-const doaFixExpiry = async () => { try { const c = await stSettings(); for (const [kind, days] of [["Simple", c.doa_simple_days || 0], ["Detail", c.doa_detail_days || 0]]) { await pool.query(`UPDATE doa_tb_backup SET expires_at = ((date_trunc('month', to_date(period, 'YYYY.MM')) + (CASE WHEN $2::int > 0 THEN 1 ELSE $1::int + 1 END || ' months')::interval)::timestamp AT TIME ZONE 'Asia/Bangkok') + (CASE WHEN $2::int > 0 THEN $2::int ELSE 0 END || ' days')::interval - interval '1 second' WHERE kind = $3 AND period ~ '^[0-9]{4}\\.[0-9]{2}$'`, [DOA_SIMPLE_MONTHS, days, kind]); } } catch (e) { console.error("[doa fix expiry]", e.message); } };
+const doaFixExpiry = async () => { try { const c = await stSettings(); /* MARKER_GL_DOA_DETAIL_EXPIRY_V2 -- Detail ไม่หมดอายุ (สะสม Include) */ await pool.query("UPDATE doa_tb_backup SET expires_at = timestamptz '2999-12-31 23:59:59+00' WHERE kind = 'Detail' AND expires_at < timestamptz '2999-12-31 23:59:59+00'"); for (const [kind, days] of [["Simple", c.doa_simple_days || 0]]) { await pool.query(`UPDATE doa_tb_backup SET expires_at = ((date_trunc('month', to_date(period, 'YYYY.MM')) + (CASE WHEN $2::int > 0 THEN 1 ELSE $1::int + 1 END || ' months')::interval)::timestamp AT TIME ZONE 'Asia/Bangkok') + (CASE WHEN $2::int > 0 THEN $2::int ELSE 0 END || ' days')::interval - interval '1 second' WHERE kind = $3 AND period ~ '^[0-9]{4}\\.[0-9]{2}$'`, [DOA_SIMPLE_MONTHS, days, kind]); } } catch (e) { console.error("[doa fix expiry]", e.message); } };
 setTimeout(() => doaFixExpiry().then(purgeDoaBackup), 10000);
 setTimeout(purgeDoaBackup, 15000);
 setInterval(purgeDoaBackup, 6 * 3600 * 1000);
+// MARKER_GL_DOA_CLEAR_RETENTION_90D_V1 -- แถวที่ Stamp Clear แล้ว (doa_detail_clear สถานะ Cleared / Pending) เก็บไว้ 90 วันนับจากวันที่ Clear (Env DOA_CLEAR_DAYS ปรับได้) แล้วลบเอง | Include / Backup ไม่ลบ (สะสมไว้ตามข้อตกลง)
+const DOA_CLEAR_DAYS = Math.max(1, parseInt(process.env.DOA_CLEAR_DAYS || "90", 10) || 90);
+const purgeDoaClear = () => pool.query("DELETE FROM doa_detail_clear WHERE status IN ('Cleared','Pending') AND cleared_at < NOW() - ($1 || ' days')::interval", [String(DOA_CLEAR_DAYS)])
+  .then((r) => { if (r && r.rowCount) console.log(`[purge doa_detail_clear] ลบแถว Stamp Clear เกิน ${DOA_CLEAR_DAYS} วัน ${r.rowCount} แถว`); })
+  .catch((e) => console.error("[purge doa_detail_clear]:", e.message));
+setTimeout(purgeDoaClear, 25000);
+setInterval(purgeDoaClear, 6 * 3600 * 1000);
 
 router.get("/doa-backup", async (req, res) => {
   if (!doaGlOnly(req, res)) return;
@@ -1760,8 +1952,8 @@ router.get("/doa-backup", async (req, res) => {
     const bu = String(req.query.bu || "").trim();
     if (!bu) return res.status(400).json({ error: "ต้องระบุ BU" });
     const me = String(req.user.email || "").toLowerCase();
-    const q = await pool.query("SELECT id, bu, period, kind, file_name, row_count, created_by, created_at, expires_at, owner FROM doa_tb_backup WHERE bu = $1 AND expires_at >= NOW() AND (owner = $2 OR owner = '') ORDER BY period DESC, (owner = $2) DESC", [bu, me]); // ไฟล์ของตัวเองมาก่อน ไฟล์เดิม (owner ว่าง) ตามหลัง
-    res.json({ items: q.rows, retention_months: DOA_BACKUP_MONTHS });
+    const q = await pool.query("SELECT id, bu, period, kind, file_name, row_count, created_by, created_at, expires_at, owner, account FROM doa_tb_backup WHERE bu = $1 AND expires_at >= NOW() AND (owner = $2 OR owner = '') ORDER BY period DESC, (owner = $2) DESC", [bu, me]); // ไฟล์ของตัวเองมาก่อน ไฟล์เดิม (owner ว่าง) ตามหลัง
+    res.json({ items: q.rows, retention_months: DOA_BACKUP_MONTHS, by_account: true }); // MARKER_GL_DOA_BACKUP_BY_ACCOUNT_V1 -- Frontend ตรวจว่า Backend รองรับ by Account ก่อนบันทึก (กันทับไฟล์ทั้ง BU)
   } catch (e) { console.error("[doa-backup LIST]", e.message); res.status(500).json({ error: "Internal server error" }); }
 });
 
@@ -2312,7 +2504,7 @@ router.post("/doa-backup/clear", async (req, res) => {
 router.get("/doa-backup/:id", async (req, res) => {
   if (!doaGlOnly(req, res)) return;
   try {
-    const q = await pool.query("SELECT id, bu, period, kind, file_name, data, expires_at FROM doa_tb_backup WHERE id = $1 AND expires_at >= NOW() AND (owner = $2 OR owner = '')", [parseInt(req.params.id, 10), String(req.user.email || "").toLowerCase()]);
+    const q = await pool.query("SELECT id, bu, period, kind, file_name, data, expires_at, account FROM doa_tb_backup WHERE id = $1 AND expires_at >= NOW() AND (owner = $2 OR owner = '')", [parseInt(req.params.id, 10), String(req.user.email || "").toLowerCase()]);
     if (!q.rows.length) return res.status(404).json({ error: "ไม่พบ Backup (อาจหมดอายุแล้ว)" });
     res.json({ item: q.rows[0] });
   } catch (e) { console.error("[doa-backup GET]", e.message); res.status(500).json({ error: "Internal server error" }); }
@@ -2331,24 +2523,25 @@ router.post("/doa-backup", async (req, res) => {
     if (!bu || !/^\d{4}\.\d{2}$/.test(period) || !rows || !rows.length) return res.status(400).json({ error: "ต้องระบุ BU, งวด (YYYY.MM) และข้อมูล TB" });
     const retCfg = await stSettings();
     const meOwner = String(req.user.email || "").toLowerCase();
+    const acct = kind === "Detail" ? String(b.account || "").trim().slice(0, 50) : ""; // MARKER_GL_DOA_BACKUP_BY_ACCOUNT_V1
     // MARKER_GL_DOA_REUPLOAD_DEDUPE_V1 -- โยนไฟล์ Simple/Detail ซ้ำ: ข้อมูลเหมือนเดิม = ไม่เขียนซ้ำ (คงที่); ถ้ามีแถวเก่าไม่ระบุเจ้าของ (owner='') ที่ผู้ใช้คนเดียวกันเคยโยนไว้ = ถูกแทนที่ ไม่ทิ้งซ้ำ
     if (kind === "Simple" || kind === "Detail") {
-      const same = await pool.query("SELECT id, expires_at FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = $4 AND data = $5::jsonb", [bu, period, kind, meOwner, JSON.stringify(rows)]);
+      const same = await pool.query("SELECT id, expires_at FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = $4 AND account = $6 AND data = $5::jsonb", [bu, period, kind, meOwner, JSON.stringify(rows), acct]);
       if (same.rows.length) {
-        const lg = await pool.query("DELETE FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = '' AND LOWER(COALESCE(created_by,'')) = $4", [bu, period, kind, meOwner]);
+        const lg = acct ? { rowCount: 0 } : await pool.query("DELETE FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = '' AND LOWER(COALESCE(created_by,'')) = $4", [bu, period, kind, meOwner]);
         if (lg.rowCount) await doaReclaimNow();
         return res.json({ ok: true, id: same.rows[0].id, expires_at: same.rows[0].expires_at, retention_months: months, unchanged: true, replaced_legacy: lg.rowCount });
       }
     }
     const q = await pool.query(
-      `INSERT INTO doa_tb_backup (bu, period, file_name, row_count, data, created_by, created_at, expires_at, kind, owner)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6,NOW(), CASE WHEN $8::text IN ('Simple','Detail') THEN ((date_trunc('month', to_date($2, 'YYYY.MM')) + (CASE WHEN ($10::text)::int > 0 THEN 1 ELSE (($7::text)::int + 1) END || ' months')::interval)::timestamp AT TIME ZONE 'Asia/Bangkok') + (CASE WHEN ($10::text)::int > 0 THEN ($10::text) ELSE '0' END || ' days')::interval - interval '1 second' ELSE NOW() + (($7::text) || ' months')::interval END, $8, $9)
-       ON CONFLICT (bu, period, kind, owner) DO UPDATE SET file_name=EXCLUDED.file_name, row_count=EXCLUDED.row_count, data=EXCLUDED.data,
+      `INSERT INTO doa_tb_backup (bu, period, file_name, row_count, data, created_by, created_at, expires_at, kind, owner, account)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6,NOW(), CASE WHEN $8::text = 'Detail' THEN timestamptz '2999-12-31 23:59:59+00' WHEN $8::text = 'Simple' THEN ((date_trunc('month', to_date($2, 'YYYY.MM')) + (CASE WHEN ($10::text)::int > 0 THEN 1 ELSE (($7::text)::int + 1) END || ' months')::interval)::timestamp AT TIME ZONE 'Asia/Bangkok') + (CASE WHEN ($10::text)::int > 0 THEN ($10::text) ELSE '0' END || ' days')::interval - interval '1 second' ELSE NOW() + (($7::text) || ' months')::interval END, $8, $9, $11)
+       ON CONFLICT (bu, period, kind, owner, account) DO UPDATE SET file_name=EXCLUDED.file_name, row_count=EXCLUDED.row_count, data=EXCLUDED.data,
          created_by=EXCLUDED.created_by, created_at=NOW(), expires_at=EXCLUDED.expires_at
        RETURNING id, expires_at`,
-      [bu, period, String(b.file_name || "").slice(0, 200), rows.length, JSON.stringify(rows), req.user.email, String(months), kind, String(req.user.email || "").toLowerCase(), String(kind === "Simple" ? (retCfg.doa_simple_days || 0) : kind === "Detail" ? (retCfg.doa_detail_days || 0) : 0)]);
+      [bu, period, String(b.file_name || "").slice(0, 200), rows.length, JSON.stringify(rows), req.user.email, String(months), kind, String(req.user.email || "").toLowerCase(), String(kind === "Simple" ? (retCfg.doa_simple_days || 0) : kind === "Detail" ? (retCfg.doa_detail_days || 0) : 0), acct]);
     let replacedLegacy = 0;
-    if ((kind === "Simple" || kind === "Detail") && meOwner) { const lg = await pool.query("DELETE FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = '' AND LOWER(COALESCE(created_by,'')) = $4", [bu, period, kind, meOwner]); replacedLegacy = lg.rowCount; if (replacedLegacy) await doaReclaimNow(); }
+    if ((kind === "Simple" || kind === "Detail") && meOwner && !acct) { const lg = await pool.query("DELETE FROM doa_tb_backup WHERE bu = $1 AND period = $2 AND kind = $3 AND owner = '' AND LOWER(COALESCE(created_by,'')) = $4", [bu, period, kind, meOwner]); replacedLegacy = lg.rowCount; if (replacedLegacy) await doaReclaimNow(); }
     if (kind === "TBRAW") doaRestampBu(bu).catch((e) => console.error("[doa restamp TBRAW]", e.message)); // MARKER_GL_DOA_TB_STANDBY_ADMIN_V1 -- โยน TB เข้า = ตรวจกับ Config ทั้งหมด + Stamp Module
     res.json({ ok: true, id: q.rows[0].id, expires_at: q.rows[0].expires_at, retention_months: months, replaced_legacy: replacedLegacy });
   } catch (e) { console.error("[doa-backup POST]", e.message); res.status(500).json({ error: "Internal server error" }); }
@@ -2377,7 +2570,7 @@ router.get("/doa-clear", async (req, res) => {
     const bu = String(req.query.bu || "").trim();
     if (!bu) return res.status(400).json({ error: "ต้องระบุ BU" });
     const wantRow = String(req.query.detail || "") === "1"; const acc = String(req.query.account || "").trim();
-    const q = await pool.query(`SELECT row_key, period, account_code, file_id, status, cleared_by, cleared_at${wantRow ? ", row" : ""} FROM doa_detail_clear WHERE bu = $1 AND status IN ('Cleared','Pending','Backup','Include')${acc ? " AND account_code = $2" : ""} ORDER BY cleared_at DESC`, acc ? [bu, acc] : [bu]); /* MARKER_GL_DOA_CLEAR_HISTORY_V1 -- detail=1 + account = ประวัติ Clear/Auto Clear ของ Account (มีข้อมูลแถว) */ /* MARKER_GL_DOA_CLEAR_PENDING_V1 -- 2 สถานะ: Pending (Auto Clear จาก Backup รอยืนยัน) | Cleared (ยืนยัน/Stamp Clear แล้ว) — ทั้งคู่ตัดออกจาก Detail/Reconcile */
+    const q = await pool.query(`SELECT row_key, period, account_code, file_id, status, cleared_by, cleared_at, CASE WHEN status IN ('Cleared','Pending') THEN cleared_at + interval '${DOA_CLEAR_DAYS} days' END AS expire_at${wantRow ? ", row" : ""} FROM doa_detail_clear WHERE bu = $1 AND status IN ('Cleared','Pending','Backup','Include')${acc ? " AND account_code = $2" : ""} ORDER BY cleared_at DESC`, acc ? [bu, acc] : [bu]); /* MARKER_GL_DOA_CLEAR_HISTORY_V1 -- detail=1 + account = ประวัติ Clear/Auto Clear ของ Account (มีข้อมูลแถว) */ /* MARKER_GL_DOA_CLEAR_PENDING_V1 -- 2 สถานะ: Pending (Auto Clear จาก Backup รอยืนยัน) | Cleared (ยืนยัน/Stamp Clear แล้ว) — ทั้งคู่ตัดออกจาก Detail/Reconcile */
     res.json({ items: q.rows });
   } catch (e) { console.error("[doa-clear LIST]", e.message); res.status(500).json({ error: "Internal server error" }); }
 });
@@ -2395,7 +2588,7 @@ router.post("/doa-clear", async (req, res) => {
       const key = String((it && it.key) || "").slice(0, 600); if (!key) continue;
       const r = await pool.query(
         `INSERT INTO doa_detail_clear (bu, period, row_key, account_code, row, cleared_by, file_id, status) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)
-         ON CONFLICT (bu, row_key) DO UPDATE SET status = EXCLUDED.status, cleared_by = EXCLUDED.cleared_by, cleared_at = NOW() WHERE (doa_detail_clear.status IN ('Pending','Include') AND EXCLUDED.status = 'Cleared') OR (doa_detail_clear.status = 'Include' AND EXCLUDED.status = 'Pending')`,
+         ON CONFLICT (bu, row_key) DO UPDATE SET status = EXCLUDED.status, period = EXCLUDED.period, cleared_by = EXCLUDED.cleared_by, cleared_at = CASE WHEN EXCLUDED.status = 'Include' THEN doa_detail_clear.cleared_at ELSE NOW() END WHERE (doa_detail_clear.status IN ('Pending','Include') AND EXCLUDED.status = 'Cleared') OR (doa_detail_clear.status = 'Include' AND EXCLUDED.status IN ('Pending','Include') AND (EXCLUDED.status <> 'Include' OR doa_detail_clear.period <> EXCLUDED.period)) /* MARKER_GL_DOA_PERIOD_FOLLOW_V1 -- period = งวดล่าสุดที่ Connect/Clear แถวนี้ */`,
         [bu, period, key, String((it.row && it.row.account_code) || "").slice(0, 50), JSON.stringify(it.row || {}), me, fileId, st]);
       n += r.rowCount || 0;
     }

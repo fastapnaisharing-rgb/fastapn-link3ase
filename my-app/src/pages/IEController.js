@@ -21,6 +21,7 @@ import { composePrepaymentAgingMail, compactMailHtml, buildPrepaymentAgingRows, 
 // MARKER_IE_MACROLOGIC_EXCELJS_IMPORT_V1 — ใช้สร้าง Export Excel แบบมี Styling (สี Header, เส้นขอบ, Freeze, Column Width)
 // ⚠️ ต้องรัน `npm install exceljs` ในโปรเจกต์ก่อน ไม่งั้น Build จะพังหา Package ไม่เจอ
 import ExcelJS from 'exceljs';
+import { spLaunchAsync } from '../spHandlerAutoUpdate'; // MARKER_SP_LISTENER_LAUNCH_V1
 
 // MARKER_FLEXIBLE_DATE_PARSER_V1
 // ── รับพิมพ์วันที่ได้หลาย Format (DDMMYYYY, DD/MM/YYYY, MM/DD/YYYY, ────────
@@ -19239,14 +19240,18 @@ export function BatchControlPage({ currentUser, userName = '', onGotoOutlookSetu
       `sendMode=${encodeURIComponent(sendMode)}`,
     ].filter(Boolean).join('&');
     const uri = `fastapn://${params}`;
-    // detect fastapn:// protocol via window blur
-    let handled = false;
-    const t = setTimeout(() => { if (!handled) setShowInstallGuide(true); }, 1500);
-    window.addEventListener('blur', function onBlur() {
-      handled = true; clearTimeout(t); setShowSendConfirm(true);
-      window.removeEventListener('blur', onBlur);
-    }, { once: true });
-    window.location.href = uri;
+    // MARKER_SP_LISTENER_LAUNCH_V1 -- ส่งผ่าน Listener ในเครื่อง (ไม่มีกล่อง Open) | ถ้าไม่ได้ -> ใช้ลิงก์ fastapn:// เดิม + ตรวจจับด้วย blur
+    spLaunchAsync(uri).then((viaListener) => {
+      if (viaListener) { setShowSendConfirm(true); return; }
+      // detect fastapn:// protocol via window blur
+      let handled = false;
+      const t = setTimeout(() => { if (!handled) setShowInstallGuide(true); }, 1500);
+      window.addEventListener('blur', function onBlur() {
+        handled = true; clearTimeout(t); setShowSendConfirm(true);
+        window.removeEventListener('blur', onBlur);
+      }, { once: true });
+      window.location.href = uri;
+    });
   };
 
   const handleConfirmSent = async () => {
@@ -20205,13 +20210,17 @@ export function GenerateMacroLogicPage({ currentUser, userName = '', isOwner, is
         note = ' -- ตารางใหญ่เกินให้ส่งผ่านลิงก์ จึงคัดลอกไว้ใน Clipboard แล้ว กด Ctrl+V ในเมล (ติดตั้งตัวช่วย Outlook v3 เพื่อให้ดึงตารางจาก Server เอง)';
       }
     }
-    let handled = false;
-    const t = setTimeout(() => { if (!handled) setMailMsg({ ok: false, text: 'เปิด Outlook ไม่สำเร็จ -- เครื่องนี้ยังไม่ได้ติดตั้งตัวช่วย fastapn:// (ดูคู่มือติดตั้งในหน้า Batch Control)' }); }, 1500);
-    window.addEventListener('blur', function onBlur() {
-      handled = true; clearTimeout(t); window.removeEventListener('blur', onBlur);
-      setMailMsg({ ok: true, text: (mode === 'send' ? 'สั่งส่งเมลผ่าน Outlook แล้ว' : 'เปิด Draft ใน Outlook แล้ว -- ตรวจและกดส่งได้เลย') + note });
-    }, { once: true });
-    window.location.href = uri;
+    // MARKER_SP_LISTENER_LAUNCH_V1 -- ส่งผ่าน Listener ในเครื่อง (ไม่มีกล่อง Open) | ถ้าไม่ได้ -> ใช้ลิงก์ fastapn:// เดิม
+    spLaunchAsync(uri).then((viaListener) => {
+      if (viaListener) { setMailMsg({ ok: true, text: (mode === 'send' ? 'สั่งส่งเมลผ่าน Outlook แล้ว' : 'เปิด Draft ใน Outlook แล้ว -- ตรวจและกดส่งได้เลย') + note }); return; }
+      let handled = false;
+      const t = setTimeout(() => { if (!handled) setMailMsg({ ok: false, text: 'เปิด Outlook ไม่สำเร็จ -- เครื่องนี้ยังไม่ได้ติดตั้งตัวช่วย fastapn:// (ดูคู่มือติดตั้งในหน้า Batch Control)' }); }, 1500);
+      window.addEventListener('blur', function onBlur() {
+        handled = true; clearTimeout(t); window.removeEventListener('blur', onBlur);
+        setMailMsg({ ok: true, text: (mode === 'send' ? 'สั่งส่งเมลผ่าน Outlook แล้ว' : 'เปิด Draft ใน Outlook แล้ว -- ตรวจและกดส่งได้เลย') + note });
+      }, { once: true });
+      window.location.href = uri;
+    });
   };
   const ORIGIN_LABEL = { PREVIEW: 'Preview', JOB_LIST: 'รายการ Job' };
   const renderDraftOverlay = (inside) => draftMail && (

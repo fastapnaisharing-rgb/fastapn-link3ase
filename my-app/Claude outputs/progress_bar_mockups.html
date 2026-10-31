@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup หลอด Progress</title>
+<style>
+  :root { --bg:#f3f2ee; --card:#fff; --ink:#1f2933; --mute:#7b8794; --track:#e5e7eb; --amber:#f2b84b; --blue:#3b82f6; --green:#2f9e44; --navy:#1a3a5c; --line:#eceae3; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:24px 16px 48px; background:var(--bg); color:var(--ink); font:14px/1.5 "Segoe UI","Noto Sans Thai",system-ui,sans-serif; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  p.sub { margin:0 0 20px; color:var(--mute); font-size:13px; }
+  .opt { background:var(--card); border-radius:12px; padding:16px 18px; margin-bottom:16px; border:1px solid var(--line); }
+  .opt h2 { font-size:14px; margin:0 0 2px; color:var(--navy); }
+  .opt .d { font-size:12px; color:var(--mute); margin:0 0 12px; }
+  .row { display:grid; grid-template-columns: 70px 1fr 90px; align-items:center; gap:16px; padding:16px 10px; border-top:1px solid var(--line); }
+  .row:first-of-type { border-top:none; }
+  .bu { font-weight:600; font-size:13px; }
+  .pill { justify-self:end; background:#faebd7; color:#8a5a14; border-radius:99px; padding:2px 10px; font-size:11px; }
+  .pill.ok { background:#e3f4e8; color:#1f6b33; }
+  /* A: เต็มช่อง */
+  .A { display:flex; align-items:center; gap:10px; }
+  .A .tr { flex:1; height:18px; background:var(--track); border-radius:99px; overflow:hidden; }
+  .A .fi { height:100%; background:var(--amber); border-radius:99px; }
+  .A b { width:52px; text-align:right; font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
+  /* B: หนา มี % ในหลอด */
+  .B .tr { position:relative; height:28px; background:var(--track); border-radius:8px; overflow:hidden; }
+  .B .fi { height:100%; background:linear-gradient(90deg,#f6c969,#f2b84b); min-width:0; }
+  .B span { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:#3b2a05; }
+  /* C: แบ่งช่อง */
+  .C { display:flex; align-items:center; gap:10px; }
+  .C .seg { flex:1; display:grid; grid-template-columns:repeat(20,1fr); gap:3px; }
+  .C .seg i { height:20px; border-radius:3px; background:var(--track); }
+  .C .seg i.on { background:var(--amber); }
+  .C b { width:52px; text-align:right; font-size:14px; font-weight:700; }
+  /* D: บาง + ตัวเลข x/y */
+  .D .top { display:flex; justify-content:space-between; font-size:13px; color:var(--mute); margin-bottom:3px; }
+  .D .top b { color:var(--ink); }
+  .D .tr { height:12px; background:var(--track); border-radius:99px; overflow:hidden; }
+  .D .fi { height:100%; background:var(--navy); }
+  /* E: วงกลม */
+  .E { display:flex; align-items:center; gap:12px; }
+  .E .ring { --p:0; width:56px; height:56px; border-radius:50%; background:conic-gradient(var(--amber) calc(var(--p)*1%), var(--track) 0); display:grid; place-items:center; }
+  .E .ring::after { content:""; width:42px; height:42px; background:#fff; border-radius:50%; }
+  .E .t { font-size:14px; color:var(--mute); }
+  .E .t b { color:var(--ink); font-size:16px; }
+  /* F: เปลี่ยนสีตามสถานะ */
+  .F { display:flex; align-items:center; gap:10px; }
+  .F .tr { flex:1; height:20px; background:var(--track); border-radius:99px; overflow:hidden; }
+  .F .fi { height:100%; border-radius:99px; }
+  .F .lo { background:var(--amber); } .F .mid { background:var(--blue); } .F .hi { background:var(--green); }
+  .F b { min-width:64px; text-align:right; font-size:14px; font-weight:700; display:flex; align-items:center; justify-content:flex-end; gap:3px; }
+  .F b.done { color:var(--green); }
+  .legend { font-size:12px; color:var(--mute); margin-top:6px; }
+  @media (max-width:560px){ .row { grid-template-columns:52px 1fr 70px; gap:8px; } }
+</style>
+</head>
+<body>
+<h1>Mockup หลอด Progress (คอลัมน์ Process)</h1>
+<p class="sub">ทุกแบบขยายให้ใหญ่ขึ้นทั้งความกว้าง (ยืดเต็มช่อง Process) และความสูง (เดิมสูงประมาณ 6px กว้างประมาณ 110px) — แต่ละแบบแสดง 4 สถานะ: 0%, 12%, 58%, 100% บอกได้ว่าชอบแบบไหน หรือผสมกัน เช่น "เอา B แต่สีตาม F"</p>
+<div class="opt"><h2>เดิม (เทียบขนาด)</h2><p class="d">หลอดเล็ก กว้างคงที่ อยู่กลางช่อง</p><div class="row"><span class="bu">BRW</span><div style="display:flex;align-items:center;justify-content:center;gap:14px"><div style="width:110px;height:6px;background:var(--track);border-radius:99px;overflow:hidden"><div style="width:12%;height:100%;background:var(--amber)"></div></div><span style="font-size:12px">12%</span></div><span class="pill">Pending</span></div></div>
+
+<div class="opt">
+  <h2>A · หลอดยืดเต็มช่อง (เรียบ)</h2>
+  <p class="d">ยืดตามความกว้างคอลัมน์ มี Padding ซ้ายขวา ตัวเลขอยู่ท้ายหลอด — ใกล้ของเดิมที่สุด แค่ยาวขึ้น</p>
+  <div class="row"><span class="bu">BRW</span><div class="A"><div class="tr"><div class="fi" style="width:0%"></div></div><b>0%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">CRGM</span><div class="A"><div class="tr"><div class="fi" style="width:12%"></div></div><b>12%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">LKS</span><div class="A"><div class="tr"><div class="fi" style="width:58%"></div></div><b>58%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">OTY</span><div class="A"><div class="tr"><div class="fi" style="width:100%"></div></div><b>100%</b></div><span class="pill ok">Confirm</span></div>
+</div>
+
+<div class="opt">
+  <h2>B · หลอดหนา มี % อยู่ในหลอด</h2>
+  <p class="d">หนา 20px อ่านง่ายจากระยะไกล ไม่ต้องมองหาตัวเลขข้างหลอด</p>
+  <div class="row"><span class="bu">BRW</span><div class="B"><div class="tr"><div class="fi" style="width:0%"></div><span>0%</span></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">CRGM</span><div class="B"><div class="tr"><div class="fi" style="width:12%"></div><span>12%</span></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">LKS</span><div class="B"><div class="tr"><div class="fi" style="width:58%"></div><span>58%</span></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">OTY</span><div class="B"><div class="tr"><div class="fi" style="width:100%"></div><span>100%</span></div></div><span class="pill ok">Confirm</span></div>
+</div>
+
+<div class="opt">
+  <h2>C · หลอดแบ่งเป็นช่อง (Segment)</h2>
+  <p class="d">20 ช่อง ช่องละ 5% ให้ฟีลเดียวกับแถบ Period ด้านบนของ Timeline</p>
+  <div class="row"><span class="bu">BRW</span><div class="C"><div class="seg" data-p="0"></div><b>0%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">CRGM</span><div class="C"><div class="seg" data-p="12"></div><b>12%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">LKS</span><div class="C"><div class="seg" data-p="58"></div><b>58%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">OTY</span><div class="C"><div class="seg" data-p="100"></div><b>100%</b></div><span class="pill ok">Confirm</span></div>
+</div>
+
+<div class="opt">
+  <h2>D · หลอดบาง + บอกจำนวนงาน (x / y)</h2>
+  <p class="d">บอกว่าทำแล้วกี่รายการจากทั้งหมด (นับตามสูตร Process เดิม: รายการที่นับและ Enable) ทำให้รู้ว่าเหลืออีกเท่าไหร่</p>
+  <div class="row"><span class="bu">BRW</span><div class="D"><div class="top"><span>ทำแล้ว <b>0</b> / 25</span><b>0%</b></div><div class="tr"><div class="fi" style="width:0%"></div></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">CRGM</span><div class="D"><div class="top"><span>ทำแล้ว <b>3</b> / 25</span><b>12%</b></div><div class="tr"><div class="fi" style="width:12%"></div></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">LKS</span><div class="D"><div class="top"><span>ทำแล้ว <b>14</b> / 24</span><b>58%</b></div><div class="tr"><div class="fi" style="width:58%"></div></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">OTY</span><div class="D"><div class="top"><span>ทำแล้ว <b>22</b> / 22</span><b>100%</b></div><div class="tr"><div class="fi" style="width:100%"></div></div></div><span class="pill ok">Confirm</span></div>
+</div>
+
+<div class="opt">
+  <h2>E · วงกลม (Ring)</h2>
+  <p class="d">กินที่น้อย เหมาะถ้าอยากให้คอลัมน์ Process แคบลง</p>
+  <div class="row"><span class="bu">BRW</span><div class="E"><div class="ring" style="--p:0"></div><div class="t"><b>0%</b></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">CRGM</span><div class="E"><div class="ring" style="--p:12"></div><div class="t"><b>12%</b></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">LKS</span><div class="E"><div class="ring" style="--p:58"></div><div class="t"><b>58%</b></div></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">OTY</span><div class="E"><div class="ring" style="--p:100"></div><div class="t"><b>100%</b></div></div><span class="pill ok">Confirm</span></div>
+</div>
+
+<div class="opt">
+  <h2>F · หลอดเปลี่ยนสีตามความคืบหน้า</h2>
+  <p class="d">ส้ม = เพิ่งเริ่ม (&lt;50%) · น้ำเงิน = ครึ่งทาง (50–99%) · เขียว + เครื่องหมายถูก = ครบ 100%</p>
+  <div class="row"><span class="bu">BRW</span><div class="F"><div class="tr"><div class="fi lo" style="width:0%"></div></div><b>0%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">CRGM</span><div class="F"><div class="tr"><div class="fi lo" style="width:12%"></div></div><b>12%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">LKS</span><div class="F"><div class="tr"><div class="fi mid" style="width:58%"></div></div><b>58%</b></div><span class="pill">Pending</span></div>
+  <div class="row"><span class="bu">OTY</span><div class="F"><div class="tr"><div class="fi hi" style="width:100%"></div></div><b class="done">✓ 100%</b></div><span class="pill ok">Confirm</span></div>
+</div>
+
+<p class="legend">หมายเหตุ: ตัวเลขในตัวอย่างเป็นข้อมูลสมมุติ เพื่อดูหน้าตาเท่านั้น</p>
+
+<script>
+  document.querySelectorAll('.C .seg').forEach(function (el) {
+    var p = +el.getAttribute('data-p'), on = Math.round(p / 5), h = '';
+    for (var i = 0; i < 20; i++) h += '<i class="' + (i < on ? 'on' : '') + '"></i>';
+    el.innerHTML = h;
+  });
+</script>
+</body>
+</html>

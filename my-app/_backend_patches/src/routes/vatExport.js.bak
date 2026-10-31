@@ -519,6 +519,36 @@ router.get("/history", async (req, res) => {
         if (bt) { bt.status = 'pv-backup'; /* รวมทุกประเภท Backup: UI ใช้ซ่อนจากประวัติ Export */ bt.finishedAt = f.finished_at; bt.expireAt = f.expire_at; bt.period = f.period || null; }
       });
     }
+    // MARKER_VATEXPORT_HISTORY_SP_UPLOAD_V1 -- ส่งเลข BU (SEGMENT3) + งวด (YYYY.MM) ต่อ Batch ให้ Frontend ส่งไฟล์เข้า SharePoint Z_AllSystemUpload (<เลข BU>\\<YYYY.MM>) ตามหลักเดียวกับ Folder Path ของไฟล์ Export (งวดว่าง = เดือนปัจจุบัน)
+    if (batchIds.length > 0) {
+      try {
+        const buList = [...new Set(Array.from(batchMap.values()).map((b) => b.bu).filter(Boolean))];
+        const [segRes, perRes] = await Promise.all([
+          pool.query(`SELECT bu, "SEGMENT3" AS seg3 FROM company_list WHERE bu = ANY($1)`, [buList]),
+          pool.query(
+            `SELECT batch_id, MIN(NULLIF(period, '')) AS period FROM (
+               SELECT batch_id, period FROM vat_upload_popvatdraft WHERE batch_id = ANY($1)
+               UNION ALL SELECT batch_id, period FROM vat_simpleinputdraft WHERE batch_id = ANY($1)
+               UNION ALL SELECT batch_id, period FROM vat_adi_transferdraft WHERE batch_id = ANY($1)
+             ) t GROUP BY batch_id`,
+            [batchIds]
+          ),
+        ]);
+        const segByBu = new Map();
+        segRes.rows.forEach((r) => { if (!segByBu.has(r.bu) && r.seg3) segByBu.set(r.bu, String(r.seg3).trim()); });
+        const perByBatch = new Map(perRes.rows.map((r) => [r.batch_id, r.period]));
+        const toSpPeriod = (s) => {
+          const v = String(s || "").trim();
+          let m = v.match(/^(\d{1,2})[-/.](\d{4})$/);
+          if (m) return `${m[2]}.${m[1].padStart(2, "0")}`;
+          m = v.match(/^(\d{4})[-/.](\d{1,2})/);
+          if (m) return `${m[1]}.${m[2].padStart(2, "0")}`;
+          const n = new Date();
+          return `${n.getFullYear()}.${String(n.getMonth() + 1).padStart(2, "0")}`;
+        };
+        batchMap.forEach((bt) => { bt.spBu = segByBu.get(bt.bu) || ""; bt.spPeriod = toSpPeriod(perByBatch.get(bt.batchId)); });
+      } catch (e) { console.error("GET /vat-export/history SP info error:", e.message); }
+    }
     res.json({ ok: true, batches: Array.from(batchMap.values()) });
   } catch (err) {
     console.error("GET /vat-export/history error:", err.message);
@@ -540,7 +570,7 @@ router.get("/file/:id/download", async (req, res) => {
     const gzBuffer = fs.readFileSync(record.file_path);
     const fileBuffer = zlib.gunzipSync(gzBuffer);
 
-    await pool.query(`UPDATE file_storage SET downloaded_at = NOW() WHERE id = $1`, [id]);
+    await pool.query(`UPDATE file_storage SET downloaded_at = COALESCE(downloaded_at, NOW()) WHERE id = $1`, [id]); // MARKER_VATEXPORT_DOWNLOADED_AT_FREEZE_V1 -- กด Download แล้วเวลาหยุดที่ครั้งแรก (โหลดซ้ำไม่อัปเดตเวลา)
 
     const contentType = record.file_name.endsWith(".xlsx")
       ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -561,8 +591,19 @@ router.get("/backup", async (req, res) => {
     const type = String(req.query.type || "popvat");
     const tbl = { popvat: "vat_upload_popvatdraft", simple: "vat_simpleinputdraft", adi: "vat_adi_transferdraft" }[type];
     if (!tbl) return res.status(400).json({ error: "type ไม่ถูกต้อง" });
+    // MARKER_VATEXPORT_BACKUP_SEARCH_TAXINV_V14 -- ?q= ค้นทุก Field (ค่าอย่างเดียว ไม่รวมชื่อ Column) ของรายการใน Backup เช่น Tax Invoice / Vendor Tax Invoice / Invoice / GRT / Supplier -> คืนเฉพาะ Batch ที่เจอ + match_count
+    const q = String(req.query.q || "").trim();
+    const params = [];
+    let hitSel = "FALSE AS _hit";
+    let having = "";
+    if (q) {
+      params.push(`%${q.replace(/[\\%_]/g, "\\$&")}%`);
+      hitSel = `EXISTS (SELECT 1 FROM jsonb_each_text(to_jsonb(x) - 'id' - 'status' - 'draft_id' - 'created_at' - 'updated_at' - 'finished_at' - 'expire_at' - 'batch_id' - 'bu') e WHERE e.value ILIKE $1) AS _hit`;
+      having = "HAVING COUNT(*) FILTER (WHERE _hit) > 0";
+    }
     const { rows } = await pool.query(
       `SELECT bu, batch_id,
+              COUNT(*) FILTER (WHERE _hit)::int AS match_count,
               MIN(NULLIF(period, '')) AS period,
               MIN(NULLIF(to_jsonb(t)->>'receive_date', '')) AS receive_from,
               MAX(NULLIF(to_jsonb(t)->>'receive_date', '')) AS receive_to,
@@ -570,11 +611,12 @@ router.get("/backup", async (req, res) => {
               MIN(created_at) AS upload_at,
               MIN(finished_at) AS finished_at,
               MIN(expire_at) AS expire_at
-       FROM ${tbl} t
-       WHERE status = '${BACKUP_STATUS[type]}' AND batch_id IS NOT NULL
+       FROM (SELECT x.*, ${hitSel} FROM ${tbl} x WHERE x.status = '${BACKUP_STATUS[type]}' AND x.batch_id IS NOT NULL) t
        GROUP BY bu, batch_id
+       ${having}
        ORDER BY MIN(finished_at) DESC NULLS LAST, batch_id DESC
-       LIMIT 500`
+       LIMIT 500`,
+      params
     );
     const batchIds = rows.map((r) => r.batch_id);
     let filesByBatch = {};
@@ -647,9 +689,8 @@ router.post("/popvat/end-process-direct", async (req, res) => {
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, "0");
     const dd = String(now.getDate()).padStart(2, "0");
-    const hh = String(now.getHours()).padStart(2, "0");
-    const min = String(now.getMinutes()).padStart(2, "0");
-    const batchId = `${bu}_DirectBackup_${yyyy}${mm}${dd}_${hh}${min}`;
+    // MARKER_VATEXPORT_DIRECTBACKUP_DAILY_V1 -- รวมเป็น 1 Batch ต่อ BU ต่อวัน (เดิมแยกตามนาที ทำให้ Transaction Backup มี Batch เยอะ)
+    const batchId = `${bu}_DirectBackup_${yyyy}${mm}${dd}`;
     const upd = await client.query(
       `UPDATE vat_upload_popvatdraft
        SET batch_id = $1, status = '${BACKUP_STATUS.popvat}', finished_at = NOW(), expire_at = NOW() + INTERVAL '${PV_RETENTION.popvat}'

@@ -143,6 +143,35 @@ router.post('/ocr-service/auto', async (req, res) => {
   }
 });
 
+// MARKER_DOCENTER_WARMUP_V1 -- POST /api/docenter/ocr-service/warmup
+// Frontend เรียกทันทีที่มีไฟล์เข้ามา: ตอบกลับทันที แล้วเบื้องหลัง (1) Start Service ถ้ายังไม่รัน (2) รอพอร์ต 5050 พร้อม
+// (3) สั่ง Python โหลดโมเดล PaddleOCR ล่วงหน้า -- กันไฟล์แรกต้องรอ Start + โหลดโมเดลตอนมีงานจริง
+let _warmupBusy = false;
+async function runWarmup() {
+    if (_warmupBusy) return;
+    _warmupBusy = true;
+    try {
+        const { stdout } = await execAsync(`sc query ${OCR_SERVICE_NAME}`).catch(() => ({ stdout: '' }));
+        if (!stdout.includes('RUNNING')) await scCommand('start');
+        for (let i = 0; i < 40; i++) { // รอสูงสุด ~40 วินาที
+            const ok = await fetch(`${OCR_SERVER_BASE}/health`, { timeout: 1500 }).then(r => r.ok).catch(() => false);
+            if (ok) {
+                await fetch(`${OCR_SERVER_BASE}/warmup`, { method: 'POST', timeout: 5000 }).catch(() => {});
+                return;
+            }
+            await new Promise(r => setTimeout(r, 1000));
+        }
+    } catch (e) {
+        console.error('[warmup] error:', e.message);
+    } finally {
+        _warmupBusy = false;
+    }
+}
+router.post('/ocr-service/warmup', (req, res) => {
+    runWarmup(); // ไม่ await
+    res.json({ ok: true });
+});
+
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 30 * 1024 * 1024 },
@@ -248,12 +277,12 @@ function genSerialBackend(bu, type) {
 
 // ── Helper: เรียก /ocr-lightweight แบบ Stream (NDJSON) ทีละหน้า ──────────────
 // onProgress({pages_checked, total_pages}) ถูกเรียกทุกครั้งที่มีหน้าใหม่ไหลเข้ามา (ก่อน Group/Match/Full OCR ทั้งหมด -- เร็วกว่าเดิมมาก)
-async function runLightweightOcrStreaming(pdfBuffer, fileName, rotation, onProgress) {
+async function runLightweightOcrStreaming(pdfBuffer, fileName, rotation, onProgress, full = false) {
     const fd = new FormData();
     fd.append('file', pdfBuffer, { filename: fileName, contentType: 'application/pdf' });
     if (rotation) fd.append('rotation', String(rotation));
 
-    const res = await fetch(`${OCR_SERVER_BASE}/ocr-lightweight`, {
+    const res = await fetch(`${OCR_SERVER_BASE}/ocr-lightweight${full ? '?full=1' : ''}`, { // MARKER_DOCENTER_ONEPASS_V1
         method: 'POST', body: fd, headers: fd.getHeaders(),
         timeout: 10 * 60 * 1000, // เผื่อ PDF หลายสิบหน้า
     });
@@ -338,6 +367,26 @@ function groupPagesByDocument(pageSignals) {
     return groups;
 }
 
+// MARKER_DOCENTER_ONEPASS_V1 -- ประกอบผล Full OCR ของ Group จากข้อมูลที่ Python ส่งมาพร้อม Signal (อ่านรอบเดียว)
+// คืน null ถ้าหน้าใดไม่มี rows (Python รุ่นเก่า) -> ผู้เรียกถอยไปใช้ /ocr แบบเดิม
+function buildOnePassData(group, pageSignals, previewImages) {
+    const pages = group.pages.map(n => pageSignals.find(p => p.page === n)).filter(Boolean);
+    if (!pages.length || pages.some(p => !Array.isArray(p.rows))) return null;
+    const rows = pages.flatMap(p => p.rows);
+    const metadata = {};
+    for (const p of pages) {
+        for (const [k, v] of Object.entries(p.meta || {})) {
+            if ((metadata[k] === undefined || metadata[k] === '') && v !== '' && v !== null && v !== undefined) metadata[k] = v;
+        }
+    }
+    const raw = String(metadata.doc_type || '').trim().toUpperCase();
+    metadata.doc_type = ['APN01', 'AP07', 'AP09', 'TRANS', 'IMP'].includes(raw) ? raw : (group.doc_type || 'APN01');
+    const d0 = previewImages && previewImages[0] && previewImages[0].data;
+    const pdf_image = d0 ? (String(d0).startsWith('data:') ? d0 : 'data:image/jpeg;base64,' + d0) : '';
+    return { success: true, rows, total_rows: rows.length, pages: pages.length, metadata, doc_type: metadata.doc_type,
+             ocr_text: pages.map(p => p.ocr_text || '').join(' '), pdf_image };
+}
+
 // ── หา Match ที่ดีที่สุดใน doc_collection สำหรับ Group นี้ ──────────────
 // Match Key: Invoice Number + Branch + มูลค่ารวม (Amount) + Vendor Name (เหมือน checkAllDuplicates()
 // ฝั่ง Frontend ทุกประการ) Confidence = จำนวน Field ที่ตรง/4*100% --
@@ -350,7 +399,9 @@ async function findBestMatchForGroup(group) {
     // Vendor) ซึ่งช้ากว่า -- Match ตรง = Confidence 100 ทันที
     if (group.serial_code && group.serial_code.trim()) {
         const { rows: serialCandidates } = await pool.query(
-            `SELECT id, serial_code FROM doc_collection WHERE serial_code = $1 LIMIT 1`,
+            // MARKER_DOCENTER_AP09_MATCH_KEYS_V1 -- ไม่สนช่องว่าง/ตัวพิมพ์ (OCR อ่าน Serial Code มักเพี้ยนเรื่องช่องว่าง/ตัวใหญ่เล็ก)
+            `SELECT id, serial_code FROM doc_collection
+              WHERE lower(replace(serial_code, ' ', '')) = lower(replace($1, ' ', '')) LIMIT 1`,
             [group.serial_code.trim()]
         );
         if (serialCandidates.length > 0) {
@@ -367,7 +418,7 @@ async function findBestMatchForGroup(group) {
          WHERE dc.doc_type = $1
            AND EXISTS (
              SELECT 1 FROM jsonb_array_elements(dc.rows) re
-             WHERE lower(trim(re->>'Invoice Number')) = lower(trim($2))
+             WHERE lower(trim(COALESCE(re->>'Invoice Number', re->>'Tax Invoice No.'))) = lower(trim($2))
            )
          ORDER BY dc.updated_at DESC
          LIMIT 10`,
@@ -378,11 +429,12 @@ async function findBestMatchForGroup(group) {
     for (const cand of candidates) {
         const candRows = Array.isArray(cand.rows) ? cand.rows : [];
         for (const r of candRows) {
-            if (normMatch(r['Invoice Number']) !== normMatch(group.invoice_number)) continue;
+            const rInv = (r['Invoice Number'] != null && r['Invoice Number'] !== '') ? r['Invoice Number'] : r['Tax Invoice No.'];
+            if (normMatch(rInv) !== normMatch(group.invoice_number)) continue;
             let score = 25; // Invoice Number ตรงแน่นอนอยู่แล้ว (จาก WHERE ด้านบน)
             if (group.branch && normMatch(r['Branch']) === normMatch(group.branch)) score += 25;
             if (group.vendor_name && normMatch(r['Vendor Name']) === normMatch(group.vendor_name)) score += 25;
-            if (group.amount !== '' && group.amount != null && Math.abs(toNumMatch(r['มูลค่ารวม']) - toNumMatch(group.amount)) < 0.01) score += 25;
+            if (group.amount !== '' && group.amount != null && Math.abs(toNumMatch(r['มูลค่ารวม'] != null && r['มูลค่ารวม'] !== '' ? r['มูลค่ารวม'] : r['ยอดรวม']) - toNumMatch(group.amount)) < 0.01) score += 25;
             if (!best || score > best.confidence) {
                 best = { doc_collection_id: cand.id, serial_code: cand.serial_code, confidence: score };
             }
@@ -532,48 +584,124 @@ router.get('/queue/:id/groups', async (req, res) => {
     }
 });
 
+// MARKER_DOCENTER_OCR_VALIDATE_V1 -- ตรวจผล Full OCR ก่อน Auto-Save เข้า doc_collection
+// ยอดก่อนภาษี + ยอดภาษี ต้องเท่ากับ ยอดรวม (ผิดพลาดได้ <= 0.05) และวันที่ต้องมีปีสมเหตุสมผล
+// ตั้ง DOCENTER_OCR_VALIDATE=0 เพื่อปิดการตรวจ
+function _valNum(v) {
+    if (v === null || v === undefined || v === '') return null;
+    const n = parseFloat(String(v).replace(/,/g, ''));
+    return Number.isNaN(n) ? null : n;
+}
+function _valYear(text) {
+    const s = String(text || '').trim();
+    let m = s.match(/(\d{1,2})[-\/ ]([A-Za-z]{3,9})[-\/ ](\d+)\s*$/);
+    let ys = null;
+    if (m) ys = m[3];
+    else if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) ys = m[1];
+    else if ((m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d+)\s*$/))) ys = m[3];
+    if (ys === null) return null;
+    if (ys.length === 2) return 2000 + parseInt(ys, 10);
+    if (ys.length !== 4) return -1;           // เช่น "001" -> ผิดปกติ
+    let y = parseInt(ys, 10);
+    if (y >= 2400 && y <= 2700) y -= 543;     // พ.ศ.
+    return y;
+}
+function validateOcrRows(rows) {
+    const issues = [];
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) return ['ไม่พบแถวข้อมูลเลย'];
+    const PAIRS = [['ยอดก่อนภาษี', 'ยอดภาษี', 'ยอดรวม'], ['มูลค่าก่อนภาษี', 'มูลค่าภาษี', 'มูลค่ารวม']];
+    list.forEach((r, i) => {
+        const no = i + 1;
+        for (const [a, b, c] of PAIRS) {
+            if (a in r || c in r) {
+                const na = _valNum(r[a]), nb = _valNum(r[b]), nc = _valNum(r[c]);
+                if (nc === null) issues.push(`แถว ${no}: ไม่มี ${c}`);
+                else if (na !== null && nb !== null && Math.abs(na + nb - nc) > 0.05) issues.push(`แถว ${no}: ${a}+${b} ไม่เท่ากับ ${c}`);
+                break;
+            }
+        }
+        for (const k of ['Receive Date', 'Tax Invoice Date']) {
+            if (r[k]) {
+                const y = _valYear(r[k]);
+                if (y !== null && (y < 2000 || y > 2100)) issues.push(`แถว ${no}: ${k} "${r[k]}" ปีผิดปกติ`);
+            }
+        }
+    });
+    return issues;
+}
+
 // ── POST /api/docenter/queue/:id/groups/:groupId/add — User กดปุ่ม "เพิ่ม" ────────────
 // ── ให้ Group ที่ไม่ Match (status='needs_review') เข้า Full OCR เฉพาะหน้า ─────
 // ── ของ Group นี้เท่านั้น (ไม่ใช่ทั้ง PDF) -- ไม่ Auto-Insert เข้า ─────────
 // ── doc_collection เอง ให้ User Review+Save จาก Preview Zone เหมือน Flow เดิม ────────
-router.post('/queue/:id/groups/:groupId/add', async (req, res) => {
-    const queueId = parseInt(req.params.id);
-    const groupId = parseInt(req.params.groupId);
+// MARKER_DOCENTER_AUTO_ADD_V1 -- แยก Logic ของปุ่ม "เพิ่ม" เป็นฟังก์ชัน ใช้ได้ทั้งจากปุ่มและจาก Worker (Auto-Add)
+async function runGroupAdd(queueId, groupId, opts = {}) {
     try {
         const { rows: groupRows } = await pool.query(
             `SELECT * FROM docenter_ocr_groups WHERE id = $1 AND queue_id = $2`,
             [groupId, queueId]
         );
-        if (!groupRows[0]) return res.status(404).json({ error: 'ไม่พบ Group นี้' });
+        if (!groupRows[0]) return { status: 404, body: { error: 'ไม่พบ Group นี้' } };
         const group = groupRows[0];
         if (group.status !== 'needs_review') {
-            return res.status(409).json({ error: `Group นี้อยู่ในสถานะ '${group.status}' แล้ว ไม่สามารถกด "เพิ่ม" ซ้ำได้` });
+            return { status: 409, body: { error: `Group นี้อยู่ในสถานะ '${group.status}' แล้ว ไม่สามารถกด "เพิ่ม" ซ้ำได้` } };
         }
 
         const { rows: queueRows } = await pool.query(
             `SELECT file_name, file_data, rotation, uploaded_by FROM docenter_ocr_queue WHERE id = $1`,
             [queueId]
         );
-        if (!queueRows[0]) return res.status(404).json({ error: 'ไม่พบ Queue Job นี้' });
+        if (!queueRows[0]) return { status: 404, body: { error: 'ไม่พบ Queue Job นี้' } };
         const { file_name, file_data, rotation, uploaded_by } = queueRows[0];
         const pdfBuffer = Buffer.from(file_data, 'base64');
 
         // MARKER_DOCENTER_MANUALADD_FLAG_V1 -- Mark ว่า Group นี้ Resolve ผ่านการกด "+ เพิ่ม" เอง (ไม่ใช่ Auto-Match ตอนแรก)
-        await pool.query(`UPDATE docenter_ocr_groups SET status='ocr_queued', was_manual_add=true, updated_at=NOW() WHERE id=$1`, [groupId]);
+        await pool.query(`UPDATE docenter_ocr_groups SET status='ocr_queued', was_manual_add=$2, updated_at=NOW() WHERE id=$1`, [groupId, !opts.auto]);
         broadcastQueueUpdate('group_status', { queue_id: queueId, group_id: groupId, status: 'ocr_queued' });
 
-        // ตัด Sub-PDF เฉพาะหน้าของ Group นี้ -> ส่งเข้า Full OCR ปกติ
-        const subPdfBase64 = await extractPagesAsSubPdf(pdfBuffer, file_name, group.pages, rotation);
-        const subPdfBuffer = Buffer.from(subPdfBase64, 'base64');
+        // MARKER_DOCENTER_ONEPASS_V1 -- opts.data = ผล OCR ที่อ่านมาแล้วรอบเดียว (ไม่ต้องยิง /ocr ซ้ำ)
+        let data;
+        if (opts.data) {
+            data = opts.data;
+        } else {
+            // ตัด Sub-PDF เฉพาะหน้าของ Group นี้ -> ส่งเข้า Full OCR ปกติ
+            const subPdfBase64 = await extractPagesAsSubPdf(pdfBuffer, file_name, group.pages, rotation);
+            const subPdfBuffer = Buffer.from(subPdfBase64, 'base64');
 
-        const fd = new FormData();
-        fd.append('file', subPdfBuffer, { filename: file_name, contentType: 'application/pdf' });
-        if (rotation) fd.append('rotation', String(rotation));
-        const ocrRes = await fetch(OCR_SERVER_URL, {
-            method: 'POST', body: fd, headers: fd.getHeaders(), timeout: 5 * 60 * 1000,
-        });
-        const data = await ocrRes.json();
-        if (!ocrRes.ok) throw new Error(data.detail || 'Full OCR failed');
+            const fd = new FormData();
+            fd.append('file', subPdfBuffer, { filename: file_name, contentType: 'application/pdf' });
+            if (rotation) fd.append('rotation', String(rotation));
+            const ocrRes = await fetch(OCR_SERVER_URL, {
+                method: 'POST', body: fd, headers: fd.getHeaders(), timeout: 5 * 60 * 1000,
+            });
+            data = await ocrRes.json();
+            if (!ocrRes.ok) throw new Error(data.detail || 'Full OCR failed');
+        }
+
+        // MARKER_DOCENTER_OCR_VALIDATE_V1 -- ผลไม่ผ่านการตรวจ -> ไม่ Auto-Save เก็บผลไว้ให้ตรวจเอง (needs_review)
+        if (process.env.DOCENTER_OCR_VALIDATE !== '0') {
+            const issues = validateOcrRows(data.rows);
+            // MARKER_DOCENTER_OCR_VALIDATE_META_V1 -- ตรวจ Receive Date จากหัวกระดาษ (meta) ด้วย: ปีต้องอยู่ในช่วงสมเหตุสมผล (ปีนี้ -5 ถึง +1)
+            {
+                const rd = (data.metadata || {}).receive_date;
+                if (rd) {
+                    const y = _valYear(rd), cy = new Date().getFullYear();
+                    if (y === null || y < cy - 5 || y > cy + 1) issues.push(`Receive Date หัวกระดาษ "${rd}" ปีผิดปกติ`);
+                }
+            }
+            if (issues.length) {
+                const shown = issues.slice(0, 5).join('; ');
+                const valMsg = `ตรวจพบข้อมูลไม่น่าเชื่อถือ ${issues.length} จุด: ${shown}${issues.length > 5 ? ' ...' : ''} -- ไม่บันทึกอัตโนมัติ กรุณาตรวจสอบ`;
+                console.warn(`[docenter-group-add] validate FAILED queue=${queueId} group=${groupId}: ${issues.length} issue(s)`);
+                await pool.query(
+                    `UPDATE docenter_ocr_groups SET status='needs_review', ocr_result_meta=$2, ocr_result_data=$3, error_msg=$4, updated_at=NOW() WHERE id=$1`,
+                    [groupId, JSON.stringify(data.metadata || {}), JSON.stringify({ rows: data.rows, ocr_text: data.ocr_text, total_rows: data.total_rows, pages: data.pages, pdf_image: data.pdf_image }), valMsg]
+                );
+                broadcastQueueUpdate('group_status', { queue_id: queueId, group_id: groupId, status: 'needs_review', error: valMsg });
+                return { status: 422, body: { error: valMsg, validation_issues: issues } };
+            }
+        }
 
         // MARKER_DOCENTER_GROUPADD_AUTOSAVE_V1 -- ไม่รอ User Review+Save เอง -- Insert เข้า
         // doc_collection ทันทีที่ OCR เสร็จ เชื่อผล OCR 100% (Amount อยู่ใน rows ต่อแถวอยู่แล้ว
@@ -610,7 +738,7 @@ router.post('/queue/:id/groups/:groupId/add', async (req, res) => {
                 [groupId, JSON.stringify(groupMeta), JSON.stringify({ rows: data.rows, ocr_text: data.ocr_text, total_rows: data.total_rows, pages: data.pages, pdf_image: data.pdf_image }), dupMsg]
             );
             broadcastQueueUpdate('group_status', { queue_id: queueId, group_id: groupId, status: 'needs_review', error: dupMsg });
-            return res.status(409).json({ error: dupMsg });
+            return { status: 409, body: { error: dupMsg } };
         }
 
         const nowIso = new Date().toISOString();
@@ -629,7 +757,21 @@ router.post('/queue/:id/groups/:groupId/add', async (req, res) => {
                 insertBuCode, insertBuCodeName, insertBuName,
                 groupMeta.receive_date || nowIso.split('T')[0],
                 uploaded_by || '',
-                data.ocr_text || '',
+                (() => {
+                    // MARKER_DOCENTER_OCRTEXT_2FIELDS_V1 -- เก็บ ocr_text เฉพาะฟิลด์ค้นหาหลัก ไม่เก็บข้อความทั้งหน้า
+                    //   AP09  -> Vendor Name | Tax Invoice No.
+                    //   APN01 -> Vendor Name | Invoice Number | Batch Name (ถ้ามี)
+                    // ถ้าไม่มีฟิลด์เหล่านี้เลย ถอยไปเก็บข้อความเต็ม / DOCENTER_OCRTEXT_FULL=1 = เก็บเต็มทุกกรณี
+                    if (process.env.DOCENTER_OCRTEXT_FULL === '1') return data.ocr_text || '';
+                    const keys = ocrDocType === 'AP09' ? ['Vendor Name', 'Tax Invoice No.'] : ['Vendor Name', 'Invoice Number', 'Batch Name'];
+                    const lines = [], seen = new Set();
+                    for (const r of (Array.isArray(data.rows) ? data.rows : [])) {
+                        const vals = keys.map(k => String(r[k] || '').trim());
+                        const ln = vals.join(' | '); // เก็บช่องว่างไว้ให้ตำแหน่งคอลัมน์คงที่ (หน้าแก้ไข Index อ่านตามตำแหน่ง)
+                        if (vals.some(Boolean) && !seen.has(ln)) { seen.add(ln); lines.push(ln); }
+                    }
+                    return lines.length ? lines.join('\n') : (data.ocr_text || '');
+                })(),
                 JSON.stringify(groupAttachPayload),
                 nowIso,
             ]
@@ -652,16 +794,25 @@ router.post('/queue/:id/groups/:groupId/add', async (req, res) => {
         );
         if (!pending[0]) {
             await pool.query(`UPDATE docenter_ocr_queue SET status='done', updated_at=NOW() WHERE id=$1`, [queueId]);
+            try {
+                const { rows: gc } = await pool.query(`SELECT COUNT(*)::int AS n FROM docenter_ocr_groups WHERE queue_id=$1`, [queueId]);
+                broadcastQueueUpdate('queue_done', { id: queueId, file_name, uploaded_by, groups: gc[0] ? gc[0].n : 0 }); // MARKER_APP_OCR_DONE_NOTIFY_V1
+            } catch (_) {}
             getQueueSnapshot().then(snapshot => broadcastQueueUpdate('queue_update', { snapshot }));
         }
 
-        return res.json({ success: true, group_id: groupId, result: data });
+        return { status: 200, body: { success: true, group_id: groupId, result: data } };
     } catch (err) {
         console.error(`[docenter-group-add] error queue=${queueId} group=${groupId}:`, err.message);
         await pool.query(`UPDATE docenter_ocr_groups SET status='needs_review', error_msg=$2, updated_at=NOW() WHERE id=$1`, [groupId, err.message]);
         broadcastQueueUpdate('group_status', { queue_id: queueId, group_id: groupId, status: 'needs_review', error: err.message });
-        return res.status(500).json({ error: err.message });
+        return { status: 500, body: { error: err.message } };
     }
+}
+
+router.post('/queue/:id/groups/:groupId/add', async (req, res) => {
+    const r = await runGroupAdd(parseInt(req.params.id), parseInt(req.params.groupId));
+    return res.status(r.status).json(r.body);
 });
 
 // ── PATCH /queue/:id/priority — เลื่อน priority ขึ้น 1 ──────────────────────────
@@ -970,9 +1121,11 @@ async function processOneJob(queueId, retryCount = 0) {
         // MARKER_DOCENTER_GROUP_MATCH_V2
         // ── Phase 1: Lightweight OCR (Streaming NDJSON) -- OCR แค่ 35% บน ──────
         // ── ของทุกหน้า แทน Full OCR ทั้ง PDF ทันที ─────────────────────────────
+        const onePass = process.env.DOCENTER_SINGLE_PASS !== '0'; // MARKER_DOCENTER_ONEPASS_V1 -- อ่านเต็มหน้ารอบเดียว (ปิดด้วย DOCENTER_SINGLE_PASS=0)
+        const onePassData = {};
         const pageSignals = await runLightweightOcrStreaming(pdfBuffer, file_name, rotation, (progress) => {
             broadcastQueueUpdate('lightweight_progress', { queue_id: queueId, ...progress });
-        });
+        }, onePass);
 
         // ── Phase 2: จับกลุ่มหน้าเป็นเอกสาร ───────────────────────────────────
         const groups = groupPagesByDocument(pageSignals);
@@ -998,6 +1151,7 @@ async function processOneJob(queueId, retryCount = 0) {
                 console.error(`[docenter-group-match] extract-pages error queue=${queueId} group=${gi}:`, e.message);
             }
 
+            if (onePass && !matched) { try { onePassData[gi] = buildOnePassData(g, pageSignals, previewImages); } catch (_) {} }
             let finalStatus = matched ? 'matched_attached' : 'needs_review';
             let groupErrMsg = null;
 
@@ -1052,7 +1206,7 @@ async function processOneJob(queueId, retryCount = 0) {
             );
             console.log(`[queue] Auto-matched ALL: ${file_name} -> ${groups.length} group(s), ${pageSignals.length} page(s) -- ข้าม Full OCR ทั้งหมด`);
             await logCentralQueue('done', { source:'docenter', source_id:queueId, file_name, uploaded_by:uploader, priority_class:2, detail:{ auto_matched_all: true, groups: groups.length } });
-            broadcastQueueUpdate('queue_done', { id: queueId, file_name, auto_matched_all: true, groups: groups.length });
+            broadcastQueueUpdate('queue_done', { id: queueId, file_name, uploaded_by: uploader, auto_matched_all: true, groups: groups.length });
         } else {
             // เหลือ Group ที่ไม่ Match -- รอ User กด "เพิ่ม" เอง (Manual Gate) ก่อนเข้า Full OCR
             await pool.query(
@@ -1061,6 +1215,22 @@ async function processOneJob(queueId, retryCount = 0) {
             );
             console.log(`[queue] Split+Match เสร็จ: ${file_name} -> ${autoMatchedPages} หน้า Auto-Matched, ${needsReviewCount} Group รอ User กด "เพิ่ม"`);
             await logCentralQueue('needs_review', { source:'docenter', source_id:queueId, file_name, uploaded_by:uploader, priority_class:2, detail:{ auto_matched_pages: autoMatchedPages, needs_review_groups: needsReviewCount } });
+            // MARKER_DOCENTER_AUTO_ADD_V1 -- Group ที่ไม่ Match: อ่านตาราง+ตรวจ+บันทึกเองทันที (ผ่านการตรวจเท่านั้น) ไม่ต้องรอกด "เพิ่ม"
+            // ปิดได้ด้วย DOCENTER_AUTO_ADD=0 -- ผลไม่ผ่านการตรวจจะค้าง needs_review พร้อมเหตุผล
+            if (process.env.DOCENTER_AUTO_ADD !== '0') {
+                try {
+                    const { rows: toAdd } = await pool.query(
+                        `SELECT id, group_index FROM docenter_ocr_groups WHERE queue_id=$1 AND status='needs_review' ORDER BY group_index ASC`, [queueId]);
+                    for (const gr of toAdd) {
+                        const r = await runGroupAdd(queueId, gr.id, { auto: true, data: onePassData[gr.group_index] || null });
+                        console.log(`[docenter-auto-add] queue=${queueId} group=${gr.id} -> ${r.status}${r.status !== 200 ? ' ' + (r.body && r.body.error || '') : ''}`);
+                    }
+                    const { rows: left } = await pool.query(`SELECT COUNT(*)::int AS n FROM docenter_ocr_groups WHERE queue_id=$1 AND status='needs_review'`, [queueId]);
+                    if (left[0] && left[0].n > 0) broadcastQueueUpdate('queue_review', { id: queueId, file_name, uploaded_by: uploader, remaining: left[0].n });
+                } catch (e) {
+                    console.error(`[docenter-auto-add] error queue=${queueId}:`, e.message);
+                }
+            }
         }
         getQueueSnapshot().then(snapshot => broadcastQueueUpdate('queue_update', { snapshot }));
     } catch (err) {

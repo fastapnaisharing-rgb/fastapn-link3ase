@@ -538,6 +538,26 @@ export function createTableRouter(tableName, { idColumn = "id" } = {}) {
           return res.status(400).json({ error: `Supplier Code "${String(req.body["Code"]).trim()}" มีอยู่แล้วใน Vendor Category` });
         }
       }
+      // MARKER_GENERICTABLE_SUPPLIERLIST_REJECT_DUPLICATE_SUPPLIERNO_SITE_V1 -- AP-Code (supplier_list): ขั้น Submit เข้า DB เช็กซ้ำคู่ Supplier Number + Supplier Site พร้อมกัน
+      // (ต้องตรงทั้ง 2 ช่อง ไม่สนตัวพิมพ์เล็ก/ใหญ่และช่องว่างหัวท้าย | ไม่นับแถวที่ถูกลบ deleted = true) ซ้ำ = 400 ไม่ INSERT
+      if (tableName === "supplier_list" && req.body && !Array.isArray(req.body)) {
+        const sn = String(req.body["Supplier Number"] ?? "").trim();
+        const ss = String(req.body["Supplier Site"] ?? "").trim();
+        if (sn && ss) {
+          const dupSup = await pool.query(
+            `SELECT "Code", "BU Code", "Supplier Name" FROM ${table}
+              WHERE LOWER(TRIM("Supplier Number"::text)) = LOWER($1)
+                AND LOWER(TRIM("Supplier Site"::text)) = LOWER($2)
+                AND COALESCE(deleted, false) = false
+              LIMIT 1`,
+            [sn, ss]
+          );
+          if (dupSup.rows[0]) {
+            const d0 = dupSup.rows[0];
+            return res.status(400).json({ error: `ข้อมูลซ้ำ: Supplier No. "${sn}" + Site "${ss}" มีอยู่แล้วใน AP-Code (Code: ${d0["Code"] || "-"} · BU: ${d0["BU Code"] || "-"} · ${d0["Supplier Name"] || "-"})` });
+          }
+        }
+      }
       const columns = Object.keys(req.body).filter((c) => c !== idColumn);
       if (columns.length === 0) {
         return res.status(400).json({ error: "Request body is empty" });

@@ -3,6 +3,7 @@ import ReconcileZoneLayout from './ReconcileZoneLayout';
 import { confirmDialog } from '../confirmDialog'; // MARKER_APRECONCILE_REPORT_DELETE_V1
 import { useRealtimeRefresh } from '../useRealtimeRefresh'; // MARKER_APRECONCILE_REALTIME_V1
 import { broadcastWs } from '../wsManager'; // MARKER_APRECONCILE_REALTIME_V1
+import { spLaunch } from '../spHandlerAutoUpdate'; // MARKER_SP_LISTENER_LAUNCH_V1
 
 // ══════════════════════════════════════════════════════════════════════════
 // GLFunctionalController.js — Module Controller ของ GL Functional
@@ -85,8 +86,7 @@ function spReportParams() { // MARKER_APRECONCILE_SP_REPORT_TOKEN_V1
 function launchApSpHandler(action, fileName, t) { // action = send | delete | fileName = ชื่อไฟล์ หรือ Array ชื่อไฟล์ (ส่งหลายไฟล์ใน URI เดียว -- Handler v9 ขึ้นไป)
   const list = Array.isArray(fileName) ? fileName : [fileName]; // MARKER_APRECONCILE_SP_MULTI_SEND_V1 -- name= ไฟล์แรก (เครื่อง Handler v8 ยังส่งไฟล์แรกได้) + names= ทุกไฟล์ คั่นด้วย | (v9)
   const uri = `fastapn-sp://${action}?name=${encodeURIComponent(list[0])}${list.length > 1 ? `&names=${encodeURIComponent(list.join('|'))}` : ''}&bu=${encodeURIComponent(t.buCode)}&period=${encodeURIComponent(t.period)}&dest=recon${spReportParams()}`; // MARKER_APRECONCILE_SP_REPORT_TOKEN_V1 -- แนบ api+token ให้ Handler รายงานเวอร์ชันกลับ Backend ทุกครั้งที่ใช้งาน (แจ้งเตือน Home จะรู้ว่าติดตั้งแล้ว) | MARKER_APRECONCILE_SP_DEST_RECON_V1 -- AP ใช้โฟลเดอร์เดียวกับ VAT (Z_Report Reconcile) ไม่ต้องตั้งปลายทาง 'ap' แยก
-  const a = document.createElement('a');
-  a.href = uri; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+  spLaunch(uri); // MARKER_SP_LISTENER_LAUNCH_V1
 }
 
 // MARKER_APRECONCILE_SP_DELETE_MANY_V1 -- ลบหลายไฟล์ใน SharePoint ด้วย URI เดียว (delete?items=a/b/c|... ของ Handler v6+) ยืนยันครั้งเดียว | เดิมยิงทีละไฟล์ต่อกัน -> เบราว์เซอร์ทิ้งบางคำสั่ง (ไฟล์ค้าง) และหน้าต่างถามซ้อนหลายใบ
@@ -95,8 +95,7 @@ function launchApSpDeleteMany(fileNames, silent) { // silent = true: ไม่�
   for (const n of fileNames || []) { const t = parseApSpTarget(n); if (t) rels.push(`${t.buCode}/${t.period}/${n}`); }
   if (!rels.length) return;
   const uri = `fastapn-sp://delete?items=${encodeURIComponent(rels.join('|'))}&dest=recon${silent ? '&silent=1' : ''}`;
-  const a = document.createElement('a');
-  a.href = uri; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+  spLaunch(uri); // MARKER_SP_LISTENER_LAUNCH_V1
 }
 
 // MARKER_PERIOD_FIELD_DEFAULT_BLANK_V2 — List ตัวเลือก PERIOD ไม่ Hardcode ในโค้ดอีกต่อไป
@@ -145,7 +144,7 @@ export default function GLFunctionalController({ activeSubTab, onSubTabChange, f
       const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       const token = sessionStorage.getItem('fastapn_token') || '';
       const before = spDest.at || '';
-      const a = document.createElement('a'); a.href = `fastapn-sp://check?dest=recon&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+      spLaunch(`fastapn-sp://check?dest=recon&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`); // MARKER_SP_LISTENER_LAUNCH_V1
       for (let i = 0; i < 8; i += 1) { // รอ Handler รายงานกลับ (สูงสุด ~12 วินาที)
         await new Promise((r) => setTimeout(r, 1500));
         const d = await loadSpDest();
@@ -184,7 +183,7 @@ export default function GLFunctionalController({ activeSubTab, onSubTabChange, f
     try {
       const apiRoot = (process.env.REACT_APP_API_URL || 'http://10.101.87.126:4000/api').replace(/\/api$/, '');
       const token = sessionStorage.getItem('fastapn_token') || '';
-      window.location.href = `fastapn-sp://update?v=${spToast?.latest || ''}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`;
+      spLaunch(`fastapn-sp://update?v=${spToast?.latest || ''}&api=${encodeURIComponent(apiRoot)}&token=${encodeURIComponent(token)}`); // MARKER_SP_LISTENER_LAUNCH_V1
       try { localStorage.setItem('fastapn_sp_updated', JSON.stringify({ v: Number(spToast?.latest || 0), at: Date.now() })); } catch (_) { /* เงียบ */ }
       setSpToast(null);
     } catch (_) { /* เงียบ */ }

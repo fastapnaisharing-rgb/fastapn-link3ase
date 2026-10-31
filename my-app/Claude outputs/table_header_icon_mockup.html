@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup หัวคอลัมน์มีไอคอน</title>
+<style>
+  :root{--bg:#fff;--ink:#1f2933;--mute:#7b8794;--line:#e6e4dc;--navy:#1a3a5c;--green:#2fb58a}
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px 16px 48px;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI","Noto Sans Thai",system-ui,sans-serif}
+  .cap{font-size:13px;font-weight:700;margin:24px 0 8px}.cap small{font-weight:400;color:var(--mute)}
+  .tbl{border:1px solid var(--line);border-radius:12px;overflow:hidden;max-width:1100px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{background:var(--navy);color:#fff;text-align:left;font-size:11px;font-weight:500;padding:10px;white-space:nowrap}
+  td{padding:9px 10px;border-bottom:1px solid #f0eee8}
+  .ic{margin-right:5px}
+  .bu{display:inline-block;background:#eaf1fb;color:var(--navy);font-weight:700;border-radius:8px;padding:1px 9px}
+  .pc{display:inline-block;background:#e3f4e8;color:#1f6b33;border-radius:99px;padding:1px 9px;font-weight:700;font-size:11px}
+  .bk{display:inline-block;background:#fdeee0;color:#9a5a12;border-radius:99px;padding:1px 9px;font-weight:700;font-size:11px}
+  /* B: ไอคอนในวงกลมโปร่ง */
+  .b .ic{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.16);font-size:11px;margin-right:6px}
+  /* C: ไอคอนสีเขียวอ่อน */
+  .c .ic{filter:none;color:#7ee0bf}
+</style>
+</head>
+<body>
+<p style="margin:0;color:var(--mute);font-size:13px">หัวคอลัมน์สีเดิม (กรมท่า) เพิ่มไอคอนหน้าชื่อ 3 แบบ ดูแล้วบอกแบบที่ชอบ หรือบอกว่าไม่เอาไอคอนก็ได้ครับ</p>
+
+<div class="cap">แบบ A · อีโมจิหน้าชื่อ <small>(เรียบง่าย ใส่ง่ายที่สุด)</small></div>
+<div class="tbl"><table>
+<thead><tr><th style="width:36px"><input type="checkbox"></th><th><span class="ic">🏢</span>BU ▲</th><th><span class="ic">📛</span>Thai Company Name ↕</th><th><span class="ic">🔤</span>English Company Name</th><th><span class="ic">🧾</span>Tax ID</th><th><span class="ic">#️⃣</span>Company Code</th><th><span class="ic">％</span>VAT %</th><th><span class="ic">📈</span>Last Rate (%)</th><th><span class="ic">📒</span>Book</th><th><span class="ic">🏷️</span>Segment3</th><th style="text-align:center">Action</th></tr></thead>
+<tbody><tr><td><input type="checkbox"></td><td><span class="bu">CDS</span></td><td>บริษัท เซ็นทรัล ดีพาร์ทเมนท์สโตร์ จำกัด</td><td>Central Department Store</td><td>0105517005330</td><td>8-87-8707-</td><td><span class="pc">100</span></td><td>100</td><td><span class="bk">CGT</span></td><td>8707</td><td></td></tr></tbody></table></div>
+
+<div class="cap">แบบ B · ไอคอนในวงกลมโปร่งแสง <small>(ดูเป็นระเบียบ เด่นกว่า A)</small></div>
+<div class="tbl b"><table>
+<thead><tr><th style="width:36px"><input type="checkbox"></th><th><span class="ic">🏢</span>BU ▲</th><th><span class="ic">📛</span>Thai Company Name ↕</th><th><span class="ic">🔤</span>English Company Name</th><th><span class="ic">🧾</span>Tax ID</th><th><span class="ic">#</span>Company Code</th><th><span class="ic">％</span>VAT %</th><th><span class="ic">📈</span>Last Rate (%)</th><th><span class="ic">📒</span>Book</th><th><span class="ic">🏷</span>Segment3</th><th style="text-align:center">Action</th></tr></thead>
+<tbody><tr><td><input type="checkbox"></td><td><span class="bu">CDS</span></td><td>บริษัท เซ็นทรัล ดีพาร์ทเมนท์สโตร์ จำกัด</td><td>Central Department Store</td><td>0105517005330</td><td>8-87-8707-</td><td><span class="pc">100</span></td><td>100</td><td><span class="bk">CGT</span></td><td>8707</td><td></td></tr></tbody></table></div>
+
+<div class="cap">แบบ C · ไอคอนข้อความธรรมดาสีเขียวมิ้นต์ <small>(ไม่ใช้อีโมจิสี สบายตา เข้ากับโทนหน้า)</small></div>
+<div class="tbl c"><table>
+<thead><tr><th style="width:36px"><input type="checkbox"></th><th><span class="ic">◆</span>BU ▲</th><th><span class="ic">◆</span>Thai Company Name ↕</th><th><span class="ic">◆</span>English Company Name</th><th><span class="ic">◆</span>Tax ID</th><th><span class="ic">◆</span>Company Code</th><th><span class="ic">◆</span>VAT %</th><th><span class="ic">◆</span>Last Rate (%)</th><th><span class="ic">◆</span>Book</th><th><span class="ic">◆</span>Segment3</th><th style="text-align:center">Action</th></tr></thead>
+<tbody><tr><td><input type="checkbox"></td><td><span class="bu">CDS</span></td><td>บริษัท เซ็นทรัล ดีพาร์ทเมนท์สโตร์ จำกัด</td><td>Central Department Store</td><td>0105517005330</td><td>8-87-8707-</td><td><span class="pc">100</span></td><td>100</td><td><span class="bk">CGT</span></td><td>8707</td><td></td></tr></tbody></table></div>
+</body>
+</html>

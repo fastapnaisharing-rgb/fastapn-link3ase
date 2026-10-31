@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup หัวตารางพื้นขาว</title>
+<style>
+  :root{--bg:#f3f2ee;--ink:#1f2933;--mute:#7b8794;--line:#e6e4dc;--navy:#1a3a5c;--green:#2fb58a}
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px 16px 48px;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI","Noto Sans Thai",system-ui,sans-serif}
+  .cap{font-size:13px;color:var(--ink);margin:24px 0 8px;font-weight:700}
+  .cap small{font-weight:400;color:var(--mute)}
+  .tbl{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;max-width:980px}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{background:#fff;color:#334155;text-align:left;font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;padding:11px 12px}
+  td{padding:10px 12px;border-bottom:1px solid #f0eee8}
+  tbody tr:nth-child(even) td{background:#fafbfc}
+  .bu{display:inline-block;background:#eaf1fb;color:var(--navy);font-weight:700;border-radius:8px;padding:1px 9px}
+  .pc{display:inline-block;background:#e3f4e8;color:#1f6b33;border-radius:99px;padding:1px 9px;font-weight:700;font-size:11px}
+  .bk{display:inline-block;background:#fdeee0;color:#9a5a12;border-radius:99px;padding:1px 9px;font-weight:700;font-size:11px}
+  /* แบบ 1: เส้นเขียวหนา 2px (ที่ใช้อยู่) */
+  .s1 th{border-bottom:2px solid var(--green)}
+  /* แบบ 2: เส้นเทาบาง */
+  .s2 th{border-bottom:1px solid #d5dbe3}
+  /* แบบ 3: เส้นกรมท่า 2px */
+  .s3 th{border-bottom:2px solid var(--navy)}
+  /* แบบ 4: ไม่มีเส้น แต่ตัวอักษรกรมท่าตัวหนา + เงาเบาๆ */
+  .s4 th{color:var(--navy);border-bottom:1px solid var(--line);box-shadow:0 2px 6px rgba(20,30,50,.06)}
+  /* แบบ 5: เส้นเขียวสั้นใต้ชื่อคอลัมน์ */
+  .s5 th{border-bottom:1px solid var(--line);position:relative}
+  .s5 th::after{content:"";position:absolute;left:12px;bottom:-1px;width:22px;height:3px;border-radius:3px;background:var(--green)}
+</style>
+</head>
+<body>
+<p style="margin:0;color:var(--mute);font-size:13px">หัวตารางพื้นขาว 5 แบบ (ต่างกันที่เส้นขอบล่างหัวตาราง) ดูแล้วบอกเลขแบบที่ชอบได้เลยครับ</p>
+
+<div class="cap">แบบ 1 · เส้นเขียวหนา <small>(แบบที่ใส่ไว้ตอนนี้ แต่เปลี่ยนพื้นเป็นขาว)</small></div>
+<div class="tbl s1"><table>
+<thead><tr><th style="width:36px"><input type="checkbox"></th><th>BU ▲</th><th>Thai Company Name ↕</th><th>Tax ID</th><th>VAT %</th><th>Book</th></tr></thead>
+<tbody>
+<tr><td><input type="checkbox"></td><td><span class="bu">CDS</span></td><td>บริษัท เซ็นทรัล ดีพาร์ทเมนท์สโตร์ จำกัด</td><td>0105517005330</td><td><span class="pc">100</span></td><td><span class="bk">CGT</span></td></tr>
+<tr><td><input type="checkbox"></td><td><span class="bu">UPF</span></td><td>บริษัท อัพฟรอนท์ จำกัด</td><td>0105527031261</td><td><span class="pc">48.65</span></td><td><span class="bk">CGT</span></td></tr>
+</tbody></table></div>
+
+<div class="cap">แบบ 2 · เส้นเทาบาง <small>(เรียบที่สุด)</small></div>
+<div class="tbl s2"><table>
+<thead><tr><th style="width:36px"><input type="checkbox"></th><th>BU ▲</th><th>Thai Company Name ↕</th><th>Tax ID</th><th>VAT %</th><th>Book</th></tr></thead>
+<tbody>
+<tr><td><input type="checkbox"></td><td><span class="bu">CDS</span></td><td>บริษัท เซ็นทรัล ดีพาร์ทเมนท์สโตร์ จำกัด</td><td>0105517005330</td><td><span class="pc">100</span></td><td><span class="bk">CGT</span></td></tr>
+<tr><td><input type="checkbox"></td><td><span class="bu">UPF</span></td><td>บริษัท อัพฟรอนท์ จำกัด</td><td>0105527031261</td><td><span class="pc">48.65</span></td><td><span class="bk">CGT</span></td></tr>
+</tbody></table></div>
+
+<div class="cap">แบบ 3 · เส้นกรมท่า <small>(เข้มกว่า เด่นกว่า)</small></div>
+<div class="tbl s3"><table>
+<thead><tr><th style="width:36px"><input type="checkbox"></th><th>BU ▲</th><th>Thai Company Name ↕</th><th>Tax ID</th><th>VAT %</th><th>Book</th></tr></thead>
+<tbody>
+<tr><td><input type="checkbox"></td><td><span class="bu">CDS</span></td><td>บริษัท เซ็นทรัล ดีพาร์ทเมนท์สโตร์ จำกัด</td><td>0105517005330</td><td><span class="pc">100</span></td><td><span class="bk">CGT</span></td></tr>
+<tr><td><input type="checkbox"></td><td><span class="bu">UPF</span></td><td>บริษัท อัพฟรอนท์ จำกัด</td><td>0105527031261</td><td><span class="pc">48.65</span></td><td><span class="bk">CGT</span></td></tr>
+</tbody></table></div>
+
+<div class="cap">แบบ 4 · ตัวอักษรกรมท่า + เงาบางๆ <small>(หัวตารางลอยเด่นขึ้นนิดหน่อย)</small></div>
+<div class="tbl s4"><table>
+<thead><tr><th style="width:36px"><input type="checkbox"></th><th>BU ▲</th><th>Thai Company Name ↕</th><th>Tax ID</th><th>VAT %</th><th>Book</th></tr></thead>
+<tbody>
+<tr><td><input type="checkbox"></td><td><span class="bu">CDS</span></td><td>บริษัท เซ็นทรัล ดีพาร์ทเมนท์สโตร์ จำกัด</td><td>0105517005330</td><td><span class="pc">100</span></td><td><span class="bk">CGT</span></td></tr>
+<tr><td><input type="checkbox"></td><td><span class="bu">UPF</span></td><td>บริษัท อัพฟรอนท์ จำกัด</td><td>0105527031261</td><td><span class="pc">48.65</span></td><td><span class="bk">CGT</span></td></tr>
+</tbody></table></div>
+
+<div class="cap">แบบ 5 · เส้นเทา + ขีดเขียวสั้นใต้ชื่อคอลัมน์ <small>(ดูทันสมัย ไม่หนัก)</small></div>
+<div class="tbl s5"><table>
+<thead><tr><th style="width:36px"><input type="checkbox"></th><th>BU ▲</th><th>Thai Company Name ↕</th><th>Tax ID</th><th>VAT %</th><th>Book</th></tr></thead>
+<tbody>
+<tr><td><input type="checkbox"></td><td><span class="bu">CDS</span></td><td>บริษัท เซ็นทรัล ดีพาร์ทเมนท์สโตร์ จำกัด</td><td>0105517005330</td><td><span class="pc">100</span></td><td><span class="bk">CGT</span></td></tr>
+<tr><td><input type="checkbox"></td><td><span class="bu">UPF</span></td><td>บริษัท อัพฟรอนท์ จำกัด</td><td>0105527031261</td><td><span class="pc">48.65</span></td><td><span class="bk">CGT</span></td></tr>
+</tbody></table></div>
+</body>
+</html>

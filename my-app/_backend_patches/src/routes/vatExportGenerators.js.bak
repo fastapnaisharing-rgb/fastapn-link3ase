@@ -53,7 +53,7 @@ export function toExcelDate(dateStr) {
   const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoMatch) {
     const [, y, mo, d] = isoMatch;
-    return new Date(Number(y), Number(mo) - 1, Number(d));
+    return new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d))); // MARKER_VATEXPORT_TOEXCELDATE_UTC_FIX_V1 -- ใช้ UTC เที่ยงคืน เพราะ ExcelJS เขียน Date เป็น UTC; แบบเดิม new Date(y,m,d) = เที่ยงคืนเวลาไทย => Excel ถอยไปวันก่อนหน้า (เช่น 30-Sep โชว์ 29-Sep 17:00)
   }
 
   // Format 2: "DD-MMM-YY" หรือ "DD-MMM-YYYY" (เช่น "09-Sep-26") -- MARKER_VATEXPORT_TOEXCELDATE_DDMMMYY_FIX_V1
@@ -64,7 +64,7 @@ export function toExcelDate(dateStr) {
     if (monthIdx === undefined) return null;
     let year = Number(yRaw);
     if (year < 100) year += 2000; // "26" -> 2026
-    return new Date(year, monthIdx, Number(d));
+    return new Date(Date.UTC(year, monthIdx, Number(d))); // MARKER_VATEXPORT_TOEXCELDATE_UTC_FIX_V1
   }
 
   return null;
@@ -197,8 +197,12 @@ function typeSimToYn(typeSim) {
 }
 
 // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1 -- Invoice Ref ย่อสำหรับใส่ใน Y2 (Invoice=IV, Credit=CN, ค่าอื่นที่ไม่รู้จัก Default เป็น IV)
+// MARKER_VATEXPORT_Y2_SHORT_N_Y_I_C_V1 -- Type 3 ตัว (เช่น NNN/YNY) -> ตัวเดียว: มี Y อย่างน้อย 1 ตัว = Y, ไม่มีเลย = N
+function typeSimToShortYN(typeSim) {
+  return String(typeSim || "").toUpperCase().includes("Y") ? "Y" : "N";
+}
 function invoiceRefToAbbrev(invoiceRef) {
-  return String(invoiceRef || "").trim().toLowerCase() === "credit" ? "CN" : "IV";
+  return String(invoiceRef || "").trim().toLowerCase() === "credit" ? "C" : "I"; // MARKER_VATEXPORT_Y2_SHORT_N_Y_I_C_V1 -- ย่อเหลือตัวเดียว: Credit=C, Invoice=I
 }
 
 // ── Excel Sheet ชื่อห้ามเกิน 31 ตัวอักษร และห้ามมีอักขระ \/?*[]: ──
@@ -257,7 +261,7 @@ export async function generateSimpleAdiWorkbook(simpleTemplatePath, groupedRows,
     ws.getCell("C13").value = meta.periodMmmYy || "";
     ws.getCell("M1").value = "FASTAPN LINK3ASE"; // MARKER_VATEXPORT_SIMPLE_M1_CREATEDBY_V1 -- ทับค่า Static เดิมจาก Template ("AP_UpdateTax_System")
     ws.getCell("M2").value = meta.folderPath || "";
-    ws.getCell("Y2").value = `${meta.hhmm || ""}${group.typeSim || ""}_${invoiceRefToAbbrev(group.invoiceRef)}`; // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1
+    ws.getCell("Y2").value = `${meta.hhmm || ""}${typeSimToShortYN(group.typeSim)}_${invoiceRefToAbbrev(group.invoiceRef)}`; // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1
 
     group.rows.forEach((r, i) => {
       const rowIdx = i + 16;
@@ -363,7 +367,7 @@ export async function generateSimpleBySheetWorkbooks(simpleTemplatePath, grouped
     ws.getCell("C13").value = meta.periodMmmYy || "";
     ws.getCell("M1").value = "FASTAPN LINK3ASE"; // MARKER_VATEXPORT_SIMPLE_M1_CREATEDBY_V1 -- ทับค่า Static เดิมจาก Template ("AP_UpdateTax_System")
     ws.getCell("M2").value = meta.folderPath || "";
-    ws.getCell("Y2").value = `${meta.hhmm || ""}${group.typeSim || ""}_${invoiceRefToAbbrev(group.invoiceRef)}`; // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1
+    ws.getCell("Y2").value = `${meta.hhmm || ""}${typeSimToShortYN(group.typeSim)}_${invoiceRefToAbbrev(group.invoiceRef)}`; // MARKER_VATEXPORT_SIMPLE_Y2_HHMM_TYPESIM_INVOICEREF_V1
 
     group.rows.forEach((r, i) => {
       const rowIdx = i + 16;

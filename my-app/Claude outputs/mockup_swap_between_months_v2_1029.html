@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup v2 - VAT Swap Finder: สลับระหว่างกัน (โยนไฟล์ แล้วระบบ Filter ให้)</title>
+<style>
+:root{--navy:#14532d;--g:#1e8e4a;--gd:#0f6b34;--gl:#e8f5ec;--line:#e3e8ee;--soft:#f5f8f6;--text:#1f2933;--ok:#1e7a3c;--bad:#b3261e;--warn:#a65f00;--mute:#6b7785}
+*{box-sizing:border-box}
+body{margin:0;background:#f3f6f4;color:var(--text);font-family:"Segoe UI",Tahoma,"Noto Sans Thai",sans-serif;font-size:13.5px}
+.wrap{max-width:1320px;margin:0 auto;padding:16px}
+.note{background:#fff8e6;border:1px solid #f0d58a;color:#7a5a00;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12.5px;line-height:1.6}
+.head{background:#fff;border:1px solid var(--line);border-left:4px solid var(--g);border-radius:10px;padding:12px 16px;margin-bottom:12px}
+.head small{letter-spacing:.08em;color:var(--navy);font-weight:700;font-size:11px}
+.head h1{margin:2px 0;font-size:24px;color:var(--navy)}
+.grid{display:grid;grid-template-columns:360px 1fr;gap:12px}
+@media(max-width:980px){.grid{grid-template-columns:1fr}}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+.card h3{margin:0 0 8px;font-size:13px;color:var(--navy)}
+label{display:block;font-size:11.5px;color:var(--mute);margin:8px 0 3px}
+input[type=text],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;background:#fff}
+select:disabled{background:#f1f3f2;color:#9aa5b1}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.chip{display:inline-block;background:var(--gl);color:var(--gd);border-radius:999px;padding:3px 10px;font-size:11.5px;font-weight:600}
+.chip.warn{background:#fff1dc;color:var(--warn)}
+.chip.bad{background:#fdecea;color:var(--bad)}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+button{border:1px solid var(--line);background:#fff;border-radius:7px;padding:8px 14px;font-size:13px;cursor:pointer}
+button.pri{background:var(--g);color:#fff;border-color:var(--g)}
+button:disabled{opacity:.45;cursor:not-allowed}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg div{flex:1;text-align:center;padding:7px;cursor:pointer;background:#fff;font-weight:600;color:var(--mute)}
+.seg div.on{background:var(--g);color:#fff}
+.drop{border:2px dashed var(--g);background:var(--gl);border-radius:10px;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--gd);font-weight:600;gap:6px;padding:12px}
+.drop small{font-weight:400;color:var(--mute)}
+.drop.mini{min-height:54px;flex-direction:row}
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
+th{background:var(--navy);color:#fff;text-align:left;padding:6px 8px;font-weight:600}
+td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+tr.dis td{color:#9aa5b1;background:#fafbfa}
+tr.dis .why{display:block;font-size:11px;color:var(--bad)}
+tr.sel td{background:#f0faf3}
+.tabs{display:flex;gap:6px;margin:6px 0 2px;flex-wrap:wrap}
+.tab{padding:5px 12px;border:1px solid var(--line);border-radius:999px;cursor:pointer;background:#fff;font-weight:600;color:var(--mute)}
+.tab.on{background:var(--g);color:#fff;border-color:var(--g)}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:1180px){.panels{grid-template-columns:1fr}}
+.ph{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px}
+.ph b{color:var(--navy)}
+.range{font-size:11.5px;color:var(--mute)}
+.filt{font-size:11.5px;background:var(--soft);border-radius:6px;padding:6px 8px;margin:6px 0;color:var(--mute);display:flex;justify-content:space-between;gap:8px;align-items:center}
+.filt a{color:var(--gd);cursor:pointer;text-decoration:underline;white-space:nowrap}
+.sum{margin-top:12px;display:grid;grid-template-columns:1fr 1fr 1fr 1.2fr;gap:8px}
+@media(max-width:900px){.sum{grid-template-columns:1fr 1fr}}
+.box{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.box small{color:var(--mute);display:block;font-size:11px}
+.box b{font-size:16px;font-variant-numeric:tabular-nums}
+.state{font-weight:700}.state.ok{color:var(--ok)}.state.bad{color:var(--bad)}
+.hidden{display:none}
+.step{display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:var(--g);color:#fff;font-size:11px;margin-right:6px}
+.frow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.frow:last-child{border-bottom:0}
+.frow .nm{font-weight:600}
+.frow .meta{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
+.x{color:var(--mute);cursor:pointer;font-size:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="note"><b>Mockup v2 (ข้อมูลตัวอย่างทั้งหมด)</b> &nbsp;ลองกดปุ่ม <b>"จำลองโยนไฟล์"</b> ที่ช่องโยนไฟล์ เพื่อดูขั้นตอนหลังโยนไฟล์: ระบบตรวจชนิดไฟล์ (เดือน/BU/Type) → จัดกองไม่ข้าม Type → ผู้ใช้เลือกเดือน → ระบบ Filter รายการให้เหลือเฉพาะใบที่สลับได้ → ผู้ใช้ติ๊ก<br>
+  สมมติฐานที่ยังรอยืนยัน: ติ๊กเองทั้งสองฝั่ง · โหมดนี้ไม่ต้องกรอกยอด VAT · เลือกเดือนคู่สลับได้อิสระ</div>
+
+  <div class="head">
+    <small>VAT CONTROLLER</small>
+    <h1>VAT Swap Finder</h1>
+    <span style="color:var(--mute);font-size:12px">Toolbox | Period: 2026-10</span>
+  </div>
+
+  <div class="grid">
+    <!-- ซ้าย: ตั้งเงื่อนไข -->
+    <div>
+      <div class="card">
+        <h3>ตั้งเงื่อนไข</h3>
+        <label>โหมด</label>
+        <div class="seg" id="seg"><div data-m="normal">Normal Swap</div><div data-m="between" class="on">สลับระหว่างกัน</div></div>
+
+        <div id="normalBox" class="hidden"><div class="filt" style="margin-top:10px">Normal Swap: ไล่สลับเป็นลูกโซ่ทีละเดือนจนถึงเดือนปัจจุบัน (ของเดิม ไม่เปลี่ยน)</div></div>
+
+        <div id="betweenBox">
+          <div class="row2">
+            <div><label><span class="step">2</span>สลับเข้าที่เดือน</label><select id="mTo" disabled></select></div>
+            <div><label><span class="step">2</span>ดึงจากเดือน</label><select id="mFrom" disabled></select></div>
+          </div>
+          <div class="row2">
+            <div><label>Rate เดิม %</label><input type="text" id="rOld" value="100"></div>
+            <div><label>Rate ใหม่ %</label><input type="text" id="rNew" value="100"></div>
+          </div>
+          <div class="row2">
+            <div><label>สาขา</label><select><option>ทุกสาขา</option></select></div>
+            <div><label>ต่าง ±</label><input type="text" id="tol" value="0.05"></div>
+          </div>
+        </div>
+        <div class="btns"><button class="pri">บันทึก</button><button>Export</button><button>เปิดงานจากไฟล์</button><button id="reset">เริ่มใหม่</button></div>
+      </div>
+
+      <div class="card">
+        <h3><span class="step">1</span>จุดโยนไฟล์ Input</h3>
+        <div class="drop" id="drop">
+          ลากไฟล์ Input มาวางที่นี่ หรือคลิกเพื่อเลือกไฟล์
+          <small>ระบบตรวจชนิดไฟล์เอง · อ่าน Period / BU / Type จากไฟล์</small>
+          <button id="sim" class="pri">จำลองโยนไฟล์</button>
+        </div>
+        <div id="files" class="hidden"></div>
+      </div>
+    </div>
+
+    <!-- ขวา: ผลลัพธ์ -->
+    <div class="card" id="right">
+      <div id="empty" style="color:var(--mute);padding:30px 6px;text-align:center">ยังไม่มีไฟล์ — โยนไฟล์ Input ของ 2 เดือนที่จะสลับกัน (อย่างน้อยเดือนละ 1 ไฟล์ ชนิดเดียวกัน)</div>
+      <div id="main" class="hidden">
+        <div class="tabs" id="gtabs"></div>
+        <div class="filt"><span id="gmsg"></span></div>
+        <div class="panels">
+          <div>
+            <div class="ph"><div><b id="aT"></b><div class="range" id="aS"></div></div><span class="chip" id="aR"></span></div>
+            <input type="text" placeholder="ค้นหา เลขที่ใบกำกับ / ผู้ค้า / สาขา" data-s="A">
+            <div class="filt"><span id="aF"></span><a data-h="A">แสดงที่ถูกกรองออก</a></div>
+            <table id="tA"></table>
+          </div>
+          <div>
+            <div class="ph"><div><b id="bT"></b><div class="range" id="bS"></div></div><span class="chip" id="bR"></span></div>
+            <input type="text" placeholder="ค้นหา เลขที่ใบกำกับ / ผู้ค้า / สาขา" data-s="B">
+            <div class="filt"><span id="bF"></span><a data-h="B">แสดงที่ถูกกรองออก</a></div>
+            <table id="tB"></table>
+          </div>
+        </div>
+        <div class="sum">
+          <div class="box"><small>Σ A ที่ติ๊ก (× Rate เดิม)</small><b id="sA">0.00</b></div>
+          <div class="box"><small>Σ B ที่ติ๊ก (× Rate ใหม่)</small><b id="sB">0.00</b></div>
+          <div class="box"><small>ส่วนต่าง A − B</small><b id="sD">0.00</b></div>
+          <div class="box"><small>สถานะ</small><span class="state" id="st">-</span></div>
+        </div>
+        <div class="btns"><button class="pri" id="ok" disabled>ยืนยันการสลับ</button><button id="clr">ล้างที่ติ๊ก</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ข้อมูลตัวอย่างเท่านั้น (ไม่ใช่ข้อมูลจริง)
+var FILES=[
+ {name:'08.2026 Input Summary_CF-Y.Y-N.B_5000.xlsx',period:'2026-08',bu:'5000',type:'N.B',rows:[
+   {id:'IV2606-310',d:'2026-06-18',v:'บจก. ตัวอย่าง เอช',b:'501001',t:4570.00},
+   {id:'SI2607-220',d:'2026-07-09',v:'บจก. ตัวอย่าง ไอ',b:'502001',t:2430.00},
+   {id:'IV2608-415',d:'2026-08-11',v:'บจก. ตัวอย่าง เจ',b:'501001',t:1200.00},
+   {id:'IV2604-120',d:'2026-04-07',v:'บจก. ตัวอย่าง เค',b:'503001',t:640.00},
+   {id:'TR2603-044',d:'2026-03-25',v:'บจก. ตัวอย่าง แอล',b:'501001',t:800.00}]},
+ {name:'10.2026 Input Summary_CF-Y.Y-N.B_5000.xlsx',period:'2026-10',bu:'5000',type:'N.B',rows:[
+   {id:'IV2608-001',d:'2026-06-12',v:'บจก. ตัวอย่าง เอ',b:'501001',t:1070.00},
+   {id:'IV2608-002',d:'2026-07-03',v:'บจก. ตัวอย่าง บี',b:'502001',t:3500.00},
+   {id:'SI2607-114',d:'2026-07-21',v:'บจก. ตัวอย่าง ซี',b:'501001',t:2430.00},
+   {id:'TR2602-031',d:'2026-02-14',v:'บจก. ตัวอย่าง ดี',b:'503001',t:640.00},
+   {id:'IV2609-050',d:'2026-09-05',v:'บจก. ตัวอย่าง อี',b:'501001',t:1750.00},
+   {id:'IV2610-007',d:'2026-10-02',v:'บจก. ตัวอย่าง เอฟ',b:'502001',t:900.00},
+   {id:'TR2601-020',d:'2026-01-20',v:'บจก. ตัวอย่าง จี',b:'503001',t:500.00}]},
+ {name:'10.2026 Input Summary_CF-Y.Y-T.B_5000.xlsx',period:'2026-10',bu:'5000',type:'T.B',rows:[
+   {id:'IV2607-900',d:'2026-07-15',v:'บจก. ตัวอย่าง เอ็ม',b:'501001',t:1500.00}]}
+];
+var loaded=false,grp=null,sel={A:{},B:{}},q={A:'',B:''},showHid={A:false,B:false};
+function $(i){return document.getElementById(i)}
+function ym(s){var p=s.split('-');return (+p[0])*12+(+p[1])-1}
+function ymTxt(s){var p=s.split('-');return p[1]+'.'+p[0]}
+function ymBack(s,n){var v=ym(s)-n;return String(Math.floor(v/12))+'-'+String(v%12+1).padStart(2,'0')}
+function thDate(s){var p=s.split('-');return p[2]+'/'+p[1]+'/'+p[0]}
+function fmt(n){return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function groups(){var g={};FILES.forEach(function(f){var k=f.bu+' · '+f.type;(g[k]=g[k]||[]).push(f)});return g}
+
+function renderFiles(){
+  var h='';FILES.forEach(function(f,i){
+    h+='<div class="frow"><div><div class="nm">'+f.name+'</div><div class="meta"><span class="chip">Input Summary</span><span class="chip">Period '+ymTxt(f.period)+'</span><span class="chip">BU '+f.bu+'</span><span class="chip">Type '+f.type+'</span><span class="chip">'+f.rows.length+' ใบ</span></div></div><span class="x" title="เอาออก">×</span></div>';
+  });
+  $('files').innerHTML=h;$('files').classList.remove('hidden');
+  $('drop').classList.add('mini');$('drop').innerHTML='＋ โยนไฟล์เพิ่ม <button id="sim2" disabled>จำลองโยนไฟล์</button>';
+}
+function renderGroups(){
+  var g=groups(),keys=Object.keys(g);
+  if(!grp||!g[grp])grp=keys[0];
+  $('gtabs').innerHTML=keys.map(function(k){return '<div class="tab '+(k===grp?'on':'')+'" data-g="'+k+'">'+k+' ('+g[k].length+' ไฟล์)</div>'}).join('');
+  var fs=g[grp],ps=fs.map(function(f){return f.period}).filter(function(v,i,a){return a.indexOf(v)===i}).sort();
+  var oTo=$('mTo').value,oFrom=$('mFrom').value;
+  ['mTo','mFrom'].forEach(function(id){$(id).innerHTML=ps.map(function(p){return '<option value="'+p+'">'+ymTxt(p)+'</option>'}).join('');$(id).disabled=false});
+  $('mTo').value=ps.indexOf(oTo)>=0?oTo:ps[0];
+  $('mFrom').value=ps.indexOf(oFrom)>=0?oFrom:ps[ps.length-1];
+  $('gmsg').textContent='กอง '+grp+' · ระบบใช้เฉพาะไฟล์ในกองนี้ ไม่ข้าม Type ('+(keys.length>1?'มีอีก '+(keys.length-1)+' กองที่ไม่ถูกนำมาปน':'พบกองเดียว')+')';
+}
+function pool(period,from,to){ // ใบจากไฟล์ของเดือน "period" ที่จะถูกย้ายเข้าเดือน "to" ; ช่วงวันที่ใบกำกับที่ใช้ได้ = [to-6 .. to]
+  var fs=groups()[grp].filter(function(f){return f.period===period}),rows=[];
+  fs.forEach(function(f){f.rows.forEach(function(r){rows.push(r)})});
+  var lo=ym(ymBack(to,6)),hi=ym(to);
+  return rows.map(function(r){var m=ym(r.d.slice(0,7)),bad=null;
+    if(m>hi)bad='วันที่ '+ymTxt(r.d.slice(0,7))+' สูงกว่าเดือนที่เข้าสลับ ('+ymTxt(to)+')';
+    else if(m<lo)bad='หมดอายุ 6 เดือนของ '+ymTxt(to);
+    return {r:r,bad:bad}});
+}
+function view(){
+  var to=$('mTo').value,from=$('mFrom').value;
+  if(to===from){$('gmsg').textContent='เลือกเดือนซ้ำกัน — ต้องเลือกสองเดือนที่ต่างกัน';}
+  var A=pool(from,from,to), B=pool(to,to,from);
+  $('aT').textContent='A · ใบที่ดึงเข้า '+ymTxt(to);$('aS').textContent='มาจากรายการเดือน '+ymTxt(from);
+  $('aR').textContent='ลงวันที่ '+ymTxt(ymBack(to,6))+' ถึง '+ymTxt(to);
+  $('bT').textContent='B · ใบที่ย้ายออกจาก '+ymTxt(to)+' ไป '+ymTxt(from);$('bS').textContent='มาจากรายการเดือน '+ymTxt(to);
+  $('bR').textContent='ลงวันที่ '+ymTxt(ymBack(from,6))+' ถึง '+ymTxt(from);
+  [['A',A],['B',B]].forEach(function(p){
+    var k=p[0],all=p[1],ok=all.filter(function(x){return !x.bad}),hid=all.length-ok.length;
+    $(k.toLowerCase()+'F').textContent='ระบบ Filter ให้แล้ว: แสดง '+ok.length+' ใบที่สลับได้ · ซ่อน '+hid+' ใบที่ผิดกฎ';
+    var rows=all.filter(function(x){return showHid[k]||!x.bad}).filter(function(x){var s=(x.r.id+x.r.v+x.r.b).toLowerCase();return s.indexOf(q[k].toLowerCase())>=0});
+    var h='<tr><th></th><th>เลขที่ใบกำกับ</th><th>วันที่ใบกำกับ</th><th>ผู้ค้า</th><th>สาขา</th><th class="n">เงินภาษี</th></tr>';
+    rows.forEach(function(x){var r=x.r,dis=!!x.bad,on=!!sel[k][r.id]&&!dis;
+      h+='<tr class="'+(dis?'dis':on?'sel':'')+'"><td><input type="checkbox" data-k="'+k+'" data-id="'+r.id+'" '+(on?'checked ':'')+(dis?'disabled':'')+'></td><td>'+r.id+(dis?'<span class="why">'+x.bad+'</span>':'')+'</td><td>'+thDate(r.d)+'</td><td>'+r.v+'</td><td>'+r.b+'</td><td class="n">'+fmt(r.t)+'</td></tr>'});
+    if(!rows.length)h+='<tr><td colspan="6" style="color:var(--mute);text-align:center;padding:14px">ไม่พบรายการ</td></tr>';
+    $('t'+k).innerHTML=h;
+    document.querySelector('[data-h="'+k+'"]').textContent=showHid[k]?'ซ่อนที่ถูกกรองออก':'แสดงที่ถูกกรองออก';
+    window['pool'+k]=all;
+  });
+  sums();
+}
+function sums(){
+  var ro=parseFloat($('rOld').value)||100,rn=parseFloat($('rNew').value)||100,tol=parseFloat($('tol').value)||0;
+  var a=0,b=0;
+  (window.poolA||[]).forEach(function(x){if(!x.bad&&sel.A[x.r.id])a+=x.r.t});
+  (window.poolB||[]).forEach(function(x){if(!x.bad&&sel.B[x.r.id])b+=x.r.t});
+  a=a*ro/100;b=b*rn/100;var d=Math.round((a-b)*100)/100,any=(a>0||b>0),ok=any&&Math.abs(d)<=tol+1e-9;
+  $('sA').textContent=fmt(a);$('sB').textContent=fmt(b);$('sD').textContent=fmt(d);
+  $('st').textContent=!any?'ยังไม่ได้ติ๊ก':ok?'ยอดตรงกัน (ในช่วง ±'+tol+')':'ยอดยังไม่ตรง';
+  $('st').className='state '+(!any?'':ok?'ok':'bad');$('ok').disabled=!ok;
+}
+function loadAll(){loaded=true;renderFiles();$('empty').classList.add('hidden');$('main').classList.remove('hidden');renderGroups();sel={A:{},B:{}};view()}
+$('sim').onclick=loadAll;
+$('reset').onclick=function(){location.reload()};
+document.addEventListener('change',function(e){var c=e.target;
+  if(c.type==='checkbox'&&c.dataset.k){if(c.checked)sel[c.dataset.k][c.dataset.id]=1;else delete sel[c.dataset.k][c.dataset.id];view()}
+  if(c.id==='mTo'||c.id==='mFrom'){sel={A:{},B:{}};view()}
+  if(c.id==='rOld'||c.id==='rNew'||c.id==='tol')sums()});
+document.addEventListener('input',function(e){var s=e.target.dataset&&e.target.dataset.s;if(s){q[s]=e.target.value;view()}});
+document.addEventListener('click',function(e){var t=e.target;
+  if(t.dataset&&t.dataset.g){grp=t.dataset.g;sel={A:{},B:{}};renderGroups();view()}
+  if(t.dataset&&t.dataset.h){showHid[t.dataset.h]=!showHid[t.dataset.h];view()}});
+$('clr').onclick=function(){sel={A:{},B:{}};view()};
+$('seg').onclick=function(e){var m=e.target.dataset.m;if(!m)return;
+  [].forEach.call(this.children,function(c){c.classList.toggle('on',c.dataset.m===m)});
+  var b=m==='between';$('normalBox').classList.toggle('hidden',b);$('betweenBox').classList.toggle('hidden',!b);$('right').classList.toggle('hidden',!b)};
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@
   import { MAINTENANCE_MENU_GROUPS } from '../menuConfig';
   import { DOC_FOLDERS, folderPermOk, folderPermLabel, PERM_TO_FOLDER } from '../docFolderConfig'; // MARKER_DOCFOLDER_CONFIG_V1
   import { broadcastWs, subscribeWs } from '../wsManager';
+  import { useTeamPresence } from '../teamPresence'; // MARKER_TEAM_PRESENCE_SHARED_V1
   import { confirmDialog } from '../confirmDialog';
 
   // MARKER_USERMANAGEMENT_APPROVE_BATCH_PERMISSION_V1
@@ -1859,12 +1860,17 @@ function MinRoleSwitch({ value, onChange, disabled, allowGuest }) { // MARKER_GU
     const [currentUserId, setCurrentUserId] = React.useState(null); // db.js update() ต้องใช้ id เท่านั้น
     const [so, setSo] = React.useState({ my_name: '', my_job: '', report_to_name: '', report_to_job: '', module: '' }); // MARKER_GL_SIGNOFF_PROFILE_UI_V1
     const [soMsg, setSoMsg] = React.useState('');
-    React.useEffect(() => { loadSignoffProfile().then(d => setSo(d)).catch(() => {}); }, []);
+    const [vatPrep, setVatPrep] = React.useState(''); // MARKER_PROFILE_PREPAREBY_FROM_CONNECT_V1 -- ชื่อ Prepare By ที่ Admin/Owner Connect ไว้ (Timeline > Config BU -> user_roles.vat_prepare_name)
+    const [soLoaded, setSoLoaded] = React.useState(false);
+    React.useEffect(() => { loadSignoffProfile().then(d => setSo(d)).catch(() => {}).finally(() => setSoLoaded(true)); }, []);
+    React.useEffect(() => { // MARKER_PROFILE_PREPAREBY_FROM_CONNECT_V1 -- ถ้า Prepare by > ชื่อ - นามสกุล ยังว่าง และมีการ Connect ไว้แล้ว -> เติมชื่อที่ Connect ให้ (ไม่ทับค่าที่เคยบันทึก) ; กด Save ถึงจะบันทึกจริง
+      if (soLoaded && vatPrep) setSo(prev => (String(prev.my_name || '').trim() ? prev : { ...prev, my_name: vatPrep }));
+    }, [soLoaded, vatPrep]);
 
     React.useEffect(() => {
       const fetchUser = async () => {
-        const { data } = await db.from('user_roles').select('id, username, role').eq('email', currentUser?.email).single(); // MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1 -- เพิ่ม id, role เข้า Query
-        if (data) { setCurrentUserId(data.id); setCurrentUsername(data.username || ''); setUsername(data.username || ''); setCurrentRole(data.role || ''); }
+        const { data } = await db.from('user_roles').select('id, username, role, vat_prepare_name').eq('email', currentUser?.email).single(); // MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1 -- เพิ่ม id, role เข้า Query
+        if (data) { setVatPrep(String(data.vat_prepare_name || '').trim()); setCurrentUserId(data.id); setCurrentUsername(data.username || ''); setUsername(data.username || ''); setCurrentRole(data.role || ''); }
       };
       fetchUser();
     }, []);
@@ -3104,7 +3110,8 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const [savedId, setSavedId] = useState(null);
     const [backendOpsSubTab, setBackendOpsSubTab] = useState('deploy');
     const [dashboardUser, setDashboardUser] = useState(null); // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1
-    const [onlineUsernames, setOnlineUsernames] = useState(() => new Set()); // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1
+    const teamPresence = useTeamPresence(true); // MARKER_TEAM_PRESENCE_SHARED_V1 -- แหล่งเดียวกับ Home และ Popup ทีม Online ใน App
+    const onlineUsernames = teamPresence.onlineSet; // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1
     const { currentUser, userName, userPermissions } = useAuth();
     const { isOwner } = useUserRole();
     const { userRole } = useAuth();
@@ -3149,31 +3156,6 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
 
     useEffect(() => { fetchUsers(); fetchBinCount(); }, []);
 
-    // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1 -- Online Status: Pattern เดียวกับ TeamOnlinePopup ใน App.js (menu_active_sessions.last_seen, Cutoff 5 นาที)
-    const fetchOnlineUsers = async () => {
-      try {
-        const { data: sessions } = await db.from('menu_active_sessions').select('*');
-        const cutoff = Date.now() - 5 * 60 * 1000;
-        const online = new Set();
-        (sessions || []).forEach(s => {
-          const lastSeen = s?.last_seen ? new Date(s.last_seen).getTime() : 0;
-          if (lastSeen >= cutoff && s.user_name) online.add(s.user_name);
-        });
-        setOnlineUsernames(online);
-      } catch (e) { console.error('fetch online users:', e); }
-    };
-    useEffect(() => {
-      fetchOnlineUsers();
-      const onlineIv = setInterval(fetchOnlineUsers, 30000);
-      return () => clearInterval(onlineIv);
-    }, []);
-    // MARKER_USERMANAGEMENT_ONLINE_REALTIME_V1 -- เดิมมีแค่ Poll ทุก 30 วิ ทำให้ User ที่เพิ่ง Login ขึ้น Offline ค้างได้นานสุดเกือบ 30 วิ
-    // -- ฟัง Event เดียวกับที่ App.js Broadcast หลัง Heartbeat (last_seen) บันทึกเสร็จแล้วเท่านั้น (MARKER_APP_TEAM_STATUS_REALTIME_AWAIT_BEAT_V1)
-    // -- การันตีว่า Refetch ตอนนี้จะได้ last_seen ล่าสุดแน่ๆ ไม่ใช่ค่าเก่าก่อน Login เหมือน Pattern เดียวกับ TeamOnlinePopup ใน App.js
-    useEffect(() => {
-      const unsubscribe = subscribeWs(['team_status_updated'], () => fetchOnlineUsers());
-      return unsubscribe;
-    }, []);
 
     // MARKER_USERMANAGEMENT_SIGNUP_LISTENER_V1
     // ── Real-time: ฟัง 'signup_approved' — Owner/Admin คนอื่น Approve Signup ──
@@ -3643,8 +3625,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     if (['PERIOD_SELECT', 'EXPIRED_REVIEWED', 'SAVE', 'FIRST_DRAFT', 'DRAFT_NOTE', 'CONFIRM', 'RELEASE', 'SP_SENT'].includes(e)) return { key: 'recon', label: 'Reconcile', color: '#7b5cc4' };
     return { key: 'other', label: 'อื่นๆ', color: '#8a94a3' };
   }
+  // MARKER_TXN_VIEW_BY_BATCH_V1 -- มุมมอง Batch: รวม Transaction ที่ Batch/BU/Module เดียวกันเป็น 1 แถว (ไม่มี Batch = ไม่รวม คงเป็นแถวเดี่ยว)
+  const umGroupByBatch = (rows) => {
+    const out = []; const idx = new Map();
+    rows.forEach((t, i) => {
+      if (!t.batch_id) { out.push({ ...t, _count: 1, _members: [t] }); return; }
+      const k = `${t.batch_id}|${t.bu || ''}|${t.module || ''}`;
+      if (!idx.has(k)) { idx.set(k, out.length); out.push({ ...t, _count: 1, _members: [t], _sumSub: Number(t.sub_items) || 0, _sumMs: 0, _hasMs: false }); const o = out[out.length - 1]; const ms = (t.start_ts && t.end_ts && t.has_fill_start !== false) ? new Date(t.end_ts) - new Date(t.start_ts) : NaN; if (isFinite(ms) && ms >= 0) { o._sumMs = ms; o._hasMs = true; } return; }
+      const o = out[idx.get(k)]; o._count += 1; o._members.push(t); o._sumSub += Number(t.sub_items) || 0;
+      const ms = (t.start_ts && t.end_ts && t.has_fill_start !== false) ? new Date(t.end_ts) - new Date(t.start_ts) : NaN; if (isFinite(ms) && ms >= 0) { o._sumMs += ms; o._hasMs = true; }
+      if (t.start_ts && (!o.start_ts || new Date(t.start_ts) < new Date(o.start_ts))) { o.start_ts = t.start_ts; o.gap_minutes = t.gap_minutes; o.ts = t.ts; }
+      if (t.end_ts && (!o.end_ts || new Date(t.end_ts) > new Date(o.end_ts))) o.end_ts = t.end_ts;
+    });
+    return out;
+  };
   function dashboardModuleStyle(mod) {
-    const MAP = { AP: { bg: '#eaf6f0', color: '#1f8a5f' }, IE: { bg: '#fbeef0', color: '#c2255c' }, VAT: { bg: '#e4e9f3', color: '#2c3d63' }, 'COL-AP': { bg: '#fdf1dc', color: '#9a5b00' } }; // MARKER_USERMANAGEMENT_DASHBOARD_MODULE_COLOR_COLAP_VAT_V1 -- เพิ่มสี VAT และ COL-AP (Doc Collection / AP-DOC) แยกจากสีเทา Default
+    const MAP = { AP: { bg: '#eaf6f0', color: '#1f8a5f' }, IE: { bg: '#fbeef0', color: '#c2255c' }, VAT: { bg: '#e4e9f3', color: '#2c3d63' }, 'COL-AP': { bg: '#fdf1dc', color: '#9a5b00' }, 'SM-VAT': { bg: '#dff3f7', color: '#0e7490' }, 'SM-PP36': { bg: '#efe8fd', color: '#6d28d9' } }; // MARKER_USERMANAGEMENT_DASHBOARD_MODULE_COLOR_COLAP_VAT_V1 -- เพิ่มสี VAT และ COL-AP (Doc Collection / AP-DOC) แยกจากสีเทา Default
     return MAP[mod] || { bg: '#f0f3f7', color: '#667085' };
   }
 
@@ -3655,6 +3651,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState(null);
     const [err, setErr] = useState('');
+    const [txView, setTxView] = useState(() => { try { return localStorage.getItem('um_tx_view') === 'batch' ? 'batch' : 'tx'; } catch (e) { return 'tx'; } }); // MARKER_TXN_VIEW_BY_BATCH_V1
     const [showActions, setShowActions] = useState(false); // MARKER_USERMANAGEMENT_DAILY_DASHBOARD_REDESIGN_V1 -- แถว Action (เข้าเมนู/Login/Logout ฯลฯ) ซ่อนเป็นค่าเริ่มต้น
 
     const todayStr = useMemo(() => toLocalISODate(new Date()), []);
@@ -3686,6 +3683,26 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
         .finally(() => { if (!cancelled) setLoading(false); });
       return () => { cancelled = true; };
     }, [user.username, range.from, range.to, granularity]);
+
+    // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_REALTIME_V1 -- Realtime: รอรับ Event 'user_transactions_updated' / 'activity_log_updated' แล้วดึงข้อมูลใหม่แบบเงียบ (ไม่ขึ้น Loading ไม่กระพริบ)
+    // -- ดึงเฉพาะเมื่อช่วงที่ดูครอบคลุมวันนี้ (ย้อนดูวัน/เดือนเก่าไม่เปลี่ยน ไม่ต้องดึง) | Debounce 1 วิ | มี Poll สำรอง 60 วิ เผื่อ WS หลุด
+    const rtParamsRef = React.useRef({});
+    rtParamsRef.current = { username: user.username, from: range.from, to: range.to, granularity, includesToday: range.from <= todayStr && range.to >= todayStr };
+    useEffect(() => {
+      let timer = null; let seq = 0; let alive = true;
+      const silentRefresh = () => {
+        const p = rtParamsRef.current;
+        if (!p.includesToday) return;
+        const my = ++seq;
+        apiFetch(`/user_transactions/dashboard?username=${encodeURIComponent(p.username)}&from=${p.from}&to=${p.to}&granularity=${p.granularity}`)
+          .then(res => { if (alive && my === seq) setData(res); })
+          .catch(() => { /* เงียบ ไว้ Poll/Event รอบถัดไป */ });
+      };
+      const schedule = () => { if (timer) return; timer = setTimeout(() => { timer = null; silentRefresh(); }, 1000); };
+      const unsub = subscribeWs(['user_transactions_updated', 'activity_log_updated'], schedule);
+      const poll = setInterval(silentRefresh, 60000);
+      return () => { alive = false; unsub(); clearInterval(poll); if (timer) clearTimeout(timer); };
+    }, []);
 
     const avatarColor = dashboardUserColor(user.username || '');
     const initial = (user.username || '?').charAt(0).toUpperCase();
@@ -3857,9 +3874,9 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                     </div>
 
                     {granularity !== 'daily' && summaryRows.length > 0 && (() => { /* MARKER_USERMANAGEMENT_MONTHLY_HR_DASHBOARD_V1 -- กราฟแท่ง Stacked ตาม Module + Donut สัดส่วน (คลิกแท่งเพื่อดูรายวัน) */
-                      const MOD_COLORS = { AP: '#1f8a5f', VAT: '#3b4f78', 'COL-AP': '#d9961a', IE: '#c2255c' };
+                      const MOD_COLORS = { AP: '#1f8a5f', VAT: '#3b4f78', 'COL-AP': '#d9961a', IE: '#c2255c', 'SM-VAT': '#0e7490', 'SM-PP36': '#7c3aed' }; // MARKER_TXN_SM_MODULES_V1
                       const modColor = (m) => MOD_COLORS[m] || '#8a94a3';
-                      const modOrder = ['AP', 'VAT', 'COL-AP', 'IE'];
+                      const modOrder = ['AP', 'VAT', 'SM-VAT', 'SM-PP36', 'COL-AP', 'IE'];
                       const totals = {};
                       summaryRows.forEach((d) => Object.keys(d.modules || {}).forEach((m) => { totals[m] = (totals[m] || 0) + Number(d.modules[m]); }));
                       const mods = Object.keys(totals).sort((x, y) => { const ix = modOrder.indexOf(x), iy = modOrder.indexOf(y); return ((ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy)) || x.localeCompare(y); });
@@ -4008,7 +4025,12 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                             )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                            <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#16232f' }}>รายการ Transaction ({txs.length})</div>
+                            <div style={{ fontSize: '12.5px', fontWeight: 700, color: '#16232f' }}>{txView === 'batch' ? `รายการ Batch (${umGroupByBatch(txs).length}) · ${txs.length} Transaction` : `รายการ Transaction (${txs.length})`}</div>
+                            <div style={{ display: 'inline-flex', border: '1px solid #cfd8e3', borderRadius: '8px', overflow: 'hidden' }}> {/* MARKER_TXN_VIEW_BY_BATCH_V1 */}
+                              {[['tx', 'by Transaction'], ['batch', 'by Batch']].map(([k, lb]) => (
+                                <button key={k} type="button" onClick={() => { setTxView(k); try { localStorage.setItem('um_tx_view', k); } catch (e) { /* ignore */ } }} style={{ border: 'none', padding: '4px 12px', fontSize: '11.5px', cursor: 'pointer', background: txView === k ? '#1a3a5c' : '#ffffff', color: txView === k ? '#ffffff' : '#667085', fontWeight: txView === k ? 700 : 500 }}>{lb}</button>
+                              ))}
+                            </div>
                             <div style={{ flexGrow: 1 }} />
                             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '11.5px', color: '#667085', cursor: 'pointer' }}>
                               <input type="checkbox" checked={showActions} onChange={(e) => setShowActions(e.target.checked)} />
@@ -4031,7 +4053,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                   {granularity === 'daily' ? (
                     (() => { /* MARKER_USERMANAGEMENT_DAILY_DASHBOARD_REDESIGN_V1 -- ตารางรายวันแบบใหม่: 7 คอลัมน์, Action ซ่อนเป็นค่าเริ่มต้น, Action แสดงเวลาเดียว */
                       const txRows = dailyRows.filter((x) => !x.is_timestamp);
-                      const visibleRows = showActions ? dailyRows : txRows;
+                      const visibleRows = txView === 'batch' ? umGroupByBatch(txRows) : (showActions ? dailyRows : txRows); // MARKER_TXN_VIEW_BY_BATCH_V1 -- มุมมอง Batch ไม่แสดงแถว Action
                       const hm = (ts) => String(fmtTime(ts) || '').slice(0, 5);
                       const COLS = '150px minmax(0, 1fr) 70px 90px 80px 110px 110px';
                       if (visibleRows.length === 0) {
@@ -4061,7 +4083,9 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                             const st = dashboardModuleStyle(t.module);
                             const gap = t.gap_minutes != null ? Math.round(t.gap_minutes) : null;
                             const startHm = hm(t.start_ts), endHm = hm(t.end_ts);
+                            const isBatchRow = txView === 'batch' && t._count > 1;
                             const dur = (() => {
+                              if (isBatchRow) { if (!t._hasMs) return '-'; const totalSec = Math.round(t._sumMs / 1000), mm = Math.floor(totalSec / 60), ss = totalSec % 60; return mm > 0 ? `${mm} นาที ${ss} วิ` : `${ss} วิ`; } // MARKER_TXN_VIEW_BY_BATCH_V1 -- รวมเวลาทำงานจริงของทุก Transaction ใน Batch (ไม่รวมช่วงว่าง)
                               if (t.has_fill_start === false) return '-';
                               if (!t.start_ts || !t.end_ts) return '-';
                               const ms = new Date(t.end_ts) - new Date(t.start_ts);
@@ -4076,12 +4100,17 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                                   {t.is_weekend_source && <span title="ทำรายการวันเสาร์-อาทิตย์ นับรวมกับวันจันทร์" style={{ marginLeft: '4px', fontSize: '10px', color: '#6b7fd7', cursor: 'help' }}>📅</span>}
                                 </div>
                                 <div style={{ minWidth: 0 }}>
+                                  {isBatchRow ? (<>
+                                    <div title={t.batch_id || ''} style={{ wordBreak: 'break-word', fontWeight: 600 }}>{t.batch_id}</div>
+                                    <div style={{ fontSize: '10.5px', color: '#8a96a3' }} title={t._members.map((m) => m.invoice_no).filter(Boolean).slice(0, 30).join(', ')}>{t._count} Transaction</div>
+                                  </>) : (<>
                                   <div title={t.invoice_no || ''} style={{ wordBreak: 'break-word' }}>{t.invoice_no || '-'}</div>
                                   <div style={{ fontSize: '10.5px', color: '#8a96a3', wordBreak: 'break-word' }}>{t.batch_id || 'Draft'}</div>
+                                  </>)}
                                 </div>
                                 <div>{t.bu || '-'}</div>
                                 <div>{t.module ? <span style={{ fontSize: '10.5px', fontWeight: 600, padding: '2px 8px', borderRadius: '10px', background: st.bg, color: st.color }}>{t.module}</span> : '-'}</div>
-                                <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{t.sub_items ?? '-'}</div>
+                                <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{isBatchRow ? t._sumSub : (t.sub_items ?? '-')}</div>
                                 <div style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dur}</div>
                                 <div style={{ textAlign: 'right' }}>
                                   {gap == null

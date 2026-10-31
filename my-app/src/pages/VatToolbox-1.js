@@ -1,0 +1,704 @@
+/* global BigInt */
+import React from "react";
+import * as XLSX from "xlsx";
+import { db } from "../lib/db"; // MARKER_VAT_TOOLBOX_DB_DRAFT_V1
+import { useAuth } from "../contexts/AuthContext"; // MARKER_VAT_TOOLBOX_DB_DRAFT_V1
+
+// ============================================================================
+// VAT Toolbox — src/pages/VatToolbox.js   (MARKER_VAT_TOOLBOX_V1)
+// แทนเมนู "Monthly Report" (id เดิม vat-monthly-report) — รวมเครื่องมือ VAT เป็น Tab
+//   Tab 1: VAT Swap Finder  (ทำงานจริง — คำนวณฝั่งเบราว์เซอร์ ไม่ใช้ AI/Backend)
+//   Tab 2-3: Sheet Compare / Expiry Check (placeholder)
+//   Tab 4: History (งานที่บันทึกไว้ เก็บใน localStorage ของเครื่องนี้)
+//
+// กติกา Swap (เบื้องต้น):
+//   * Out = ชุดใบกำกับที่ Σ(เงินภาษี × Rate เดิม) = ยอดที่ต้องการ (±tol) จากไฟล์ Input ต้นทาง
+//   * In  = ชุดใบกำกับ "คนละใบ" กับ Out ที่ Σ(เงินภาษี × Rate ใหม่) = ยอดเดียวกัน, ยังไม่หมดอายุในเดือนปลายทาง
+//   * ใบกำกับใช้ได้ถึง เดือนที่ลงวันที่ + 6  → ช่วงที่ใช้ได้ที่เดือน m = [m-6 .. m]
+//   * ชุด In ที่ถึงเดือนหมดอายุ ต้องสลับออก (เป็น Out ของขั้นถัดไป) ต่อทีละเดือนจนถึง Working Period
+//   * Working Period: วันที่ > 10 = เดือนปัจจุบัน, ไม่เกิน 10 = เดือนก่อนหน้า
+//   * จัดกลุ่มตามเลขที่ใบกำกับ (เอาทั้งใบหรือไม่เอาเลย), เฉพาะ Status = Balance (ถ้ามีคอลัมน์ Status)
+// ============================================================================
+
+const C = { navy: "#14532d", g: "#1e8e4a", gd: "#0f6b34", gl: "#e8f5ec", line: "#e3e8ee", soft: "#f5f8f6", text: "#1f2933", ok: "#1e7a3c", bad: "#b3261e", warn: "#a65f00", mute: "#6b7785" };
+const LS_KEY = "vat_toolbox_swap_jobs_v1";
+
+// ── เวลา/เดือน ──────────────────────────────────────────────────────────────
+const ymStr = (i) => `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`;
+const parseYm = (s) => { const [y, m] = String(s).split("-"); return Number(y) * 12 + Number(m) - 1; };
+const workingPeriod = (today = new Date()) => today.getFullYear() * 12 + today.getMonth() - (today.getDate() > 10 ? 0 : 1);
+const fmt = (n) => Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const round2 = (x) => Math.round((x + Number.EPSILON) * 100) / 100;
+
+// อ่านค่า Period (ช่อง B ถัดจากคำว่า Period): เป็นวันที่จริง หรือข้อความเช่น 29-Feb-24 / 2024-02-29 / 29/02/2024
+const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+function periodMonth(v) {
+  if (v instanceof Date) { const d = new Date(v.getTime() + 12 * 3600e3); return d.getUTCFullYear() * 12 + d.getUTCMonth(); }
+  if (typeof v !== "string") return null;
+  const t = v.trim();
+  let m = t.match(/^(\d{1,2})[-\/ ]([A-Za-z]{3})[A-Za-z]*[-\/ ](\d{2,4})$/);
+  if (m && MON[m[2].toLowerCase()] != null) { let y = Number(m[3]); if (y < 100) y += 2000; return y * 12 + MON[m[2].toLowerCase()]; }
+  m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return Number(m[1]) * 12 + Number(m[2]) - 1;
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) { let y = Number(m[3]); if (y > 2400) y -= 543; return y * 12 + Number(m[2]) - 1; }
+  return null;
+}
+
+// ── อ่านไฟล์ Excel (รายงานภาษีซื้อ) ────────────────────────────────────────
+function parseWorkbook(buf, fileName) {
+  const wb = XLSX.read(buf, { type: "array", cellDates: true });
+  const names = ["Detail", ...wb.SheetNames.filter((n) => n !== "Detail")].filter((n) => wb.SheetNames.includes(n));
+  for (const n of names) {
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null });
+    let hr = -1, hdr = [];
+    for (let r = 0; r < Math.min(aoa.length, 30); r++) {
+      const vals = (aoa[r] || []).slice(0, 40).map((v) => String(v == null ? "" : v).trim());
+      const hasInv = vals.some((v) => v.includes("เลขที่ใบกำกับภาษี") || /invoice\s*ref/i.test(v));
+      if (vals.some((v) => v.includes("วันที่ใบกำกับภาษี")) && hasInv) { hr = r; hdr = vals; break; }
+    }
+    if (hr < 0) continue;
+    const col = (...keys) => { const i = hdr.findIndex((v) => keys.every((k) => v.includes(k))); return i < 0 ? null : i; };
+    const cBranch = col("สาขา") ?? 0, cDate = col("วันที่ใบกำกับภาษี"), cInv = col("เลขที่ใบกำกับภาษี") ?? hdr.findIndex((v) => /invoice\s*ref/i.test(v));
+    const cVendor = col("ชื่อผู้ค้า"), cAmt = col("เงินภาษี"), cStatus = (() => { let i = hdr.findIndex((v) => v === "Status"); if (i < 0) i = hdr.findIndex((v) => v === "AP Invoice Status"); return i < 0 ? null : i; })();
+    const cTcode = hdr.findIndex((v) => v.toLowerCase() === "tax code"), cSrc = hdr.findIndex((v) => v === "Source");
+    const cRef = hdr.findIndex((v) => v === "เลขที่ใบแจ้งหนี้" || /^invoice\s*ref/i.test(v)), cMsg = hdr.findIndex((v) => v === "Message");
+    const cRecv = hdr.findIndex((v) => v.startsWith("วันที่ (รับสินค้า)"));
+    const cTaxId = col("TAX ID"), cVbr = col("BRANCH"), cHo = (() => { const i = hdr.findIndex((v) => v.toUpperCase() === "HO"); return i < 0 ? null : i; })(), cPre = col("มูลค่าสินค้า");
+    if (cAmt == null) throw new Error(`ไม่พบคอลัมน์ "เงินภาษี" ในไฟล์ ${fileName}`);
+    let period = null;
+    for (let r = 0; r < hr; r++) {
+      const row = aoa[r] || [];
+      if (String(row[0] == null ? "" : row[0]).trim().toLowerCase() === "period") {
+        const pm = periodMonth(row[1]);
+        if (pm != null) period = Math.max(period ?? -1, pm);
+      }
+    }
+    let hdrRate = null;
+    for (const h of hdr) if (h.includes("ใช้สิทธิ์")) { const m = h.match(/(\d+(?:\.\d+)?)\s*%/); if (m) { hdrRate = parseFloat(m[1]); break; } }
+    let lastHdr = hdr.length; while (lastHdr > 0 && !hdr[lastHdr - 1]) lastHdr--;
+    const hasTaxInv = col("เลขที่ใบกำกับภาษี") != null; // MARKER_VAT_TOOLBOX_DRAFT_ROWS_V1 -- ไฟล์ที่ไม่มีคอลัมน์ใบกำกับภาษี (ใช้ Invoice Ref แทน) -> taxInv ว่าง ไม่ปนกับ ref
+    const rows = []; const branches = new Set(); let total = 0;
+    for (let r = hr + 1; r < aoa.length; r++) {
+      const row = aoa[r] || [];
+      const dv = row[cDate], av = row[cAmt];
+      if (!(dv instanceof Date) || av == null || av === "") continue;
+      const amt = Number(av); if (Number.isNaN(amt)) continue;
+      total++;
+      if (cStatus != null && row[cStatus] !== "Balance" && row[cStatus] !== "Validated") continue;
+      if (cMsg >= 0 && row[cMsg] != null && String(row[cMsg]).trim() !== "") continue; // Future Tax invoice Date / Over 6 Months
+      const tcode = cTcode >= 0 && row[cTcode] != null ? String(row[cTcode]).trim() : "";
+      if (cTcode >= 0 && !tcode) continue; // รายงานแบบ Reconcile: ต้องเป็นรายการที่มี Tax Code เท่านั้น
+      const d = new Date(dv.getTime() + 12 * 3600e3);
+      const br = String(row[cBranch] == null ? "" : row[cBranch]).trim();
+      branches.add(br);
+      rows.push({ r: r + 1, inv: String(row[cInv]), taxInv: hasTaxInv ? String(row[cInv]) : "", ym: d.getUTCFullYear() * 12 + d.getUTCMonth(), date: d.toISOString().slice(0, 10), vendor: String(row[cVendor] == null ? "" : row[cVendor]), branch: br, raw: amt,
+        orig: row.slice(0, lastHdr), bu: cSrc >= 0 && row[cSrc] != null ? String(row[cSrc]).trim() : "", tcode, ref: cRef >= 0 && row[cRef] != null ? String(row[cRef]) : "", ho: cHo != null && row[cHo] != null ? String(row[cHo]).trim() : "", taxid: cTaxId != null && row[cTaxId] != null ? String(row[cTaxId]) : "", vbr: cVbr != null && row[cVbr] != null ? String(row[cVbr]) : "", pre: cPre != null && row[cPre] !== "" && row[cPre] != null && !Number.isNaN(Number(row[cPre])) ? Number(row[cPre]) : null });
+    }
+    const maxYm = rows.reduce((a, x) => Math.max(a, x.ym), -1);
+    if (period == null && cRecv >= 0) { // ไม่มีแถว Period → ใช้เดือนของวันที่รับสินค้าล่าสุด
+      let mx = -1; for (let r = hr + 1; r < aoa.length; r++) { const v = (aoa[r] || [])[cRecv]; if (v instanceof Date) { const d = new Date(v.getTime() + 12 * 3600e3); mx = Math.max(mx, d.getUTCFullYear() * 12 + d.getUTCMonth()); } }
+      if (mx >= 0) period = mx;
+    }
+    const buCodes = {}; rows.forEach((x) => { if (x.tcode) { (buCodes[x.bu || "-"] = buCodes[x.bu || "-"] || new Set()).add(x.tcode); } });
+    Object.keys(buCodes).forEach((k) => { buCodes[k] = [...buCodes[k]].sort(); });
+    let lastH = hdr.length; while (lastH > 0 && !hdr[lastH - 1]) lastH--;
+    const meta = { hdr: (aoa[hr] || []).slice(0, lastH).map((v) => (v == null ? "" : v)), top: aoa.slice(0, hr).map((r) => [(r || [])[0] ?? null, (r || [])[1] ?? null]), cDate, invHdr: hdr[cInv] || "", buCodes };
+    return { name: fileName, sheet: n, period, maxYm, hdrRate, total, rows, branches: [...branches].sort(), meta };
+  }
+  throw new Error(`ไม่พบ header (วันที่ใบกำกับภาษี / เลขที่ใบกำกับภาษี หรือ Invoice Ref.) ในไฟล์ ${fileName}`);
+}
+
+// ── Subset-sum (bitset BigInt) ──────────────────────────────────────────────
+function searchSet(rows, target, tol, rate, exclude) {
+  const groups = new Map();
+  for (const x of rows) {
+    if (exclude && exclude.has(x.inv)) continue;
+    if (!groups.has(x.inv)) groups.set(x.inv, []);
+    groups.get(x.inv).push({ ...x, amt: round2((x.raw * rate) / 100) });
+  }
+  const units = [...groups.entries()].map(([inv, v]) => ({ inv, tot: round2(v.reduce((a, x) => a + x.amt, 0)), rows: v }));
+  const T = Math.round(target * 100), tl = Math.round(tol * 100), cap = T + tl;
+  if (cap > 4000000) return { error: "ยอดเป้าหมายสูงเกินไปสำหรับการคำนวณในเบราว์เซอร์", units };
+  const items = units.filter((u) => { const w = Math.round(u.tot * 100); return w > 0 && w <= cap; }).sort((a, b) => b.tot - a.tot);
+  const mask = (1n << BigInt(cap + 1)) - 1n;
+  let reach = 1n; const snaps = [], wts = [];
+  for (const it of items) { const w = Math.round(it.tot * 100); snaps.push(reach); wts.push(w); reach = (reach | (reach << BigInt(w))) & mask; }
+  let best = null;
+  for (let s = T - tl; s <= T + tl; s++) if (s >= 0 && ((reach >> BigInt(s)) & 1n) === 1n && (best === null || Math.abs(s - T) < Math.abs(best - T))) best = s;
+  if (best === null) return { units, set: null, count: units.length };
+  const used = []; let s = best;
+  for (let i = items.length - 1; i >= 0; i--) if (((snaps[i] >> BigInt(s)) & 1n) === 0n) { s -= wts[i]; used.push(items[i]); }
+  return { units, set: used.reverse(), total: best / 100, diff: (best - T) / 100 };
+}
+
+const poolFrom = (files, branch, lo, hi, bu, tcode) => files.flatMap((f) => f.rows).filter((x) => (!branch || x.branch === branch) && (!bu || x.bu === bu) && (!tcode || x.tcode === tcode) && x.ym >= lo && x.ym <= hi);
+const expiryOf = (set) => Math.min(...set.flatMap((u) => u.rows.map((x) => x.ym))) + 6;
+
+// ── ประมวลผลทั้งเส้น (derived จาก input เท่านั้น) ───────────────────────────
+function runChain(job, wp) {
+  const p = job.params, tol = Number(p.tol) || 0.05, target = Number(p.target);
+  const src = job.sourceFiles;
+  const P0 = Math.max(...src.map((f) => (f.period != null ? f.period : f.maxYm)));
+  const res = { P0, wp, steps: [], status: "running", message: "" };
+  const outPool = poolFrom(src, p.branch, P0 - 6, P0, p.bu, p.tcode);
+  res.outPoolN = outPool.length; res.srcN = src.reduce((a, f) => a + f.rows.length, 0);
+  const o = searchSet(outPool, target, tol, Number(p.rateOld));
+  if (o.error) { res.status = "error"; res.message = o.error; return res; }
+  if (!o.set) { res.status = "out-nomatch"; res.message = `ไม่พบชุด Out ที่รวมได้ ${fmt(target)} ± ${tol} (ช่วงใบกำกับ ${ymStr(P0 - 6)} ถึง ${ymStr(P0)})`; return res; }
+  res.out0 = o;
+  let curOut = o.set, prev = P0, prevRate = Number(p.rateOld);
+  for (let k = 0; k < 24; k++) {
+    const E = expiryOf(curOut);
+    const minM = k === 0 ? P0 : prev + 1;
+    const m = Math.max(Math.min(E, wp), minM);
+    const sf = (job.stepFiles && job.stepFiles[k]) || [];
+    const rateIn = Number((job.stepRates && job.stepRates[k]) || (k === 0 ? p.rateNew : prevRate)) || 100;
+    const step = { k, month: m, expiry: E, out: curOut, outRate: prevRate, rateIn, files: sf };
+    res.steps.push(step);
+    if (!sf.length) { step.state = "need-file"; res.status = "need-file"; res.message = `ต้องการ Input เดือน ${ymStr(m)} เพื่อหาชุด In`; return res; }
+    const ex = new Set(curOut.map((u) => u.inv));
+    const inPool = poolFrom(sf, p.branch, m - 6, m, p.bu, p.tcode);
+    step.poolN = inPool.length; step.fileN = sf.reduce((a, f) => a + f.rows.length, 0);
+    const r = searchSet(inPool, target, tol, rateIn, ex);
+    if (r.error) { step.state = "error"; res.status = "error"; res.message = r.error; return res; }
+    if (!r.set) { step.state = "nomatch"; res.status = "nomatch"; res.message = `เดือน ${ymStr(m)}: ไม่พบชุด In ที่รวมได้ ${fmt(target)} ± ${tol} — เพิ่มไฟล์เดือนอื่นเข้ามาแล้วคำนวณใหม่`; return res; }
+    step.state = "match"; step.inSet = r;
+    if (m >= wp) { res.status = "done"; res.message = `ถึงเดือนปัจจุบัน (Working Period ${ymStr(wp)}) แล้ว`; return res; }
+    curOut = r.set; prev = m; prevRate = rateIn;
+  }
+  res.status = "error"; res.message = "จำนวนขั้นเกินกำหนด"; return res;
+}
+
+// ── Export Excel (รูปแบบเดียวกับชีต Detail ของรายงาน) ───────────────────────
+const NAVY = "FF14213D";
+const toDate = (v) => (typeof v === "string" && /^\d{4}-\d\d-\d\dT/.test(v) ? new Date(v) : v);
+async function exportWorkbook(job, res) {
+  const ExcelJS = (await import("exceljs")).default || (await import("exceljs"));
+  const wb = new ExcelJS.Workbook();
+  const p = job.params;
+  const files = [...job.sourceFiles, ...job.stepFiles.flat().filter(Boolean)];
+  const meta = (files.find((f) => f.meta) || {}).meta || { hdr: ["สาขา", "ชื่อผู้ประกอบการ", "วันที่ (รับสินค้า)", "GRT_No. (รับสินค้า)", "วันที่ใบกำกับภาษี", "เลขที่ใบกำกับภาษี", "ชื่อผู้ค้า", "TAX ID", "HO", "BRANCH", "รายการ", "ภาษีซื้อที่ชำระ(มูลค่าสินค้า)", "ภาษีซื้อที่ชำระ(เงินภาษี)"], top: [], cDate: 4 };
+  const ws0 = wb.addWorksheet("Summary");
+  [["VAT Swap Finder — สรุป"], ["ยอดเป้าหมาย", Number(p.target)], ["Rate เดิม %", Number(p.rateOld)], ["Rate ใหม่ %", Number(p.rateNew)], ["สาขา", p.branch || "ทั้งหมด"], ["Working Period", ymStr(res.wp)], [],
+    ["ขั้น", "เดือนที่สลับ", "Out (ใบ)", "Out รวม", "In (ใบ)", "In รวม", "Rate In %"],
+    ...res.steps.map((s) => [s.k + 1, ymStr(s.month), s.out.length, round2(s.out.reduce((a, u) => a + u.tot, 0)), s.inSet ? s.inSet.set.length : 0, s.inSet ? s.inSet.total : 0, s.rateIn])].forEach((r) => ws0.addRow(r));
+  ws0.getRow(1).font = { bold: true, size: 13 };
+  const hr0 = ws0.getRow(8); hr0.font = { bold: true, color: { argb: "FFFFFFFF" } }; hr0.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
+  ws0.columns = [{ width: 18 }, { width: 14 }, { width: 10 }, { width: 14 }, { width: 10 }, { width: 14 }, { width: 10 }];
+  const nCol = meta.hdr.length;
+  res.steps.forEach((s) => {
+    const ws = wb.addWorksheet(`${String(s.k + 1).padStart(2, "0")}_${ymStr(s.month)}`);
+    const monthEnd = new Date(Date.UTC(Math.floor(s.month / 12), (s.month % 12) + 1, 0));
+    ws.addRow(["DETAIL OF ACCOUNT"]); ws.getRow(1).font = { bold: true };
+    ws.addRow([]);
+    const tops = (meta.top || []).slice(2, 7);
+    ["Company ", "Branch ", "Account code ", "Account name", "Period"].forEach((lab, i) => {
+      const t = tops[i]; const v = lab === "Period" ? monthEnd : t ? toDate(t[1]) : null;
+      ws.addRow([lab, v]); if (lab === "Period") ws.getCell(`B${ws.rowCount}`).numFmt = "dd-mmm-yy";
+    });
+    ws.addRow([]);
+    const section = (title, set, rate) => {
+      const tr = ws.addRow([title]); tr.font = { bold: true, color: { argb: "FF0F766E" }, size: 12 };
+      const h = ws.addRow([...meta.hdr, `ยอด @${rate}%`, "แถวไฟล์ต้นทาง"]);
+      h.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } }; c.font = { bold: true, color: { argb: "FFFFFFFF" } }; c.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; });
+      h.height = 30;
+      const first = ws.rowCount + 1; let tax = 0, amt = 0;
+      set.forEach((u) => u.rows.forEach((x) => {
+        const o = x.orig ? x.orig.map(toDate) : (() => { const a = Array(nCol).fill(null); a[0] = x.branch; a[4] = new Date(x.date); a[5] = x.inv; a[6] = x.vendor; a[7] = x.taxid; a[9] = x.vbr; a[nCol - 1] = x.raw; return a; })();
+        while (o.length < nCol) o.push(null);
+        const r = ws.addRow([...o.slice(0, nCol), x.amt, x.r]);
+        [2, 4].forEach((ci) => { if (r.getCell(ci + 1).value instanceof Date) r.getCell(ci + 1).numFmt = "d-mmm-yy"; });
+        tax += x.raw; amt += x.amt;
+      }));
+      const last = ws.rowCount;
+      const tot = ws.addRow(["Total", ...Array(nCol - 1).fill(null), round2(amt)]);
+      tot.font = { bold: true }; tot.eachCell((c) => { c.border = { top: { style: "thin" } }; });
+      ws.addRow([]);
+      return { first, last, taxTotal: round2(tax), amt: round2(amt) };
+    };
+    section("Out (สลับออก)", s.out, s.outRate);
+    if (s.inSet) section("In (สลับเข้า)", s.inSet.set, s.rateIn); else { ws.addRow(["In (สลับเข้า)"]); ws.addRow(["ไม่มีข้อมูล"]); }
+    ws.columns = meta.hdr.map((h, i) => ({ width: i === 1 ? 26 : i === 6 || i === 10 ? 34 : 15 })).concat([{ width: 16 }, { width: 12 }]);
+  });
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const a = document.createElement("a"); a.href = url; a.download = `VAT_Swap_${p.target}_${ymStr(res.wp)}.xlsx`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// ── Storage (เครื่องนี้เท่านั้น) ────────────────────────────────────────────
+const loadJobs = () => { try { return JSON.parse(localStorage.getItem(LS_KEY) || "[]").filter((j) => !isExpired(j)); } catch (e) { return []; } };
+const saveJobs = (j) => { try { localStorage.setItem(LS_KEY, JSON.stringify(j)); return true; } catch (e) { return false; } };
+
+// ── MARKER_VAT_TOOLBOX_DB_DRAFT_V1 : Draft เก็บใน DB (ตาราง vat_swap_drafts) แบบชั่วคราว ─────────────
+//   * กดบันทึก  -> เก็บ Draft ลง DB (ยังไม่มีวันหมดอายุ)  /  ถ้า DB ใช้ไม่ได้ ถอยไปเก็บในเครื่องนี้เหมือนเดิม
+//   * กด Export -> ตั้ง expires_at = ตอนนี้ + 3 วัน แล้วระบบล้างให้อัตโนมัติ (purge_expired_vat_swap_drafts)
+//   * รายการที่หมดอายุแล้วไม่แสดงในรายการ "งานที่บันทึกไว้"
+const DRAFT_TABLE = "vat_swap_drafts";
+const EXPIRE_DAYS_AFTER_EXPORT = 3;
+const isExpired = (j) => !!(j && j.expiresAt && Number(j.expiresAt) <= Date.now());
+const cloudToItem = (r) => ({ id: r.id, name: r.name, status: r.status, lastMonth: r.last_month, savedAt: r.saved_at ? Date.parse(r.saved_at) : null, exportedAt: r.exported_at ? Date.parse(r.exported_at) : null, expiresAt: r.expires_at ? Date.parse(r.expires_at) : null, owner: r.username, cloud: true });
+async function cloudSaveJob(item, username, exportedNow, extra) { // item = job (ย่อแล้ว) ที่มี name/status/lastMonth/savedAt
+  try {
+    const row = { id: String(item.id), username: username || "", name: item.name || "", status: item.status || "draft", last_month: item.lastMonth || null, saved_at: new Date(item.savedAt || Date.now()).toISOString(), job: item, updated_at: new Date().toISOString() };
+    if (extra) Object.assign(row, extra); // MARKER_VAT_TOOLBOX_DRAFT_ROWS_V1 (rows_batch)
+    if (exportedNow) { row.exported_at = new Date().toISOString(); row.expires_at = new Date(Date.now() + EXPIRE_DAYS_AFTER_EXPORT * 86400e3).toISOString(); }
+    const r = await db.from(DRAFT_TABLE).upsert(row, { onConflict: "id" });
+    return !(r && r.error);
+  } catch (e) { return false; }
+}
+// MARKER_VAT_TOOLBOX_DRAFT_ROWS_V1 -- เก็บรายการใบกำกับรายแถวตามรูปแบบ Input VAT Reconcile: เลขที่ใบกำกับภาษี กับ Invoice Ref. แยกคอลัมน์ (Ref ว่างได้)
+//   เก็บเฉพาะแถวของ Tax Code ที่เลือกใช้ในงาน (ไม่เลือก = ทุก Tax Code) ; tax_type = ตัวอักษรหลังขีดของ Tax Code (321801-M SVAT7 -> M)
+const taxTypeOf = (tc) => { const m = String(tc || "").match(/-([A-Za-z])(?:\s|$)/); return m ? m[1].toUpperCase() : null; };
+async function cloudSaveRows(item, username, batch) {
+  try {
+    const tc = item.params && item.params.tcode ? String(item.params.tcode) : "";
+    const files = [...(item.sourceFiles || []), ...(item.stepFiles || []).flat(), ...(item.extra || [])];
+    const out = []; let n = 0;
+    files.forEach((f) => (f.rows || []).forEach((x) => {
+      if (tc && x.tcode !== tc) return;
+      out.push({ id: `${item.id}|${batch}|${n++}`, draft_id: String(item.id), batch, username: username || "", file_name: f.name || "", file_period: f.period != null ? ymStr(f.period) : null, src_row: x.r, source: x.bu || null, branch: x.branch || null,
+        tax_invoice_date: x.date || null, tax_invoice_no: (x.taxInv !== undefined ? x.taxInv : x.inv) || null, invoice_ref: x.ref ? x.ref : null, vendor_name: x.vendor || null, tax_id: x.taxid || null, vendor_branch: x.vbr || null, ho: x.ho || null,
+        tax_code: x.tcode || null, tax_type: taxTypeOf(x.tcode), vat_amount: x.raw, base_amount: x.pre != null ? x.pre : null });
+    }));
+    for (let i = 0; i < out.length; i += 500) {
+      const r = await db.from("vat_swap_draft_rows").upsert(out.slice(i, i + 500), { onConflict: "id" });
+      if (r && r.error) return false;
+    }
+    return true;
+  } catch (e) { return false; }
+}
+async function cloudListJobs(username) {
+  try {
+    const r = await db.from(DRAFT_TABLE).select("id,username,name,status,last_month,saved_at,exported_at,expires_at").eq("username", username || "").order("saved_at", { ascending: false });
+    if (!r || r.error || !Array.isArray(r.data)) return null;
+    return r.data.map(cloudToItem).filter((x) => !isExpired(x));
+  } catch (e) { return null; }
+}
+async function cloudGetJob(id) {
+  try {
+    const r = await db.from(DRAFT_TABLE).select("*").eq("id", String(id)).maybeSingle();
+    if (!r || r.error || !r.data || !r.data.job) return null;
+    const x = cloudToItem(r.data);
+    if (isExpired(x)) return null;
+    return { ...r.data.job, id: r.data.id, expiresAt: x.expiresAt, exportedAt: x.exportedAt };
+  } catch (e) { return null; }
+}
+async function cloudDeleteJob(id) { try { await db.from(DRAFT_TABLE).eq("id", String(id)).delete(); } catch (e) { /* ไม่เป็นไร */ } }
+
+// ── UI (แนว D: ตั้งเงื่อนไข + จุดโยนไฟล์ / Timeline / Monitor) ───────────────
+const card = { background: "white", border: `1px solid ${C.line}`, borderRadius: 12, padding: 16, minWidth: 0 };
+const inp = { padding: "9px 11px", border: "1px solid #cfd8e0", borderRadius: 8, fontSize: 14, fontFamily: "inherit", width: "100%", boxSizing: "border-box", background: "#fbfcfd", outline: "none" };
+const btn = (primary, disabled) => ({ padding: "9px 18px", borderRadius: 8, border: primary ? "none" : "1px solid #cfd8e0", background: disabled ? "#e3e8ee" : primary ? C.g : "white", color: disabled ? "#9aa7b3" : primary ? "white" : C.text, cursor: disabled ? "not-allowed" : "pointer", fontSize: 13.5, fontWeight: 600, fontFamily: "inherit" });
+const Lbl = ({ children }) => <div style={{ fontSize: 12, fontWeight: 600, color: C.mute, marginBottom: 5 }}>{children}</div>;
+const pill = (t, bg, fg) => <span style={{ display: "inline-block", padding: "2px 10px", borderRadius: 999, fontSize: 11.5, fontWeight: 600, background: bg, color: fg, whiteSpace: "nowrap" }}>{t}</span>;
+const mono = { fontFamily: "ui-monospace, Consolas, monospace", fontVariantNumeric: "tabular-nums" };
+
+function Dropzone({ onFiles, busy, hasFiles }) {
+  const ref = React.useRef(null);
+  const [over, setOver] = React.useState(false);
+  return (
+    <div onClick={() => ref.current && ref.current.click()}
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); const fs = [...e.dataTransfer.files]; if (fs.length) onFiles(fs); }}
+      style={{ flex: 1, minHeight: hasFiles ? 64 : 110, border: `2px dashed ${C.g}`, background: over ? "#d7eedf" : C.gl, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", cursor: "pointer", color: C.gd, fontWeight: 600, fontSize: 13.5, padding: 12 }}>
+      <input ref={ref} type="file" accept=".xlsx,.xlsm,.xls" multiple style={{ display: "none" }} onChange={(e) => { const fs = [...e.target.files]; e.target.value = ""; if (fs.length) onFiles(fs); }} />
+      <div>{busy ? "กำลังอ่านไฟล์…" : hasFiles ? "＋ โยนไฟล์เดือนถัดไปที่นี่" : <>ลากไฟล์รายงานภาษีซื้อมาวางที่นี่<br />หรือคลิกเพื่อเลือกไฟล์</>}
+        {!busy && !hasFiles && <div style={{ fontWeight: 400, fontSize: 12, color: C.mute, marginTop: 6 }}>ไฟล์ทุกเดือนโยนที่จุดเดียว · ระบบอ่าน Period ในรายงานแล้วจัดเข้าเดือนให้เอง</div>}</div>
+    </div>
+  );
+}
+
+// ตารางรายละเอียด Out / In
+const fmtCell = (v) => {
+  if (v == null || v === "") return "";
+  if (v instanceof Date || (typeof v === "string" && /^\d{4}-\d\d-\d\dT/.test(v))) { const d = new Date(v); return Number.isNaN(d.getTime()) ? String(v) : new Date(d.getTime() + 12 * 3600e3).toISOString().slice(0, 10); }
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : fmt(v);
+  return String(v);
+};
+const COL_LS = "vat_toolbox_cols_v1";
+const BASE_COLS = [
+  { id: "inv", label: "เลขที่ใบกำกับภาษี" }, { id: "date", label: "วันที่ใบกำกับ" }, { id: "vendor", label: "ผู้ค้า" }, { id: "tax", label: "Tax ID / สาขา" },
+  { id: "pre", label: "มูลค่าก่อน VAT", num: true }, { id: "raw", label: "เงินภาษี", num: true }, { id: "rate", label: "Rate", num: true }, { id: "amt", label: "ยอด", num: true },
+  { id: "exp", label: "ใช้ได้ถึง" }, { id: "row", label: "แถวไฟล์" },
+  { id: "tcode", label: "Tax Code" }, { id: "ref", label: "Invoice Ref." }, { id: "bu", label: "BU" },
+];
+const DEFAULT_COLS = BASE_COLS.map((c) => c.id).filter((id) => id !== "bu");
+function DetailTable({ set, rate, label, target, hdr, cols, invLabel }) {
+  const wrapRef = React.useRef(null);
+  const [selSum, setSelSum] = React.useState(null);
+  const [selRect, setSelRect] = React.useState(null);
+  React.useEffect(() => { // ลากคลุมตัวเลขในตาราง → รวมยอดให้ (เหมือนแถบสถานะ Excel)
+    let t = null;
+    const cellOf = (n) => { const el = n && (n.nodeType === 3 ? n.parentElement : n); return el && el.closest ? el.closest("td[data-r]") : null; };
+    const calc = () => {
+      const sel = window.getSelection && window.getSelection();
+      const root = wrapRef.current;
+      if (!sel || sel.isCollapsed || !root || !sel.rangeCount || !root.contains(sel.getRangeAt(0).commonAncestorContainer)) { setSelSum(null); setSelRect(null); return; }
+      const a = cellOf(sel.anchorNode), f = cellOf(sel.focusNode);
+      if (!a || !f) { setSelSum(null); setSelRect(null); return; }
+      const r1 = Math.min(+a.dataset.r, +f.dataset.r), r2 = Math.max(+a.dataset.r, +f.dataset.r), c1 = Math.min(+a.dataset.c, +f.dataset.c), c2 = Math.max(+a.dataset.c, +f.dataset.c);
+      const vals = [];
+      root.querySelectorAll("td[data-num]").forEach((td) => {
+        const r = +td.dataset.r, c = +td.dataset.c;
+        if (r < r1 || r > r2 || c < c1 || c > c2) return;
+        const txt = td.textContent.trim().replace(/,/g, "");
+        if (/^-?\d+(\.\d+)?$/.test(txt)) vals.push(Number(txt));
+      });
+      setSelRect({ r1, r2, c1, c2 });
+      if (!vals.length) { setSelSum(null); return; }
+      const total = vals.reduce((x, y) => x + y, 0);
+      setSelSum({ n: vals.length, sum: round2(total), avg: round2(total / vals.length), min: Math.min(...vals), max: Math.max(...vals) });
+    };
+    const onChange = () => { clearTimeout(t); t = setTimeout(calc, 80); };
+    document.addEventListener("selectionchange", onChange);
+    return () => { clearTimeout(t); document.removeEventListener("selectionchange", onChange); };
+  }, []);
+  const rows = set.flatMap((u) => u.rows);
+  const sum = (k) => round2(rows.reduce((a, x) => a + (Number(x[k]) || 0), 0));
+  const th = { textAlign: "left", fontSize: 12, color: C.mute, fontWeight: 600, padding: "6px 8px", borderBottom: `1px solid ${C.line}`, whiteSpace: "nowrap" };
+  const td = { padding: "7px 8px", borderBottom: `1px solid ${C.line}`, whiteSpace: "nowrap", fontSize: 13 };
+  const total = sum("amt");
+  const all = [...BASE_COLS.map((c) => (c.id === "amt" ? { ...c, label: `ยอด @${rate}%` } : c.id === "inv" && invLabel ? { ...c, label: invLabel } : c)), ...hdr.map((h, i) => ({ id: "o" + i, label: String(h || `คอลัมน์ ${i + 1}`), orig: i }))];
+  const defs = cols.map((id) => all.find((c) => c.id === id)).filter(Boolean).filter((c) => !(c.id === "tax" && !rows.some((x) => x.taxid)));
+  const cell = (c, x, i) => {
+    switch (c.id) {
+      case "inv": return x.inv; case "date": return x.date; case "vendor": return x.vendor;
+      case "tax": return x.taxid ? `${x.taxid} / ${x.vbr || x.ho || "00000"}` : "—";
+      case "pre": return x.pre != null ? fmt(x.pre) : "—"; case "raw": return fmt(x.raw); case "rate": return `${rate}%`; case "amt": return fmt(x.amt);
+      case "exp": return ymStr(x.ym + 6); case "row": return x.r;
+      case "tcode": return x.tcode || "—"; case "ref": return x.ref || "—"; case "bu": return x.bu || "—";
+      default: return x.orig ? fmtCell(toDate(x.orig[c.orig])) : "—";
+    }
+  };
+  const isNum = (c) => c.num || (c.orig != null && rows.length > 0 && rows.every((x) => !x.orig || x.orig[c.orig] == null || typeof x.orig[c.orig] === "number"));
+  const footer = (c) => (c.id === "pre" ? (rows.some((x) => x.pre != null) ? fmt(sum("pre")) : "—") : c.id === "raw" ? fmt(sum("raw")) : c.id === "amt" ? fmt(total) : "");
+  return (
+    <div ref={wrapRef} className="vtb-tbl">
+    <style>{".vtb-tbl td::selection{background:transparent}"}</style>
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ borderCollapse: "collapse", width: "100%" }}>
+        <thead><tr><th style={th}>#</th>{defs.map((c) => <th key={c.id} style={{ ...th, ...(isNum(c) ? { textAlign: "right" } : null) }}>{c.label}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((x, i) => (
+            <tr key={i}><td style={td}>{i + 1}</td>{defs.map((c, ci) => <td key={c.id} data-r={i} data-c={ci} data-num={isNum(c) ? "1" : undefined} style={{ ...td, ...(selRect && i >= selRect.r1 && i <= selRect.r2 && ci >= selRect.c1 && ci <= selRect.c2 ? { background: "#d7eedf" } : null), ...(isNum(c) ? { textAlign: "right" } : null), ...(["inv", "date", "pre", "raw", "rate", "amt", "exp", "row", "tax"].includes(c.id) ? mono : null), ...(c.id === "amt" ? { fontWeight: 700 } : null) }}>{cell(c, x, i)}</td>)}</tr>))}
+          <tr style={{ background: C.soft }}>
+            <td style={td}>รวม {label}<div style={{ color: C.mute, fontSize: 11.5, fontWeight: 400 }}>ผลต่างจากเป้า {fmt(round2(total - target))}</div></td>{defs.map((c) => <td key={c.id} style={{ ...td, ...(isNum(c) ? { textAlign: "right" } : null), ...mono, fontWeight: 700 }}>{footer(c)}</td>)}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    {selSum && (
+      <div style={{ position: "sticky", bottom: 8, marginTop: 8, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", background: "#14213d", color: "white", borderRadius: 10, padding: "8px 14px", fontSize: 13, boxShadow: "0 4px 14px rgba(0,0,0,.25)" }}>
+        <span>ที่เลือก <b>{selSum.n}</b> ช่อง</span>
+        <span>ผลรวม <b style={{ ...mono, fontSize: 15, color: "#7ee0a8" }}>{fmt(selSum.sum)}</b></span>
+        <span style={{ opacity: 0.85 }}>เฉลี่ย <span style={mono}>{fmt(selSum.avg)}</span></span>
+        <span style={{ opacity: 0.85 }}>ต่ำสุด <span style={mono}>{fmt(selSum.min)}</span></span>
+        <span style={{ opacity: 0.85 }}>สูงสุด <span style={mono}>{fmt(selSum.max)}</span></span>
+      </div>)}
+    </div>
+  );
+}
+
+function SwapFinder({ initial, onSaved, hk, onOpenJob }) {
+  const { userName } = useAuth(); // MARKER_VAT_TOOLBOX_DB_DRAFT_V1
+  const wp = React.useMemo(() => workingPeriod(), []);
+  const blank = () => ({ id: String(Date.now()), params: { target: "", rateOld: "100", rateNew: "100", branch: "", bu: "", tcode: "", tol: "0.05" }, sourceFiles: [], stepFiles: [], stepRates: [], extra: [], started: false });
+  const [job, setJob] = React.useState(initial || blank());
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState("");
+  const [note, setNote] = React.useState("");
+  const [sel, setSel] = React.useState(null);   // เดือนที่เลือกใน Timeline
+  const [tab, setTab] = React.useState("out");
+  const set = (patch) => setJob((j) => ({ ...j, ...patch }));
+  const setP = (patch) => setJob((j) => ({ ...j, params: { ...j.params, ...patch } }));
+  const fileMonth = (f) => (f.period != null ? f.period : f.maxYm);
+
+  const readFiles = async (fs) => {
+    setBusy(true); setErr("");
+    try { const out = []; for (const f of fs) out.push(parseWorkbook(await f.arrayBuffer(), f.name)); return out; }
+    catch (e) { setErr(e.message); return []; } finally { setBusy(false); }
+  };
+  const addFiles = async (fs) => { const parsed = await readFiles(fs); if (parsed.length) setJob((j) => ({ ...j, extra: [...(j.extra || []), ...parsed] })); };
+
+  const branches = React.useMemo(() => [...new Set(job.sourceFiles.flatMap((f) => f.branches))].sort(), [job.sourceFiles]);
+  const canRun = job.sourceFiles.length > 0 && Number(job.params.target) > 0;
+  const res = React.useMemo(() => (job.started && canRun ? runChain(job, wp) : null), [job, canRun, wp]);
+
+  // จัดไฟล์เข้าเดือนตาม Period
+  React.useEffect(() => {
+    const ex = job.extra || [];
+    if (!ex.length) return;
+    if (!job.sourceFiles.length) {
+      const minM = Math.min(...ex.map(fileMonth));
+      setJob((j) => ({ ...j, sourceFiles: ex.filter((f) => fileMonth(f) === minM), extra: ex.filter((f) => fileMonth(f) !== minM), started: false }));
+      return;
+    }
+    if (!res) return;
+    const stepFiles = [...job.stepFiles]; const left = []; let moved = false;
+    ex.forEach((f) => { const st = res.steps.find((x) => x.month === fileMonth(f)); if (st) { stepFiles[st.k] = [...(stepFiles[st.k] || []), f]; moved = true; } else left.push(f); });
+    if (moved) setJob((j) => ({ ...j, stepFiles, extra: left }));
+  }, [job.extra, job.sourceFiles, job.stepFiles, res]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // เลือกเดือนเริ่มต้น = ขั้นล่าสุด
+  const steps = res ? res.steps : [];
+  const isStart = sel === "start";
+  const curStep = isStart ? steps[0] || null : steps.find((s) => s.month === sel) || steps[steps.length - 1] || null;
+  React.useEffect(() => { if (curStep && sel !== "start" && curStep.month !== sel) setSel(curStep.month); }, [res]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { if (curStep && tab === "in" && !curStep.inSet) setTab("out"); }, [curStep, tab]);
+
+  const save = () => {
+    const name = `${fmt(job.params.target)} · ${job.params.branch || "ทุกสาขา"} · ${new Date().toLocaleString("th-TH")}`;
+    const jobs = loadJobs().filter((x) => x.id !== job.id);
+    const used = new Set(); steps.forEach((st) => { [...st.out, ...(st.inSet ? st.inSet.set : [])].forEach((u) => u.rows.forEach((x) => used.add(`${x.r}|${x.inv}`))); });
+    const slim = (f) => ({ ...f, rows: f.rows.map((x) => (x.orig && !used.has(`${x.r}|${x.inv}`) ? { ...x, orig: undefined } : x)) });
+    const item = { ...job, sourceFiles: job.sourceFiles.map(slim), stepFiles: job.stepFiles.map((a) => (a || []).map(slim)), extra: (job.extra || []).map(slim), name, savedAt: Date.now(), status: res ? res.status : "draft", lastMonth: steps.length ? ymStr(steps[steps.length - 1].month) : null };
+    // MARKER_VAT_TOOLBOX_DB_DRAFT_V1 -- เก็บลง DB ก่อน (ข้ามเครื่องได้) ถ้าไม่สำเร็จค่อยถอยไปเก็บในเครื่องนี้
+    setNote("กำลังบันทึก…");
+    const batch = String(Date.now());
+    cloudSaveRows(item, userName, batch).then((rowsOk) => cloudSaveJob(item, userName, false, rowsOk ? { rows_batch: batch } : null)).then((cloudOk) => { // MARKER_VAT_TOOLBOX_DRAFT_ROWS_V1
+      if (cloudOk) { saveJobs(jobs.filter((x) => x.id !== item.id)); setNote("บันทึก Draft ลงฐานข้อมูลแล้ว — เปิดทำต่อได้ที่แท็บ 'งานที่บันทึกไว้' (เมื่อ Export แล้วจะถูกลบอัตโนมัติใน " + EXPIRE_DAYS_AFTER_EXPORT + " วัน)"); if (onSaved) onSaved(); return; }
+      jobs.unshift(item);
+      const ok = saveJobs(jobs);
+      setNote(ok ? "บันทึกแล้ว — เปิดทำต่อได้ที่แท็บ 'งานที่บันทึกไว้' ด้านขวาบน (ฐานข้อมูลใช้ไม่ได้ จึงเก็บในเครื่องนี้)" : "บันทึกไม่สำเร็จ (ฐานข้อมูลใช้ไม่ได้ และพื้นที่เบราว์เซอร์เต็ม)");
+      if (ok && onSaved) onSaved();
+    });
+  };
+  const doExport = () => { // MARKER_VAT_TOOLBOX_DB_DRAFT_V1 -- Export แล้วตั้งเวลาลบ Draft ใน 3 วัน
+    exportWorkbook(job, res);
+    const name = job.name || `${fmt(job.params.target)} · ${job.params.branch || "ทุกสาขา"} · ${new Date().toLocaleString("th-TH")}`;
+    const item = { ...job, name, savedAt: job.savedAt || Date.now(), status: res ? res.status : "draft", lastMonth: steps.length ? ymStr(steps[steps.length - 1].month) : null };
+    cloudSaveJob(item, userName, true).then((ok) => {
+      const exp = new Date(Date.now() + EXPIRE_DAYS_AFTER_EXPORT * 86400e3).toLocaleDateString("th-TH");
+      if (ok) { setNote("Export แล้ว — Draft นี้จะถูกลบอัตโนมัติวันที่ " + exp); if (onSaved) onSaved(); }
+      else { const jl = loadJobs().map((x) => (x.id === job.id ? { ...x, expiresAt: Date.now() + EXPIRE_DAYS_AFTER_EXPORT * 86400e3 } : x)); saveJobs(jl); }
+    });
+  };
+  const fileIn = React.useRef(null);
+  const saveFile = () => { // บันทึกงานเป็นไฟล์ (ไม่จำกัดขนาด เก็บไว้ที่ไหนก็ได้ แล้วเปิดกลับมาทำต่อ)
+    const body = JSON.stringify({ app: "vat-swap-finder", version: 1, savedAt: new Date().toISOString(), job });
+    const url = URL.createObjectURL(new Blob([body], { type: "application/json" }));
+    const a = document.createElement("a"); a.href = url; a.download = `VATSwap_${job.params.target || "job"}_${new Date().toISOString().slice(0, 10)}.vatswap.json`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setNote("บันทึกเป็นไฟล์แล้ว — เก็บไฟล์ .vatswap.json ไว้ แล้วกด 'เปิดงานจากไฟล์' เพื่อทำต่อ");
+  };
+  const loadFile = async (f) => {
+    try {
+      const d = JSON.parse(await f.text());
+      if (!d || d.app !== "vat-swap-finder" || !d.job) throw new Error("ไม่ใช่ไฟล์งานของ VAT Swap Finder");
+      const j = d.job;
+      setJob({ ...blank(), ...j, params: { ...blank().params, ...(j.params || {}) }, sourceFiles: j.sourceFiles || [], stepFiles: j.stepFiles || [], stepRates: j.stepRates || [], extra: j.extra || [], id: String(Date.now()) });
+      setSel(null); setErr(""); setNote(`เปิดงานจากไฟล์ ${f.name} แล้ว`);
+    } catch (e) { setErr(e.message || "เปิดไฟล์งานไม่สำเร็จ"); }
+  };
+  const reset = () => { if (window.confirm("ล้างงานนี้ทั้งหมดและเริ่มใหม่?")) { setJob(blank()); setNote(""); setSel(null); } };
+  const [ftab, setFtab] = React.useState("drop");
+  const [colSel, setColSel] = React.useState(() => { try { const v = JSON.parse(localStorage.getItem(COL_LS) || "null"); return Array.isArray(v) && v.length ? v : DEFAULT_COLS; } catch (e) { return DEFAULT_COLS; } });
+  const [showCols, setShowCols] = React.useState(false);
+  const toggleCol = (id) => setColSel((cur) => { const nx = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]; try { localStorage.setItem(COL_LS, JSON.stringify(nx)); } catch (e) { /* ไม่เป็นไร */ } return nx; });
+  const allFiles = job.sourceFiles.concat(...job.stepFiles.map((a) => a || []), job.extra || []);
+  const buOpts = [...new Set(allFiles.flatMap((f) => Object.keys((f.meta && f.meta.buCodes) || {})))].filter((b) => b !== "-").sort();
+  const tcOpts = [...new Set(allFiles.flatMap((f) => { const m = (f.meta && f.meta.buCodes) || {}; return job.params.bu ? m[job.params.bu] || [] : Object.values(m).flat(); }))].sort();
+  const hasTc = allFiles.some((f) => f.meta && f.meta.buCodes && Object.keys(f.meta.buCodes).length);
+  const metaAny = (job.sourceFiles.concat(...job.stepFiles.map((a) => a || []), job.extra || []).find((f) => f.meta) || {}).meta || {};
+  const hdrAll = metaAny.hdr || [];
+  const invLabel = metaAny.invHdr || "";
+  const fileRows = [
+    ...job.sourceFiles.map((f, i) => ({ name: f.name, period: f.period != null ? ymStr(f.period) : "ไม่มี", rows: f.rows.length, status: "ต้นทาง", remove: () => set({ sourceFiles: job.sourceFiles.filter((_, j) => j !== i), started: false }) })),
+    ...steps.flatMap((s) => (s.files || []).map((f, i) => ({ name: f.name, period: ymStr(fileMonth(f)), rows: f.rows.length, status: `ใช้ใน ${ymStr(s.month)}`, remove: () => { const sf = [...job.stepFiles]; sf[s.k] = sf[s.k].filter((_, j) => j !== i); set({ stepFiles: sf }); } }))),
+    ...(job.extra || []).map((f, i) => ({ name: f.name, period: ymStr(fileMonth(f)), rows: f.rows.length, status: "รอเดือนที่รองรับ", wait: true, remove: () => set({ extra: job.extra.filter((_, j) => j !== i) }) })),
+  ];
+  const done = res && res.status === "done";
+  const waitLatest = !!(res && res.status === "need-file" && steps.length && steps[steps.length - 1].month >= wp); // รอไฟล์ Period ล่าสุด (เดือนยังไม่ปิด) → Export ได้
+  const canExport = done || waitLatest;
+  const target = Number(job.params.target) || 0;
+  const dis = !job.sourceFiles.length;
+
+  const stateOf = (s) => (s.state === "match" ? ["MATCH", C.gl, C.g] : s.state === "nomatch" ? ["NOT MATCH", "#fdecea", C.bad] : ["รอ Input", "#fff1dc", C.warn]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* แถวบน: เงื่อนไข + จุดโยนไฟล์ */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(340px,1fr))", gap: 16 }}>
+        <div style={card}>
+          <Lbl>ตั้งเงื่อนไข</Lbl>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(135px,1fr))", gap: 12, opacity: dis ? 0.6 : 1 }}>
+            <div><Lbl>ยอด VAT</Lbl><input style={{ ...inp, ...mono }} inputMode="decimal" value={job.params.target} disabled={dis} placeholder="เช่น 500" onChange={(e) => setP({ target: e.target.value.replace(/,/g, "") })} /></div>
+            <div><Lbl>Rate เดิม %</Lbl><input style={{ ...inp, ...mono }} inputMode="decimal" value={job.params.rateOld} disabled={dis} onChange={(e) => setP({ rateOld: e.target.value })} /></div>
+            <div><Lbl>Rate ใหม่ %</Lbl><input style={{ ...inp, ...mono }} inputMode="decimal" value={job.params.rateNew} disabled={dis} onChange={(e) => setP({ rateNew: e.target.value })} /></div>
+            <div><Lbl>สาขา</Lbl><select style={inp} value={job.params.branch} disabled={dis} onChange={(e) => setP({ branch: e.target.value })}><option value="">ทุกสาขา</option>{branches.map((b) => <option key={b} value={b}>{b}</option>)}</select></div>
+            {hasTc && <div><Lbl>BU</Lbl><select style={inp} value={job.params.bu} disabled={dis} onChange={(e) => setP({ bu: e.target.value, tcode: "" })}><option value="">ทุก BU</option>{buOpts.map((b) => <option key={b} value={b}>{b}</option>)}</select></div>}
+            {hasTc && <div><Lbl>Tax Code</Lbl><select style={inp} value={job.params.tcode} disabled={dis} onChange={(e) => setP({ tcode: e.target.value })}><option value="">ทุก Tax Code</option>{tcOpts.map((b) => <option key={b} value={b}>{b}</option>)}</select></div>}
+            <div><Lbl>ต่าง ±</Lbl><input style={{ ...inp, ...mono }} inputMode="decimal" value={job.params.tol} disabled={dis} onChange={(e) => setP({ tol: e.target.value })} /></div>
+          </div>
+          <div style={{ fontSize: 12, color: C.mute, marginTop: 10 }}>เดือนปลายทาง = Working Period เสมอ (ตอนนี้ {ymStr(wp)}) · ใบกำกับใช้ได้ถึงเดือนที่ลง + 6</div>
+          <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+            <button type="button" style={btn(true, !canRun)} disabled={!canRun} onClick={() => set({ started: true })}>{job.started ? "คำนวณใหม่" : "หายอด"}</button>
+            <button type="button" style={btn(false, dis)} disabled={dis} onClick={save}>บันทึก</button>
+            <button type="button" style={btn(false, !canExport)} disabled={!canExport} title={canExport ? "" : "Export ได้เมื่อถึงเดือนปัจจุบัน (Working Period) แล้วเท่านั้น"} onClick={doExport}>Export</button>
+            <button type="button" style={btn(false, dis)} disabled={dis} onClick={saveFile} title="ดาวน์โหลดงานนี้เป็นไฟล์เก็บไว้">บันทึกเป็นไฟล์</button>
+            <button type="button" style={btn(false)} onClick={() => fileIn.current && fileIn.current.click()}>เปิดงานจากไฟล์</button>
+            <input ref={fileIn} type="file" accept=".json,.vatswap.json" style={{ display: "none" }} onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) loadFile(f); }} />
+            <button type="button" style={btn(false)} onClick={reset}>เริ่มใหม่</button>
+          </div>
+          {note && <div style={{ fontSize: 12.5, color: C.ok, marginTop: 8 }}>{note}</div>}
+        </div>
+
+        <div style={{ ...card, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "inline-flex", alignSelf: "flex-start", background: "#eaf1ed", borderRadius: 10, padding: 3, gap: 2 }}>
+            {[["drop", "จุดโยนไฟล์ Input"], ["list", `ไฟล์ List (${fileRows.length})`], ["saved", "งานที่บันทึกไว้"]].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setFtab(k)} style={{ border: 0, borderRadius: 8, padding: "6px 14px", fontFamily: "inherit", fontSize: 13, fontWeight: 600, cursor: "pointer", background: ftab === k ? "white" : "none", color: ftab === k ? C.text : C.mute, boxShadow: ftab === k ? "0 1px 3px rgba(0,0,0,.15)" : "none" }}>{l}</button>))}
+          </div>
+          {ftab === "saved" ? (
+            <div style={{ maxHeight: 260, overflowY: "auto" }}><History flat refreshKey={hk} onOpen={onOpenJob} /></div>
+          ) : ftab === "drop" ? (
+            <>
+              <Dropzone onFiles={addFiles} busy={busy} hasFiles={job.sourceFiles.length > 0} />
+            </>
+          ) : (
+            <div style={{ overflow: "auto", maxHeight: 260 }}>
+              {fileRows.length === 0 ? <div style={{ color: C.mute, fontSize: 13, padding: "10px 0" }}>ยังไม่มีไฟล์ — โยนไฟล์ที่แท็บ "จุดโยนไฟล์ Input"</div> : (
+                <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }}>
+                  <thead><tr>{["#", "ชื่อไฟล์", "Period", "แถว", "สถานะ", ""].map((h) => <th key={h} style={{ textAlign: "left", padding: "5px 8px", color: C.mute, fontWeight: 600, borderBottom: `1px solid ${C.line}`, whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>{fileRows.map((x, i) => (
+                    <tr key={i}>
+                      <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}>{i + 1}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}`, wordBreak: "break-all" }}>{x.name}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}`, ...mono }}>{x.period}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}`, ...mono, textAlign: "right" }}>{x.rows.toLocaleString()}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}`, color: x.wait ? C.warn : C.ok, whiteSpace: "nowrap" }}>{x.status}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: `1px solid ${C.line}` }}><button type="button" onClick={x.remove} style={{ border: "none", background: "none", color: C.bad, cursor: "pointer", fontFamily: "inherit" }}>ลบ</button></td>
+                    </tr>))}</tbody>
+                </table>)}
+            </div>
+          )}
+          {err && <div style={{ color: C.bad, fontSize: 13, background: "#fdf1f0", padding: "8px 12px", borderRadius: 8 }}>{err}</div>}
+        </div>
+      </div>
+
+      {/* Timeline */}
+      <div style={card}>
+        <Lbl>Timeline · คลิกเดือนเพื่อดูใน Monitor</Lbl>
+        {!res ? <div style={{ color: C.mute, fontSize: 13, padding: "10px 0" }}>โยนไฟล์ Input กรอกยอด แล้วกด "หายอด" — เดือนที่ต้องสลับจะขึ้นที่นี่</div> : (
+          <div style={{ display: "flex", overflowX: "auto", padding: "6px 4px 2px" }}>
+            <button type="button" onClick={() => { setSel("start"); setTab("out"); }} style={{ flex: "1 0 130px", position: "relative", textAlign: "center", cursor: "pointer", border: 0, background: "none", fontFamily: "inherit", padding: "0 4px", color: C.text }}>
+              <span style={{ position: "relative", zIndex: 1, display: "block", width: 22, height: 22, borderRadius: "50%", margin: "0 auto 6px", boxSizing: "border-box", background: C.g, border: `3px solid ${C.g}` }} />
+              <span style={{ ...mono, display: "inline-block", padding: "1px 8px", fontWeight: 700, fontSize: 13, borderRadius: 6, background: isStart ? C.gl : "transparent" }}>{ymStr(res.P0)}</span><br />
+              {pill("เริ่มต้น · เลือก Out", C.gl, C.g)}
+            </button>
+            {steps.map((s, idx) => {
+              const [t, bg, fg] = stateOf(s); const on = !isStart && curStep && curStep.month === s.month;
+              return (
+                <button key={s.k} type="button" onClick={() => setSel(s.month)} style={{ flex: "1 0 130px", position: "relative", textAlign: "center", cursor: "pointer", border: 0, background: "none", fontFamily: "inherit", padding: "0 4px", color: C.text }}>
+                  {<span style={{ position: "absolute", top: 11, left: "-50%", right: "50%", height: 3, background: C.g }} />}
+                  <span style={{ position: "relative", zIndex: 1, display: "block", width: 22, height: 22, borderRadius: "50%", margin: "0 auto 6px", boxSizing: "border-box", background: s.state === "match" ? C.g : "white", border: `3px solid ${s.state === "nomatch" ? C.bad : C.g}`, boxShadow: s.state === "need-file" ? `0 0 0 4px ${C.gl}` : "none" }} />
+                  <span style={{ ...mono, display: "inline-block", padding: "1px 8px", fontWeight: 700, fontSize: 13, borderRadius: 6, background: on ? C.gl : "transparent" }}>{ymStr(s.month)}</span><br />
+                  {pill(t, bg, fg)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {res && <div style={{ fontSize: 12.5, marginTop: 8, color: res.status === "done" ? C.ok : res.status === "need-file" ? C.warn : C.bad }}>{res.message}{done ? " — Export ได้แล้ว" : waitLatest ? " (เดือนนี้ยังไม่ปิด — Export ได้ โดยเดือนล่าสุดจะมีเฉพาะชุด Out)" : ""}</div>}
+      </div>
+
+      {/* Monitor */}
+      {res && curStep && (
+        <div style={card}>
+          <Lbl>Monitor · {isStart ? `เริ่มต้น ${ymStr(res.P0)} (เลือก Out จากไฟล์ต้นทาง · ต้องสลับภายใน ${ymStr(curStep.month)})` : ymStr(curStep.month)}</Lbl>
+          <div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", position: "relative" }}>
+              <div style={{ display: "inline-flex", background: "#eaf1ed", borderRadius: 10, padding: 3, gap: 2, marginBottom: 10, flexWrap: "wrap" }}>
+                {[["out", `Transaction ที่จะเอาออก (Out) · ${curStep.out.length} ใบ`, true], ["in", `Transaction ที่จะเอาเข้า (In) · ${curStep.inSet ? curStep.inSet.set.length : 0} ใบ`, !!curStep.inSet && !isStart]].map(([k, l, en]) => (
+                  <button key={k} type="button" disabled={!en} onClick={() => setTab(k)} style={{ border: 0, borderRadius: 8, padding: "7px 14px", fontFamily: "inherit", fontSize: 13, fontWeight: 600, cursor: en ? "pointer" : "not-allowed", background: tab === k ? "white" : "none", color: tab === k ? C.text : C.mute, opacity: en ? 1 : 0.5, boxShadow: tab === k ? "0 1px 3px rgba(0,0,0,.15)" : "none" }}>{l}</button>))}
+              </div>
+              <div style={{ position: "relative", marginBottom: 10 }}>
+                <button type="button" onClick={() => setShowCols((v) => !v)} style={btn(false)}>＋ คอลัมน์ ({colSel.length})</button>
+                {showCols && (
+                  <div style={{ position: "absolute", right: 0, top: "calc(100% + 6px)", zIndex: 30, width: 320, maxHeight: 380, overflowY: "auto", background: "white", border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,.16)", padding: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 8 }}>
+                      <b style={{ color: C.text }}>เลือกคอลัมน์ที่แสดง</b>
+                      <span><button type="button" onClick={() => { setColSel(DEFAULT_COLS); try { localStorage.setItem(COL_LS, JSON.stringify(DEFAULT_COLS)); } catch (e) { /* ไม่เป็นไร */ } }} style={{ border: "none", background: "none", color: C.g, cursor: "pointer", fontFamily: "inherit" }}>ค่าเริ่มต้น</button>
+                        <button type="button" onClick={() => setShowCols(false)} style={{ border: "none", background: "none", color: C.mute, cursor: "pointer", fontFamily: "inherit" }}>ปิด</button></span>
+                    </div>
+                    <div style={{ fontSize: 11.5, color: C.mute, margin: "4px 0" }}>คอลัมน์หลัก</div>
+                    {BASE_COLS.map((c) => <label key={c.id} style={{ display: "flex", gap: 8, fontSize: 13, padding: "2px 0", cursor: "pointer" }}><input type="checkbox" checked={colSel.includes(c.id)} onChange={() => toggleCol(c.id)} />{c.label}</label>)}
+                    <div style={{ fontSize: 11.5, color: C.mute, margin: "10px 0 4px" }}>คอลัมน์จากไฟล์รายงานต้นทาง</div>
+                    {hdrAll.length === 0 ? <div style={{ fontSize: 12, color: C.mute }}>ยังไม่มีข้อมูลคอลัมน์ (โยนไฟล์ใหม่อีกครั้ง)</div> : hdrAll.map((h, i2) => <label key={i2} style={{ display: "flex", gap: 8, fontSize: 13, padding: "2px 0", cursor: "pointer" }}><input type="checkbox" checked={colSel.includes("o" + i2)} onChange={() => toggleCol("o" + i2)} />{String(h || `คอลัมน์ ${i2 + 1}`)}</label>)}
+                  </div>)}
+              </div>
+              </div>
+              {isStart || tab === "out" || !curStep.inSet
+                ? <DetailTable set={curStep.out} rate={curStep.outRate} label="Out" target={target} hdr={hdrAll} cols={colSel.filter((id) => hasTc || (id !== "tcode" && id !== "ref" && id !== "bu"))} invLabel={invLabel} />
+                : <DetailTable set={curStep.inSet.set} rate={curStep.rateIn} label="In" target={target} hdr={hdrAll} cols={colSel.filter((id) => hasTc || (id !== "tcode" && id !== "ref" && id !== "bu"))} invLabel={invLabel} />}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tab: History ────────────────────────────────────────────────────────────
+function History({ onOpen, refreshKey, flat }) {
+  const { userName } = useAuth(); // MARKER_VAT_TOOLBOX_DB_DRAFT_V1
+  const [jobs, setJobs] = React.useState(loadJobs());
+  React.useEffect(() => { // รายการจาก DB + รายการที่เก็บในเครื่อง (ที่ยังไม่ได้ขึ้น DB)
+    let off = false;
+    setJobs(loadJobs());
+    cloudListJobs(userName).then((cl) => { if (off || !cl) return; const ids = new Set(cl.map((x) => x.id)); setJobs([...cl, ...loadJobs().filter((x) => !ids.has(x.id))]); });
+    return () => { off = true; };
+  }, [refreshKey, userName]);
+  const del = (id) => { const j = loadJobs().filter((x) => x.id !== id); saveJobs(j); setJobs((cur) => cur.filter((x) => x.id !== id)); cloudDeleteJob(id); };
+  const openJob = async (j) => { if (j.cloud) { const full = await cloudGetJob(j.id); if (full) onOpen(full); return; } onOpen(j); };
+  if (!jobs.length) return <div style={{ ...(flat ? {} : card), color: "#6b7785", fontSize: 13 }}>ยังไม่มีงานที่บันทึกไว้ (บันทึกจากหน้า VAT Swap Finder · เก็บในเครื่องนี้)</div>;
+  const label = { done: "ครบแล้ว", "need-file": "รอ Input เดือนถัดไป", nomatch: "NOT MATCH", "out-nomatch": "NOT MATCH (Out)", draft: "ฉบับร่าง", error: "ผิดพลาด", running: "-" };
+  return (
+    <div style={flat ? {} : card}>
+      {jobs.map((j) => (
+        <div key={j.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 0", borderTop: `1px solid ${C.line}`, flexWrap: "wrap" }}>
+          <div><div style={{ fontWeight: 600 }}>{j.name}</div><div style={{ fontSize: 12, color: "#6b7785" }}>{label[j.status] || j.status}{j.lastMonth ? ` · ล่าสุดเดือน ${j.lastMonth}` : ""}{j.expiresAt ? ` · จะถูกลบ ${new Date(j.expiresAt).toLocaleDateString("th-TH")}` : ""}</div></div>
+          <div style={{ display: "flex", gap: 8 }}><button type="button" style={btn(true)} onClick={() => openJob(j)}>เปิดทำต่อ</button><button type="button" style={btn(false)} onClick={() => del(j.id)}>ลบ</button></div>
+        </div>))}
+    </div>
+  );
+}
+
+
+export default function VatToolbox() {
+  const [resume, setResume] = React.useState(null);
+  const [mountKey, setMountKey] = React.useState(0);
+  const [hk, setHk] = React.useState(0);
+  React.useEffect(() => { // เปิดงานที่เลือกจาก Flyout เมนูซ้าย
+    const pick = () => {
+      let id = null; try { id = localStorage.getItem("vat_toolbox_open_job"); localStorage.removeItem("vat_toolbox_open_job"); } catch (e) { id = null; }
+      if (id === null) return;
+      const j = id ? loadJobs().find((x) => x.id === id) : null;
+      if (id && !j) { cloudGetJob(id).then((full) => { setResume(full ? { ...full, extra: full.extra || [] } : null); setMountKey((x) => x + 1); }); return; } // MARKER_VAT_TOOLBOX_DB_DRAFT_V1 -- Draft อยู่ใน DB
+      setResume(j ? { ...j, extra: j.extra || [] } : null); setMountKey((x) => x + 1);
+    };
+    pick(); window.addEventListener("vat-toolbox-open", pick);
+    return () => window.removeEventListener("vat-toolbox-open", pick);
+  }, []);
+  return (
+    <div style={{ padding: "20px 24px 40px", width: "100%", boxSizing: "border-box", color: C.text, display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ background: "white", border: `1px solid ${C.line}`, borderLeft: "4px solid #0f766e", borderRadius: 14, padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, color: "#0f766e" }}>VAT CONTROLLER</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: "#14213d", lineHeight: 1.2 }}>VAT <span style={{ color: "#0f766e" }}>Swap Finder</span></div>
+          <div style={{ fontSize: 12, color: C.mute, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span><span style={{ color: "#1e8e4a" }}>●</span> Toolbox</span><span>|</span>
+            <span>Period: {ymStr(workingPeriod())}</span><span>|</span>
+            <span>อัปเดตล่าสุด: {new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}</span>
+          </div>
+        </div>
+        <div style={{ fontSize: 13, color: "#14213d", textAlign: "right" }}>
+          <div>{new Date().toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
+          <div style={{ fontSize: 11.5, color: C.mute, marginTop: 4 }}>คำนวณในเบราว์เซอร์ · ไฟล์ไม่ถูกส่งออกจากเครื่อง</div>
+        </div>
+      </div>
+      <SwapFinder key={mountKey} initial={resume} hk={hk} onSaved={() => setHk((x) => x + 1)} onOpenJob={(j) => { setResume({ ...j, extra: j.extra || [] }); setMountKey((x) => x + 1); }} />
+    </div>
+  );
+}

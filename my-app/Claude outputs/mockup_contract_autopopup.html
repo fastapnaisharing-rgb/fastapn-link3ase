@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Popup สัญญาอัตโนมัติ</title>
+<style>
+body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#e9ecf1;margin:0;padding:24px;color:#222}
+h3{margin:0 0 8px;font-size:14px;color:#1a3a5c}.note{font-size:12px;color:#666;line-height:1.7;margin:0 0 14px}
+.stage{position:relative;max-width:900px;height:520px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.15)}
+.hd{padding:12px 18px;border-bottom:1px solid #eee;font-size:14px;font-weight:600;color:#1a3a5c}
+.row{display:flex;gap:10px;padding:14px 18px;font-size:12px}
+.f{flex:1}.f label{display:block;font-size:10px;color:#888;margin-bottom:3px}
+.f div{border:1px solid #e0c200;background:#fffde7;border-radius:6px;padding:7px 9px}
+.f.ct div{border-color:#e67e22;background:#FFF3E0}
+.tag{display:inline-block;background:#e67e22;color:#fff;border-radius:8px;padding:0 5px;font-size:8px;margin-left:4px}
+.dim{position:absolute;inset:0;background:rgba(15,30,50,.45);display:flex;align-items:center;justify-content:center}
+.pop{background:#fff;border-radius:12px;width:640px;box-shadow:0 20px 60px rgba(26,58,92,.3);overflow:hidden}
+.pop .t{padding:14px 18px;border-bottom:1px solid #f0f0f0}
+.pop .t b{font-size:13px;color:#1a3a5c;font-weight:600}.pop .t small{display:block;font-size:11px;color:#aaa;margin-top:2px}
+.ban{margin-top:6px;display:inline-block;font-size:11px;font-weight:600;color:#a35a00;background:#FFF3E0;border:.5px solid #e67e22;border-radius:6px;padding:3px 8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#1a3a5c;color:#fff;font-size:10px;text-align:left;padding:8px 12px;letter-spacing:.04em}
+td{padding:10px 12px;border-bottom:1px solid #f3f4f6}
+tr.c:hover td{background:#eef3fb;cursor:pointer}
+.ib{background:#fff1d6;color:#b26a00;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600}
+.ft{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;font-size:11px;color:#999;background:#fafbfc}
+.btn{border:1px solid #ccc;border-radius:7px;padding:5px 16px;color:#555;background:#fff}
+</style></head><body>
+<h3>Mockup — Popup สัญญาเด้งอัตโนมัติ (ใน Invoice Detail)</h3>
+<p class="note">เมื่อกรอกช่องสีเหลืองครบ (Supplier / สาขา / Item Code ที่เป็น CT) ระบบตรวจ Contract List ของ Supplier นี้ ถ้าพบสัญญา Popup จะเด้งขึ้นมาเอง<br>
+คลิกแถวสัญญาแถวไหนก็ได้ = เลือกทันที (ใส่ Back Description + เลือกสาขาตาม Auto IB) · ปิด Popup = ข้ามได้ ไม่เด้งซ้ำชุดเดิม (ข้อมูลในภาพเป็นของ LKS-T0051 จริงจาก Contract List)</p>
+<div class="stage">
+  <div class="hd">Invoice Detail · Supplier LKS-T0051</div>
+  <div class="row">
+    <div class="f"><label>Supplier code *</label><div>T0051</div></div>
+    <div class="f"><label>Branch no *</label><div>5898AB</div></div>
+    <div class="f ct"><label>Item Code * (SPI-1 = CT)</label><div>RENT-01 <span class="tag">CT</span></div></div>
+    <div class="f"><label>Amount *</label><div>45,000.00</div></div>
+  </div>
+  <div class="dim">
+    <div class="pop">
+      <div class="t"><b>Contract / Serial Code</b><small>2 รายการ · LKS-T0051</small>
+        <span class="ban">ตรวจพบว่า Supplier นี้ผูกสัญญาอยู่ กรุณาเลือกสัญญา</span></div>
+      <table>
+        <tr><th>VENDOR CODE</th><th>SERIAL CODE</th><th>CONTRACT RUN</th><th>AUTO IB</th></tr>
+        <tr class="c"><td>LKS-T0051</td><td>RB-ม005</td><td>D1</td><td><span class="ib">5898AB</span></td></tr>
+        <tr class="c"><td>LKS-T0051</td><td>RB-ม004</td><td>D2</td><td><span class="ib">58981X</span></td></tr>
+      </table>
+      <div class="ft"><span>คลิกแถวเพื่อเลือก</span><span class="btn">ปิด (ข้าม)</span></div>
+    </div>
+  </div>
+</div>
+</body></html>

@@ -64,7 +64,7 @@ function StatusDropdown({ value, onChange, options, style }) {
 
 // MARKER_DATEFIELD_BE_COMPARE_V1 -- ช่องวันที่แบบพิมพ์ได้ + ปฏิทินที่ทำเอง: ระดับปีโชว์เลข พ.ศ. กำกับข้าง ค.ศ. (เลขเปรียบเทียบเฉยๆ ไม่มีผลกับค่า) ค่าที่ส่งออกยังเป็น ISO YYYY-MM-DD (ค.ศ.) เหมือน <input type="date"> เดิม
 // MARKER_DATEFIELD_PASTE_THAI_BE_V1 -- Paste/พิมพ์วันที่ไทย (เช่น "1 เม.ย.60", "16 ม.ค.60", "1 เมษายน 2560", "01/04/2560") แล้วแปลงเป็น ค.ศ. (yyyy-mm-dd) ให้เอง
-const TH_MONTHS = { 'มค': 1, 'มกราคม': 1, 'กพ': 2, 'กุมภาพันธ์': 2, 'มีค': 3, 'มีนาคม': 3, 'เมย': 4, 'เมษายน': 4, 'พค': 5, 'พฤษภาคม': 5, 'มิย': 6, 'มิถุนายน': 6, 'กค': 7, 'กรกฎาคม': 7, 'สค': 8, 'สิงหาคม': 8, 'กย': 9, 'กันยายน': 9, 'ตค': 10, 'ตุลาคม': 10, 'พย': 11, 'พฤศจิกายน': 11, 'ธค': 12, 'ธันวาคม': 12 };
+const TH_MONTHS = { 'มค': 1, 'มกราคม': 1, 'กพ': 2, 'กุมภาพันธ์': 2, 'มีค': 3, 'มีนาคม': 3, 'เมย': 4, 'เมบ': 4, 'เมษายน': 4, 'พค': 5, 'พฤษภาคม': 5, 'มิย': 6, 'มิถุนายน': 6, 'กค': 7, 'กรกฎาคม': 7, 'สค': 8, 'สิงหาคม': 8, 'กย': 9, 'กันยายน': 9, 'ตค': 10, 'ตุลาคม': 10, 'พย': 11, 'พฤศจิกายน': 11, 'ธค': 12, 'ธันวาคม': 12 };
 function parseThaiDateToIso(raw) {
   const pad2 = (n) => String(n).padStart(2, '0');
   const t = String(raw || '').replace(/[๐-๙]/g, (c) => String(c.charCodeAt(0) - 0x0E50)).replace(/\u00a0/g, ' ').trim();
@@ -80,7 +80,7 @@ function parseThaiDateToIso(raw) {
     if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
     return `${y}-${pad2(mo)}-${pad2(d)}`;
   };
-  let m = /^(\d{1,2})\s*([^\d\s\/.\-]+(?:\.[^\d\s\/.\-]+)*\.?)\s*(\d{2}|\d{4})$/.exec(t); // 1 เม.ย.60 | 1 เมษายน 2560
+  let m = /^(\d{1,2})\s*((?:[^\d\/.\-]|\s)+?(?:\.(?:[^\d\/.\-]|\s)+?)*\.?)\s*(\d{2}|\d{4})$/.exec(t); // 1 เม.ย.60 | 1 เมษายน 2560
   if (m) {
     const mo = TH_MONTHS[m[2].replace(/[.\s]/g, '')];
     if (mo) return build(+m[1], mo, m[3]);
@@ -88,6 +88,25 @@ function parseThaiDateToIso(raw) {
   m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t); // 01/04/2560 (ปี พ.ศ. = รูปแบบไทย วัน/เดือน/ปี)
   if (m && +m[3] >= 2400) return build(+m[1], +m[2], m[3]);
   return null;
+}
+// MARKER_BRANCH_IMPORT_INACTIVE_DATE_NORMALIZE_V1 -- Import Branch: แปลง Inactive Date (ไทย "19 ธ.ค.59" / Excel serial / dd/mm/yyyy) เป็น yyyy-mm-dd ก่อนเข้า Preview และแสดงเป็น dd-mmm-yy
+function normInactiveDateImport(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const pad2 = (n) => String(n).padStart(2, '0');
+  if (v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${pad2(v.getMonth() + 1)}-${pad2(v.getDate())}`;
+  if (typeof v === 'number' && v > 20000 && v < 80000) { const d = new Date(Math.round((v - 25569) * 86400000)); return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; }
+  const t = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const th = parseThaiDateToIso(t);
+  if (th) return th;
+  const m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t); // dd/mm/yyyy (ค.ศ.)
+  if (m && +m[3] < 2400) { const d = new Date(+m[3], +m[2] - 1, +m[1]); if (d.getMonth() === +m[2] - 1) return `${m[3]}-${pad2(+m[2])}-${pad2(+m[1])}`; }
+  return t;
+}
+function fmtInactiveDisp(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+  if (!m) return String(v ?? '');
+  return `${m[3]}-${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+m[2] - 1]}-${m[1].slice(2)}`;
 }
 function DateFieldBE({ value, onChange, disabled, style }) {
   // MARKER_BUSINESSUNIT_DATEFIELD_NATIVE_LOOK_BE_V1 -- ปฏิทินหน้าตาเหมือนของ Browser (วัน: ลูกศร ↑↓ + Clear/Today ; เดือน/ปี: รายการปีแถบเทา กางเดือนใต้ปีที่เลือก) แต่แสดงเลข พ.ศ. ข้างทุกปี ; ค่าที่เก็บเป็น ค.ศ. (YYYY-MM-DD) เหมือนเดิม
@@ -398,16 +417,16 @@ function ImportPreviewModal({ show, onClose, onConfirm, importing, previewRows, 
                 return (
                   <tr key={i} style={{ background: rowBg, opacity: row._status === 'nochange' ? 0.65 : 1 }}>
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0' }}>{statusTag(row._status)}</td>
-                    {displayFields.map(f => <td key={f} title={String(row[f] ?? '')} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: showAll ? '260px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', background: (row._missingKeys || []).includes(f) ? '#FCEBEB' : undefined, color: String(row[f] ?? '').trim() ? undefined : '#bbb' }}>{String(row[f] ?? '') || '-'}</td>)}
+                    {displayFields.map(f => <td key={f} title={String(row[f] ?? '')} style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', maxWidth: showAll ? '260px' : '180px', overflow: 'hidden', textOverflow: 'ellipsis', background: (row._missingKeys || []).includes(f) ? '#FCEBEB' : undefined, color: String(row[f] ?? '').trim() ? undefined : '#bbb' }}>{(f === 'Inactive Date' ? fmtInactiveDisp(row[f]) : String(row[f] ?? '')) || '-'}</td>)}
                     <td style={{ padding: '7px 10px', borderBottom: '0.5px solid #f0f0f0', verticalAlign: 'top' }}>
                       {row._status === 'update' && row._changes?.length > 0 ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                           {row._changes.map((c, ci) => (
                             <div key={ci} style={{ fontSize: '10px', background: '#f0f7ff', padding: '2px 6px', borderRadius: '4px', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
                               <span style={{ color: '#555', fontWeight: '500' }}>{c.field}:</span>
-                              <span style={{ color: '#791F1F', textDecoration: 'line-through' }}>{c.old || '-'}</span>
+                              <span style={{ color: '#791F1F', textDecoration: 'line-through' }}>{(c.field === 'Inactive Date' ? fmtInactiveDisp(c.old) : c.old) || '-'}</span>
                               <span style={{ color: '#888' }}>→</span>
-                              <span style={{ color: '#27500A', fontWeight: '500' }}>{c.new || '-'}</span>
+                              <span style={{ color: '#27500A', fontWeight: '500' }}>{(c.field === 'Inactive Date' ? fmtInactiveDisp(c.new) : c.new) || '-'}</span>
                             </div>
                           ))}
                         </div>
@@ -615,7 +634,9 @@ const branchFillFromCompany = (f) => {
   if (blank(n['BU-TaxID']) && !blank(c['TAX ID'])) n['BU-TaxID'] = String(c['TAX ID']).trim();
   if (blank(n['%'])) { const p = branchCompanyPct(n['BU-TaxID']); if (p) n['%'] = p; }
   const seg = String(c['SEGMENT3'] || '').trim(); const eng = String(c['ENGLISH COMPANY NAME'] || '').trim();
-  if (blank(n['Simple Company']) && seg && eng) n['Simple Company'] = `${seg}-${eng}`;
+  const cSimple = String(c['Simple Company'] || '').trim(); // MARKER_BU_SIMPLE_COMPANY_FIELD_V1 -- ค่าที่กรอกใน Company Info มาก่อน
+  if (blank(n['Simple Company']) && cSimple) n['Simple Company'] = cSimple;
+  else if (blank(n['Simple Company']) && seg && eng) n['Simple Company'] = `${seg}-${eng}`;
   return n;
 };
 // MARKER_BRANCH_IMPORT_AUTOFILL_V1 -- Import Template: เติมช่องที่ว่างให้อัตโนมัติ (เฉพาะ Branch Code ใหม่ ไม่แตะสาขาที่มีใน DB แล้ว)
@@ -630,6 +651,21 @@ const autofillBranchImportRows = (rows, existing) => {
     if (!code || have.has(code)) return r;
     const n = { ...r };
     if (blank(n['status'])) n['status'] = 'Active'; // MARKER_BRANCH_STATUS_DEFAULT_ACTIVE_V1
+    // MARKER_BRANCH_IMPORT_SIMPLE_BRANCH_FIRST_V1 -- Simple Company: ดึงจาก Branch ก่อน (Head Office รหัสตัด 2 ตัวท้าย+"01" หรือสาขาที่ Company ตรงกัน) แล้วค่อยให้ Company Info เติมช่องที่ยังว่าง
+    if (blank(n['Simple Company'])) {
+      const __ho = code.length >= 3 ? code.slice(0, -2) + '01' : '';
+      const __comp = String(n['Company for Show in Report Display'] || '').trim();
+      const __m = pool.find((b) => __ho && String(b['Branch Code'] || '').trim() === __ho && !blank(b['Simple Company']))
+        || pool.find((b) => __comp && norm(b['Company for Show in Report Display']) === norm(__comp) && !blank(b['Simple Company']));
+      if (__m) n['Simple Company'] = __m['Simple Company'];
+    }
+    // MARKER_SIMPLE_COMPANY_BU_MATCH_V1 -- BU Matching: Branch อื่นที่ BU เดียวกัน -> ค่าที่พบมากที่สุด (ก่อนใช้ Company Info)
+    if (blank(n['Simple Company']) && !blank(n['bu'])) {
+      const __k = norm(n['bu']); const __cnt = new Map();
+      pool.forEach((b) => { if (norm(b['bu']) === __k && !blank(b['Simple Company'])) { const v = String(b['Simple Company']).trim(); __cnt.set(v, (__cnt.get(v) || 0) + 1); } });
+      let __best = ''; let __n = 0; __cnt.forEach((c, v) => { if (c > __n) { __n = c; __best = v; } });
+      if (__best) n['Simple Company'] = __best;
+    }
     Object.assign(n, branchFillFromCompany(n)); // MARKER_BRANCH_FILL_FROM_COMPANY_V1
     if (!blank(n['BU-Branch'])) n['BU-Branch'] = String(n['BU-Branch']).trim().padStart(5, '0');
     const bu = String(n['bu'] || '').trim();
@@ -647,7 +683,7 @@ const autofillBranchImportRows = (rows, existing) => {
   });
 };
 // MARKER_BRANCH_IMPORT_MIN_REQUIRED_V1 -- Import สาขาใหม่: ต้องมีช่องขั้นต่ำครบ (หลังระบบเติมให้แล้ว) ไม่ครบ = ไม่ผ่าน (ไม่ถูก Import) และบอกว่าขาดอะไร
-const BRANCH_IMPORT_REQUIRED = [['Branch Code', 'Branch Code'], ['status', 'Status'], ['Company for Show in Report Display', 'Company for Report'], ['Simple Company', 'Simple Company'], ['bu', 'BU'], ['Group-P', 'Group-P'], ['BU-TaxID', 'BU Tax ID'], ['BU-Branch', 'BU Branch']];
+const BRANCH_IMPORT_REQUIRED = [['Branch Code', 'Branch Code'], ['status', 'Status'], ['Company for Show in Report Display', 'Company for Report'], ['bu', 'BU'], ['Group-P', 'Group-P'], ['BU-TaxID', 'BU Tax ID'], ['BU-Branch', 'BU Branch']];
 // MARKER_BRANCH_REQUIRED_MARK_V1 -- หัวคอลัมน์ใน Excel ที่ลงท้ายด้วย * (ช่องบังคับ) ให้ตัด * ออกก่อน แล้วค่อยจับคู่ชื่อ Field
 const stripReqMark = (rows) => rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [String(k).replace(/\s*\*+\s*$/, '').trim(), v])));
 const markInvalidNewBranchRows = (rows) => rows.map((r) => {
@@ -739,7 +775,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const INFO_COMBO = ['DEPARTMENT','AP GRT Control']; // MARKER_BUSINESSUNIT_INFO_BU_BOOK_PLAIN_INPUT_V1 -- BU / Book เป็นช่องพิมพ์ธรรมดา (เอา Dropdown ออก)
   // MARKER_BUSINESSUNIT_INFO_FORM_REDESIGN_V1
   const INFO_EDIT = [
-    ['bu','BU'],['THAI COMPANY NAME','Thai Company Name'],['ENGLISH COMPANY NAME','English Company Name'],
+    ['bu','BU'],['THAI COMPANY NAME','Thai Company Name'],['ENGLISH COMPANY NAME','English Company Name'],['Simple Company','Simple Company'], // MARKER_BU_SIMPLE_COMPANY_FIELD_V1
     ['bu_code_name','BU Code Name'],['system_bank','System Bank'],
     ['TAX ID','Tax ID'],['PREPARE BY','Prepare By'],['DEPARTMENT','Department'],
     ['COMPANY CODE','Company Code'],['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],
@@ -804,7 +840,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   // MARKER_BUSINESSUNIT_REMOVE_COMBO_MATCH_APCONTROLLER_V1 -- ตรงกับ APController.js (เอา ComboBox ออกหมด)
   const BRANCH_COMBO = [];
   // ── Pattern เดียวกับ APController.js (BRANCH_REQUIRED_KEYS/BRANCH_FIELD_COLOR) ──
-  const BRANCH_REQUIRED_KEYS = ['Branch Code','status','Company for Show in Report Display','Simple Company','bu','Group-P','BU-TaxID','BU-Branch']; // MARKER_BRANCH_SIMPLE_COMPANY_REQUIRED_V1
+  const BRANCH_REQUIRED_KEYS = ['Branch Code','status','Company for Show in Report Display','bu','Group-P','BU-TaxID','BU-Branch']; // MARKER_BRANCH_SIMPLE_COMPANY_REQUIRED_V1 -> ปลดจากช่องบังคับแล้ว (MARKER_BU_SIMPLE_COMPANY_FIELD_V1: ระบบเติมอัตโนมัติถ้าไม่กรอก)
   const BRANCH_FIELD_COLOR = {
     'Branch Code': '#FCF3D5', 'status': '#FCF3D5', 'Company for Show in Report Display': '#FCF3D5', 'Simple Company': '#FCF3D5',
     'bu': '#FCF3D5', 'Group-P': '#FCF3D5', 'BU-TaxID': '#FCF3D5', 'BU-Branch': '#FCF3D5',
@@ -961,11 +997,23 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     INTEGER_FIELDS.forEach(f => {
       if (autoForm[f] === '' || autoForm[f] === undefined) autoForm[f] = null;
     });
+    if (!String(autoForm['Simple Company'] || '').trim() && !infoItems.some(i => Object.prototype.hasOwnProperty.call(i, 'Simple Company'))) delete autoForm['Simple Company']; // MARKER_BU_SIMPLE_COMPANY_FIELD_V1 -- DB ยังไม่มีคอลัมน์ + ช่องว่าง = ไม่ส่ง
     const data = { ...autoForm, ...metaFields };
+    const __origForSimple = infoEditId ? infoItems.find(i => i.id === infoEditId) : null; // MARKER_BU_SIMPLE_COMPANY_APPLY_ALL_V1
     if (infoEditId) {
       const { data: updated, error } = await db.from('company_list').update(data).eq('id', infoEditId).select().single();
       if (error) throw error;
       setInfoItems(prev => prev.map(i => i.id === infoEditId ? { ...i, ...updated } : i));
+      // MARKER_BU_SIMPLE_COMPANY_APPLY_ALL_V1 -- Simple Company ของ BU เปลี่ยน (และไม่ว่าง) -> Apply All ให้ทุก Branch ของ BU นั้นทันที (ไม่ถาม)
+      const __newSimple = String(autoForm['Simple Company'] || '').trim();
+      const __oldSimple = String(__origForSimple?.['Simple Company'] || '').trim();
+      const __buVal = String(autoForm['bu'] || '').trim();
+      if (__newSimple && __newSimple !== __oldSimple && __buVal) {
+        const { error: __bErr } = await db.from('branch_list').update({ 'Simple Company': __newSimple, ...metaFields }).eq('bu', __buVal);
+        if (__bErr) throw __bErr;
+        setBranches(prev => prev.map(b => String(b['bu'] || '').trim() === __buVal ? { ...b, 'Simple Company': __newSimple } : b));
+        try { broadcastWs('branch_list_updated', { bu: __buVal }); } catch (e) { console.error('[broadcast branch_list_updated]', e); }
+      }
     } else {
       const { data: inserted, error } = await db.from('company_list').insert([data]).select().single();
       if (error) throw error;
@@ -1287,7 +1335,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const handleBranchFileChange = (e) => {
     const file = e && e.target ? e.target.files[0] : e; if (!file) return;
     const reader = new FileReader();
-    reader.onload = async (evt) => { try { const cl = await fetchCollection('CompanyList'); if (Array.isArray(cl)) BRANCH_COMPANY_LIST = cl; } catch (e) { /* ใช้ค่าเดิม */ } const wb = XLSX.read(evt.target.result, { type: 'binary' }); let rawRows = stripReqMark(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })).filter((r) => String(r[BRANCH_KEY] || '').trim()).map((r) => ({ ...r, 'Branch Address': cleanBranchAddress(r['Branch Address']) })); rawRows = autofillBranchImportRows(rawRows, branches); /* MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- ข้ามแถวที่ไม่มี Branch Code (แถวอังกฤษที่ต่อใต้) */ setBranchPreviewRows(markInvalidNewBranchRows(buildPreviewRows(rawRows, branches, BRANCH_KEY, BRANCH_FIELDS))); setShowBranchPreview(true); };
+    reader.onload = async (evt) => { try { const cl = await fetchCollection('CompanyList'); if (Array.isArray(cl)) BRANCH_COMPANY_LIST = cl; } catch (e) { /* ใช้ค่าเดิม */ } const wb = XLSX.read(evt.target.result, { type: 'binary' }); let rawRows = stripReqMark(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })).filter((r) => String(r[BRANCH_KEY] || '').trim()).map((r) => ({ ...r, 'Branch Address': cleanBranchAddress(r['Branch Address']), ...(Object.prototype.hasOwnProperty.call(r, 'Inactive Date') ? { 'Inactive Date': normInactiveDateImport(r['Inactive Date']) } : {}) })); rawRows = autofillBranchImportRows(rawRows, branches); /* MARKER_BRANCH_ADDRESS_THAI_ONLY_V1 -- ข้ามแถวที่ไม่มี Branch Code (แถวอังกฤษที่ต่อใต้) */ setBranchPreviewRows(markInvalidNewBranchRows(buildPreviewRows(rawRows, branches, BRANCH_KEY, BRANCH_FIELDS))); setShowBranchPreview(true); };
     reader.readAsBinaryString(file); if (e && e.target) e.target.value = '';
   };
   const [branchDragOver, setBranchDragOver] = useState(false);
@@ -1601,6 +1649,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     [['COMPANY CODE','Company Code'],['BOOK','Book']],
     [['THAI COMPANY NAME','Thai Company Name']],
     [['ENGLISH COMPANY NAME','English Company Name']],
+    [['Simple Company','Simple Company']], // MARKER_BU_SIMPLE_COMPANY_FIELD_V1
     // MARKER_BUSINESSUNIT_ADD_BASE_FIELD_V20
     [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)']], // MARKER_BUSINESSUNIT_INFO_ROW_SWAP_V1
     [['bu_code_name','BU Code Name'],['system_bank','System Bank']],
@@ -1608,7 +1657,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   ] : [
     [['bu','BU'],['TAX ID','Tax ID'],['COMPANY CODE','Company Code'],['BOOK','Book']],
     [['THAI COMPANY NAME','Thai Company Name']],
-    [['ENGLISH COMPANY NAME','English Company Name']],
+    [['ENGLISH COMPANY NAME','English Company Name'],['Simple Company','Simple Company']], // MARKER_BU_SIMPLE_COMPANY_FIELD_V1 -- แบ่งครึ่งแถว English
     [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],['SEGMENT3','Segment3'],['base','Base']], // MARKER_BUSINESSUNIT_INFO_ROW_SWAP_V1
     [['bu_code_name','BU Code Name'],['system_bank','System Bank']],
   ];
@@ -1655,7 +1704,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     const renderRowBox = (fields) => (
       <div style={{ ...boxWrap, display:'grid', gridTemplateColumns:`repeat(${fields.length}, 1fr)` }}>
         {fields.map(([key,label], i) => <div key={key+'_h'} style={headCell(i===fields.length-1)}>{label}{INFO_REQUIRED_KEYS.includes(key) && <span style={{ color:'#e24b4a' }}> *</span>}</div>)}
-        {fields.map(([key,label], i) => <div key={key+'_i'} style={{ ...inputCell(i===fields.length-1), ...(key==='bu_code_name' ? { background:'#DCEAF1' } : INFO_REQUIRED_KEYS.includes(key) ? { background:'#FCF3D5' } : {}) }}>{renderFieldInput(key,label)}</div>)}
+        {fields.map(([key,label], i) => <div key={key+'_i'} style={{ ...inputCell(i===fields.length-1), ...(key==='bu_code_name' ? { background:'#DCEAF1' } : (INFO_REQUIRED_KEYS.includes(key) || key==='Simple Company') ? { background:'#FCF3D5' } : {}) }}>{renderFieldInput(key,label)}</div>)}
       </div>
     );
 

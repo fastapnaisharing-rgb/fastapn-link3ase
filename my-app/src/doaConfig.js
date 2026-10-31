@@ -27,3 +27,8 @@ export const saveDoaClear = (bu, period, items, file_id, status) => call(CLR, { 
 export const reverseDoaClear = (bu, account, keys) => call(`${CLR}/reverse`, { method: 'POST', body: JSON.stringify({ bu, account, keys }) });
 export const listDoaClearDetail = (bu, account) => call(`${CLR}?bu=${encodeURIComponent(bu)}&account=${encodeURIComponent(account)}&detail=1`).then(j => j.items || []); // MARKER_GL_DOA_CLEAR_HISTORY_V1 // MARKER_GL_DOA_CLEAR_REVERSE_V1 -- ยกเลิก Stamp Clear (RVS) ของ Account: ลบแถว Pending/Cleared ที่ยังไม่ถูกย้ายเข้า History
 export const setDoaClearStatus = (bu, account, from, to, keys) => call(`${CLR}/status`, { method: 'POST', body: JSON.stringify({ bu, account, from, to, keys }) }); // MARKER_GL_DOA_CLEAR_STATUS_V1 -- Confirm: Pending->Backup | Release: Backup->Pending
+
+// MARKER_GL_DOA_COVER_CONFIG_V1 -- Cover ของ Reconcile: Type 1/2/3 ระดับ BU + ปรับต่อ Account (ไม่ตั้ง = Default)
+const CVR = `${API_ROOT}/api/file-storage/doa-cover`;
+export const getDoaCover = (bu) => call(`${CVR}?bu=${encodeURIComponent(bu)}`); // { bu_type: 1|2|3|null, accounts: { [acc]: 1|2|3 } }
+export const saveDoaCover = (bu, account, type) => call(CVR, { method: 'POST', body: JSON.stringify({ bu, account: account || '', type }) }); // account ว่าง = ระดับ BU | type null/'default' (เฉพาะ Account) = กลับเป็น Default

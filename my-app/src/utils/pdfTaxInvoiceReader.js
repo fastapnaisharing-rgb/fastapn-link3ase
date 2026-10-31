@@ -36,27 +36,33 @@ export async function extractPdfLines(pdfjsLib, data) {
   const doc = await pdfjsLib.getDocument({ data: new Uint8Array(data), useSystemFonts: true }).promise;
   const lines = [];
   let chars = 0;
-  for (let p = 1; p <= doc.numPages; p++) {
-    const page = await doc.getPage(p);
-    const tc = await page.getTextContent();
-    const rows = [];
-    for (const it of tc.items) {
-      if (!it.str || !it.str.trim()) continue;
-      const y = Math.round(it.transform[5]);
-      const x = it.transform[4];
-      let row = rows.find((r) => Math.abs(r.y - y) <= 3);
-      if (!row) { row = { y, items: [] }; rows.push(row); }
-      row.items.push({ x, str: it.str });
+  const numPages = doc.numPages;
+  try { // MARKER_PDFTAXINV_PERF_V1 -- ต้อง destroy() ทุกไฟล์ ไม่งั้น PDF.js Worker ค้างหน่วยความจำของทุกเอกสารที่เคยเปิด จนช้า/ค้างหลักร้อยไฟล์
+    for (let p = 1; p <= numPages; p++) {
+      const page = await doc.getPage(p);
+      const tc = await page.getTextContent();
+      const rows = [];
+      for (const it of tc.items) {
+        if (!it.str || !it.str.trim()) continue;
+        const y = Math.round(it.transform[5]);
+        const x = it.transform[4];
+        let row = rows.find((r) => Math.abs(r.y - y) <= 3);
+        if (!row) { row = { y, items: [] }; rows.push(row); }
+        row.items.push({ x, str: it.str });
+      }
+      rows.sort((a, b) => b.y - a.y);
+      for (const r of rows) {
+        r.items.sort((a, b) => a.x - b.x);
+        const text = r.items.map((i) => i.str).join('  ');
+        lines.push(text);
+        chars += text.length;
+      }
+      try { page.cleanup(); } catch (_) { /* ignore */ }
     }
-    rows.sort((a, b) => b.y - a.y);
-    for (const r of rows) {
-      r.items.sort((a, b) => a.x - b.x);
-      const text = r.items.map((i) => i.str).join('  ');
-      lines.push(text);
-      chars += text.length;
-    }
+  } finally {
+    try { await doc.destroy(); } catch (_) { /* ignore */ }
   }
-  return { lines, text: lines.join('\n'), numPages: doc.numPages, charCount: chars };
+  return { lines, text: lines.join('\n'), numPages, charCount: chars };
 }
 
 // ── Branch ของผู้ซื้อ/ผู้ขาย จากข้อความรอบ Tax ID ───────────────────
@@ -104,10 +110,12 @@ export const SUPPLIER_TEMPLATES = [
     supplier: { taxId: '0105534051727', branch: '00000' }, // ส่วนหัวระบุ HEADQUARTERS / สำนักงานใหญ่
     detect: (t) => /0105534051727/.test(t) || /MALL BANGKAPI COMPLEX/i.test(t),
     // สาขาผู้ซื้ออยู่ในบรรทัด "ชื่อลูกค้า ... สำนักงานใหญ่" (ตัวไทยเพี้ยนแต่ "ใหญ" ยังอยู่)
-    buyerBranchHint: (t) => (/ชื่อลูกค[^\n]*ใหญ/.test(t) ? '00000' : null),
+    buyerBranchFirst: true, // MARKER_PDFTAXINV_MALL_BRANCH_V1 -- สาขาผู้ซื้ออยู่ท้ายบรรทัด "ชื่อลูกค้า ... สาขาที่ 00046" (อยู่ก่อน Tax ID ของผู้ซื้อ) -> อ่านจากบรรทัดชื่อก่อน
+    buyerBranchHint: (t) => { const ln = (t.match(/ชื่อลูกค[^\n]*\n?[^\n]*/) || [''])[0]; /* สาขาอาจตกไปอยู่บรรทัดถัดไป (Name สาขาที่ 00046) */ const m = ln.match(/สาขา\S*\s*(\d{5})/); if (m) return m[1]; return /ใหญ/.test(ln) ? '00000' : null; },
     extract: (t) => {
       const no = (t.match(/\/\s*No\.\s*([0-9A-Z][0-9A-Z\/-]+)/) || [])[1] || null;
-      const d = t.match(/Date\s+(\d{2})\.(\d{2})\.(\d{4})/);
+      const d = t.match(/Doc\. Date\s+(\d{2})\.(\d{2})\.(\d{4})/) || t.match(/Date\s+(\d{2})\.(\d{2})\.(\d{4})/); // MARKER_PDFTAXINV_MALL_CN_V1 -- ใบลดหนี้ใช้ "Doc. Date"
+      const isCn = /Credit Note/i.test(t) && !/Receipt\/Tax Invoice/.test(t);
       const fiNo = (t.match(/FI No\.\s*(\d+)/) || [])[1] || null;
       const money = (x) => { const neg = /^\(.*\)$/.test(x); const n = toNum(x.replace(/[()]/g, '')); return n === null ? null : (neg ? -n : n); };
       const lines = [];
@@ -116,14 +124,17 @@ export const SUPPLIER_TEMPLATES = [
         if (m) lines.push({ invoiceNo: m[1], amount: money(m[2]), vat: money(m[3]), total: money(m[4]) });
       });
       const pick = (re) => toNum((t.match(re) || [])[1]);
+      const sgn = (v) => (v != null && isCn ? -Math.abs(v) : v); // ใบลดหนี้: ใน Incomplete เป็นแถวติดลบ
+      const vat0 = pick(/\(VAT Amount\)\s+([\d,]+\.\d{2})/) ?? pick(/\(Vat Total\)\s+([\d,]+\.\d{2})/i);
+      const gt0 = pick(/Grand Total\s*:\s*BAHT\)\s+([\d,]+\.\d{2})/i);
       return {
         invoiceNo: no,
         invoiceDate: d ? toIso(d[3], d[2], d[1]) : null,
-        invoiceRef: null, fiNo, lines,
+        invoiceRef: null, fiNo, lines: isCn ? null : lines, creditNote: isCn,
         nonVat: pick(/Total Amount Without VAT\)\s+([\d,]+\.\d{2})/),
-        beforeVat: pick(/Total Amount Before VAT\)\s+([\d,]+\.\d{2})/),
-        vat: pick(/\(VAT Amount\)\s+([\d,]+\.\d{2})/),
-        grandTotal: pick(/Grand Total\s*:\s*BAHT\)\s+([\d,]+\.\d{2})/),
+        beforeVat: isCn ? (vat0 != null && gt0 != null ? sgn(Math.round((gt0 - vat0) * 100) / 100) : null) : pick(/Total Amount Before VAT\)\s+([\d,]+\.\d{2})/),
+        vat: sgn(vat0),
+        grandTotal: sgn(gt0),
       };
     },
   },
@@ -154,8 +165,89 @@ export const SUPPLIER_TEMPLATES = [
   },
 ];
 
+// MARKER_PDFTAXINV_SAPFI_GENERIC_V1 -- แบบฟอร์ม SAP FI ของกลุ่ม (ใบเสร็จรับเงิน/ใบกำกับภาษี + ใบลดหนี้) ใช้ร่วมกันหลายบริษัท (The Mall, ธนบุรี เรียลเอสเตท ฯลฯ)
+// -> ไม่ผูกกับ Tax ID รายใดราย 1 : ผู้ขาย/สาขา/ชื่อ อ่านจากส่วนหัวเอกสาร ส่วนการดึงค่า (เลขที่/วันที่/บรรทัด Invoice/ยอด) ใช้ชุดเดียวกับ The Mall
+(() => {
+  const mall = SUPPLIER_TEMPLATES.find((t) => t.key === 'MALL_BANGKAPI');
+  if (!mall) return;
+  SUPPLIER_TEMPLATES.push({
+    key: 'SAPFI_GENERIC',
+    name: 'SAP FI',
+    supplier: null,
+    skipSupplierTaxIdInBuyer: true,
+    supplierTaxIdLabel: /Tax ID\.?\)?\s*[:：]?\s*(\d{13})/i, // ตัวแรกในเอกสาร = ผู้ขาย (ส่วนหัว "(Tax ID.) 0105…")
+    supplierBranchFn: (t, taxId) => { // ส่วนหัวก่อน Tax ID ผู้ขาย: HEADQUARTERS/สำนักงานใหญ่ = 00000 ; สาขา = เลข 5 หลัก
+      const head = t.slice(0, Math.max(0, t.indexOf(taxId)) + 10);
+      const m = head.match(/(?:สาขา|Branch)[^\d\n]{0,8}(\d{5})/i);
+      if (m) return m[1];
+      return /HEADQUARTERS|HEAD\s*OFFICE|ใหญ/i.test(head) ? '00000' : null;
+    },
+    nameFn: (t) => { const m = t.match(/\n\s*([A-Z][A-Z0-9 .,&()'-]{4,80}(?:CO\.,?\s*LTD\.?|LIMITED|PUBLIC COMPANY LIMITED|CORPORATION))/); return m ? m[1].trim() : null; },
+    detect: (t) => /FI No\./.test(t) && /(Receipt\/Tax Invoice|Credit Note)/i.test(t) && /(Before VAT|Vat Total|VAT Amount)/i.test(t),
+    buyerBranchFirst: mall.buyerBranchFirst,
+    buyerBranchHint: (t) => { // ลองแบบเดิมของ The Mall ก่อน ถ้าไม่ได้ ลองสาขา 1-5 หลักบรรทัดชื่อลูกค้า (เช่น "สาขา 2235" -> 02235)
+      const r = mall.buyerBranchHint(t); if (r) return r;
+      const ln = (t.match(/ชื่อลูกค[^\n]*/) || [''])[0]; const m = ln.match(/สาขา\S*\s*(\d{1,5})(?!\d)/);
+      return m ? m[1].padStart(5, '0') : null;
+    },
+    extract: mall.extract,
+  });
+})();
+
+// MARKER_PDFTAXINV_ITC_RIS_V1 -- แบบฟอร์ม ITC (Intercompany / Inter Branch) ของกลุ่ม : ใช้ร่วมกันทุกบริษัท (ไม่ผูก Tax ID) เช่น RIS ขายให้ CNG
+// -- เลขที่ = มุมขวาบน (ITV17945 / 31587 / W01TA… / S0101TA…) | Invoice Ref. = คอลัมน์ "อ้างถึง" (S0101IN26040751 ; ใบเสร็จอย่างเดียวจะอ้างใบส่งของ W01TA…)
+// -- ยอดแยกบาท/สตางค์เป็นคนละคอลัมน์ ("15,600  00") | ใบส่งของ/ใบกำกับภาษี (W01TA/S0101TA) ไม่มี "อ้างถึง" | ใบเสร็จรับเงินล้วน (VAT 0.00) ไม่ใช่ใบกำกับภาษี
+(() => {
+  const TH_MONTHS = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+  const strip = (x) => String(x || '').replace(/[ัิ-ฺ็-๎]/g, '');
+  const monthNo = (w) => { const k = strip(w); const i = TH_MONTHS.findIndex((m) => strip(m) === k); return i >= 0 ? i + 1 : 0; };
+  const SUP_TAX_RE = /เลขประจ\S*ผ\S*เสียภาษีอากร\s*(\d{13})/; // ผู้ขาย = "…ภาษีอากร 0105…" ส่วนผู้ซื้อ = "…ภาษี 0105…" (ไม่มี อากร)
+  const money2 = (a, b) => (a == null ? null : toNum(String(a).replace(/,/g, '') + '.' + (b || '00')));
+  SUPPLIER_TEMPLATES.push({
+    key: 'ITC',
+    name: 'ITC (Intercompany / Inter Branch)',
+    supplier: null, // ผู้ขายอ่านจากเอกสาร (ใช้ได้กับทุกบริษัทในกลุ่มที่ออกแบบฟอร์มนี้ ไม่ผูกกับ Tax ID รายใด)
+    supplierTaxIdLabel: SUP_TAX_RE,
+    supplierBranchFn: (t, taxId) => {
+      const head = t.slice(0, Math.max(0, t.indexOf(taxId)) + 120);
+      const m = head.match(/สาขาที่\s*(\d{1,5})(?!\d)/);
+      if (m) return m[1].padStart(5, '0');
+      return HQ_RE.test(head) ? '00000' : null;
+    },
+    nameFn: (t) => { const m = t.match(/^\s*(.+?)\s+เลขที่\s+[A-Z0-9]{5,}\s*$/m); return m ? m[1].trim() : null; },
+    // โครงสร้างฟอร์ม: "อ้างถึง/รายการ/จำนวนเงิน" + "ชื่อลูกค้า" + ข้อความกรมสรรพากรท้ายฟอร์ม + ชื่อเอกสารใบเสร็จรับเงิน/ใบกำกับภาษี/ใบส่งของ
+    detect: (t) => /อ[^\n]{0,6}งถึง/.test(t) && /ชื่อลูกค/.test(t) && SUP_TAX_RE.test(t) && /ใบกํากับภาษี|ใบกำกับภาษี|ใบเสร็จรับเงิน/.test(t) && /กรมสรรพากร/.test(t),
+    buyerFn: (t) => { // ผู้ซื้อ = เลข 13 หลักตัวแรกที่ไม่ใช่ของผู้ขาย ; สาขา/ชื่อ จากบรรทัด "ชื่อลูกคา …"
+      const sup = (t.match(SUP_TAX_RE) || [])[1];
+      const all = (t.match(/\d{13}/g) || []).filter((x) => x !== sup);
+      const ln = (t.match(/ชื่อลูกค[^\n]*/) || [''])[0];
+      const m5 = ln.match(/สาขา\S*\s*(\d{1,5})(?!\d)/);
+      const br = m5 ? m5[1].padStart(5, '0') : (HQ_RE.test(ln) ? '00000' : null);
+      const nm = ln.replace(/^ชื่อลูกค\S*\s*/, '').replace(/^[A-Z]{2,5}-[A-Z]*\d+\s*/, '').replace(/\s*สาขา.*$/, '').trim();
+      return { taxId: all[0] || null, branch: br, name: nm };
+    },
+    extract: (t) => {
+      const no = (t.match(/เลขที่\s+([A-Z0-9]{5,})\s*(?:\n|$)/) || [])[1] || null;
+      const dm = t.match(/วันที่\s+(\d{1,2})\s+(\S+)\s+(\d{4})/);
+      const mo = dm ? monthNo(dm[2]) : 0;
+      const ref = (t.match(/อ[^\n]{0,6}งถึง[^\n]*\n\s*([A-Z][A-Z0-9]{7,})\b/) || [])[1] || null;
+      const base = t.match(/\/บริการ\s+([\d,]+)\s+(\d{2})\b/);
+      const vat = t.match(/เพิ่ม\s+([\d,]+)\s+(\d{2})\b/);
+      const tot = t.match(/(?:^|\n)\s*รวมเงิน\s+([\d,]+)\s+(\d{2})\b/);
+      const isInv = /ใบกํากับ|ใบกำกับ/.test(t);
+      const out = {
+        invoiceNo: no, invoiceDate: dm && mo ? toIso(dm[3], mo, dm[1]) : null, invoiceRef: ref,
+        beforeVat: base ? money2(base[1], base[2]) : null, vat: vat ? money2(vat[1], vat[2]) : null, grandTotal: tot ? money2(tot[1], tot[2]) : null,
+      };
+      if (!isInv) out.notTaxInvoice = true; // ใบเสร็จรับเงินล้วน (ไม่ใช่ใบกำกับภาษี)
+      return out;
+    },
+  });
+})();
+
 // ── ผู้ซื้อ (BU) : Generic ───────────────────────────────────────
 function findBuyer(text, tpl) {
+  if (tpl && tpl.buyerFn) { const rb = tpl.buyerFn(text); if (rb) return rb; } // MARKER_PDFTAXINV_ITC_RIS_V1
   // LINE: ผู้ซื้ออยู่ใต้ "Customer:"
   if (tpl && tpl.buyerSectionStart) {
     const idx = text.search(tpl.buyerSectionStart);
@@ -173,7 +265,8 @@ function findBuyer(text, tpl) {
   let m;
   while ((m = re.exec(text))) {
     if (tpl && tpl.supplier && m[1] === tpl.supplier.taxId) continue;
-    return { taxId: m[1], branch: branchNear(text, m[1]) || (tpl && tpl.buyerBranchHint ? tpl.buyerBranchHint(text) : null), name: '' }; // ชื่อผู้ซื้อของ INET เพี้ยน อ่านไม่ได้ -> ใช้ Tax ID+สาขา หา BU
+    if (tpl && !tpl.supplier && tpl.skipSupplierTaxIdInBuyer && m[1] === (findSupplier(text, tpl).taxId || '')) continue; // MARKER_PDFTAXINV_SAPFI_GENERIC_V1
+    return { taxId: m[1], branch: ((tpl && tpl.buyerBranchFirst && tpl.buyerBranchHint) ? tpl.buyerBranchHint(text) : null) || branchNear(text, m[1]) || (tpl && tpl.buyerBranchHint ? tpl.buyerBranchHint(text) : null), name: '' }; // ชื่อผู้ซื้อของ INET เพี้ยน อ่านไม่ได้ -> ใช้ Tax ID+สาขา หา BU
   }
   return { taxId: null, branch: null, name: '' };
 }
@@ -184,6 +277,7 @@ function findSupplier(text, tpl) {
   if (tpl.supplier) return { ...tpl.supplier };
   const m = text.match(tpl.supplierTaxIdLabel || /Tax ID No\.?\s*[:：]?\s*(\d{13})/i);
   const taxId = m ? m[1] : null;
+  if (tpl.supplierBranchFn && taxId) return { taxId, branch: tpl.supplierBranchFn(text, taxId) }; // MARKER_PDFTAXINV_SAPFI_GENERIC_V1
   return { taxId, branch: taxId ? (branchNear(text, taxId) || null) : null };
 }
 
@@ -209,7 +303,7 @@ export async function readPdfTaxInvoice(pdfjsLib, data, fileName) {
 
   out.supplierKey = tpl.key;
   out.supplier = findSupplier(text, tpl);
-  out.supplierName = tpl.name; // MARKER_PDFTAXINV_CONFIRM_V1
+  out.supplierName = (tpl.nameFn && tpl.nameFn(text)) || tpl.name; // MARKER_PDFTAXINV_CONFIRM_V1 MARKER_PDFTAXINV_SAPFI_GENERIC_V1
   out.buyer = findBuyer(text, tpl);
   Object.assign(out, tpl.extract(text));
 
@@ -217,6 +311,7 @@ export async function readPdfTaxInvoice(pdfjsLib, data, fileName) {
   if (out.beforeVat == null && out.grandTotal != null && out.vat != null) out.beforeVat = round2(out.grandTotal - out.vat);
 
   // ตรวจความสมเหตุสมผล
+  if (out.notTaxInvoice) out.warnings.push('เป็นใบเสร็จรับเงิน (ไม่ใช่ใบกำกับภาษี) VAT 0.00'); // MARKER_PDFTAXINV_ITC_RIS_V1
   if (!out.invoiceNo) out.warnings.push('ไม่พบเลขที่ใบกำกับภาษี');
   if (!out.invoiceDate) out.warnings.push('ไม่พบวันที่');
   if (!out.buyer.taxId) out.warnings.push('ไม่พบ Tax ID ผู้ซื้อ (หา BU ไม่ได้)');

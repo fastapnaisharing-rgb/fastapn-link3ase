@@ -82,6 +82,45 @@ export const tablePermissions = {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
+  // MARKER_TABLEPERMISSIONS_TAX_CLOSE_V1 -- Timeline ปิดภาษี
+  tax_close_period: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "owner"] }, // ตารางวงจรรอบ/Purge: Backend จัดการเอง จำกัด Owner กันแก้ purge_after/status
+  },
+  tax_close_bu_master: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_period_bu: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_task: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_task_log: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_task_item: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  tax_close_bu_config: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_TIMELINE_WATCH_V1 -- Timeline ปิดภาษี > Config BU > ดู Progress
+  timeline_watch: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_TIMELINE_PROGRESS_V1 -- Timeline ปิดภาษี: ความคืบหน้าต่อ Period + BU
+  timeline_progress: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
   system_settings: {
     read: { publicRead: true },
     write: { roles: ["Owner", "owner"] },
@@ -199,6 +238,21 @@ export const tablePermissions = {
   },
   // MARKER_TABLEPERMISSIONS_VAT_MAIL_DRAFT_V1
   vat_mail_draft: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_MENU_USER_GRANT_V1 -- ให้สิทธิ์/ปลดสิทธิ์รายบุคคลต่อเมนู: Admin/Owner อ่าน+เขียน
+  menu_user_grant: {
+    read: { roles: ["Admin", "Owner", "admin", "owner"] },
+    write: { roles: ["Admin", "Owner", "admin", "owner"] },
+  },
+  // MARKER_TABLEPERMISSIONS_MENU_MIN_ROLE_V1 -- Permission ขั้นต่ำต่อเมนู: ทุกคนอ่านได้ | เขียนได้เฉพาะ Owner
+  menu_min_role: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "owner"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_MAIL_SENT_LOG_V1
+  vat_mail_sent_log: {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },

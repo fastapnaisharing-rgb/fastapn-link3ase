@@ -22,6 +22,7 @@ import fileStorageRouter, { checkAndCleanupFileStorage } from "./routes/fileStor
 import vatExportRouter from "./routes/vatExport.js"; // MARKER_APP_VAT_EXPORT_ROUTER_V1 -- Export Popvat/Simple/ADI จาก Draft เป็นไฟล์ Excel
 import ieExportRouter from "./routes/ieExport.js"; // MARKER_APP_IE_EXPORT_ROUTER_V1 -- Export Simple ของ IE จาก ie_simplevatdraft เป็นไฟล์ Excel
 import ieMacroMailConfigRouter from "./routes/ieMacroMailConfig.js"; // MARKER_APP_IE_MACROMAIL_ROUTER_V1 -- Mail Manage ของ Generate by Macro Logic
+import vatSimpleConfigRouter from "./routes/vatSimpleConfig.js"; // MARKER_APP_VAT_SIMPLE_CONFIG_ROUTER_V1
 // MARKER_MOUNT_FAVORITE_ROUTER_V1
 import favoriteRouter from "./routes/favorite.js";
 import itemMasterSearchRouter from "./routes/itemMasterSearch.js"; // MARKER_APP_MOUNT_ITEM_MASTER_SEARCH_V1
@@ -122,6 +123,29 @@ app.use((req, res, next) => {
         logActivity(username, ("DELETE " + p.replace(/\/\d+(?=\/|$)/g, "/:id")).slice(0, 200), (p.split("/")[2] || "").slice(0, 60));
       } catch (e) { console.error("[activity] delete log error:", e.message); }
     })();
+  });
+  next();
+});
+// MARKER_APP_USER_TRANSACTIONS_REALTIME_EVENT_V1 -- Transaction Dashboard (System Console) Realtime: ทุกครั้งที่มีการเขียนข้อมูลสำเร็จ (POST/PUT/PATCH/DELETE ใต้ /api) ส่ง Event 'user_transactions_updated'
+// หน้า Dashboard ที่เปิดอยู่จะดึงข้อมูลใหม่เอง (ไม่ Polling หนัก) | Throttle ไม่เกินทุก 2 วินาที | ข้ามงาน Session/Heartbeat/Log/Notification ที่ไม่ใช่ Transaction
+const UTX_EVENT_SKIP = [/menu_active_sessions/, /ap_active_sessions/, /ie_active_sessions/, /activity_log/, /notifications/, /recycle_bin/, /\/api\/auth\//, /\/api\/user_transactions\//];
+let _utxNotifyTimer = null;
+function notifyUserTransactionsUpdated() {
+  if (_utxNotifyTimer) return;
+  _utxNotifyTimer = setTimeout(() => {
+    _utxNotifyTimer = null;
+    try { wsBroadcast("user_transactions_updated", {}); } catch (e) { /* ไม่ให้กระทบการทำงานหลัก */ }
+  }, 2000);
+}
+app.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  res.on("finish", () => {
+    try {
+      if (res.statusCode >= 400) return;
+      const p = String(req.originalUrl || "").split("?")[0];
+      if (!p.startsWith("/api/") || UTX_EVENT_SKIP.some((r) => r.test(p))) return;
+      notifyUserTransactionsUpdated();
+    } catch (e) { /* ignore */ }
   });
   next();
 });
@@ -275,6 +299,7 @@ app.use("/api/file-storage", fileStorageRouter);
 app.use("/api/vat-export", vatExportRouter); // MARKER_APP_VAT_EXPORT_ROUTER_V1
 app.use("/api/ie-export", ieExportRouter); // MARKER_APP_IE_EXPORT_ROUTER_V1
 app.use("/api/ie-macrologic-mail", ieMacroMailConfigRouter); // MARKER_APP_IE_MACROMAIL_ROUTER_V1
+app.use("/api/vat-simple-config", vatSimpleConfigRouter); // MARKER_APP_VAT_SIMPLE_CONFIG_ROUTER_V1
 app.use("/api/favorite", favoriteRouter);
 app.use("/api/batch-comments", batchCommentsRouter);
 app.use("/api/legacy-import", legacyImportRouter);
@@ -343,6 +368,71 @@ app.post("/api/batch-recycle-bundle", verifyAuthLocal, async (req, res, next) =>
 app.use("/api/account_list",        createTableRouter("account_list"));
 app.use("/api/branch_list",         createTableRouter("branch_list"));
 app.use("/api/company_list",        createTableRouter("company_list"));
+// MARKER_APP_VAT_GLOBAL_SEARCH_V1
+// -- GET /api/vat_watchlist_report/global_search?q=&status=pending&limit=300 -- ค้นหาข้ามทุก BU (Popup แว่นขยายหน้า Company List) --
+// -- เร็วกว่า Generic search: ค้นเฉพาะคอลัมน์ที่จำเป็น (ภาษาไทย = vendor_name / อื่นๆ = supplier_code, invoice_ref, check_no, receive_doc_no, vendor_name)
+// -- แยกแต่ละคอลัมน์เป็น Subquery + LIMIT ให้ใช้ Index ของตัวเองได้ แล้ว UNION id -- เลือกเฉพาะคอลัมน์ที่โชว์ -- ต้องอยู่ก่อน Generic Mount --
+const VAT_GLOBAL_SEARCH_COLS = ["id","bu","doc_date","doc_no","site","pay_group","branch","tax_type","invoice_ref","supplier_code","vendor_name","payment_date","check_date","check_no","old_ref_check_no","old_ref_pay_date","receive_doc_date","receive_doc_no","exp_amount","exp_vat","avg_amount","avg_vat","ap_source","ap_batch_name","bus_type","sub_type","aging_label","status"];
+app.get("/api/vat_watchlist_report/global_search", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const status = String(req.query.status || "").trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 300, 1), 1000);
+    // MARKER_APP_VAT_GLOBAL_SEARCH_FILTERS_V1 -- Filter BU / Type / Period (YYYY-MM ของ payment_date) + meta สำหรับ Dropdown
+    const csv = (v) => String(v || "").split(",").map((t) => t.trim()).filter(Boolean);
+    const fBu = csv(req.query.bu); const fType = csv(req.query.bus_type); const fSub = csv(req.query.sub_key); // sub_key = 'Type|||SubType' (เลือกระดับ Sub Type)
+    const ymOk = (v) => /^\d{4}-\d{2}$/.test(String(v || ""));
+    const payFrom = ymOk(req.query.pay_from) ? String(req.query.pay_from) : ""; const payTo = ymOk(req.query.pay_to) ? String(req.query.pay_to) : "";
+    if (String(req.query.meta || "") === "1") {
+      const mv = []; const ms = status ? (mv.push(status), ` AND status = $${mv.length}`) : "";
+      const mr = await pool.query(`SELECT bu, COALESCE(NULLIF(TRIM(bus_type), ''), '(ว่าง)') AS bus_type, COALESCE(NULLIF(TRIM(sub_type), ''), '(ว่าง)') AS sub_type, to_char(payment_date::date, 'YYYY-MM') AS ym, COUNT(*)::int AS n FROM vat_watchlist_report WHERE payment_date IS NOT NULL${ms} GROUP BY 1, 2, 3, 4`, mv);
+      return res.json({ rows: mr.rows });
+    }
+    const hasFilter = fBu.length > 0 || fType.length > 0 || fSub.length > 0 || !!payFrom || !!payTo;
+    if (q.length < 2 && !hasFilter) return res.json([]);
+    const values = [];
+    let statusSql = status ? (values.push(status), ` AND status = $${values.length}`) : "";
+    if (fBu.length) { values.push(fBu); statusSql += ` AND bu = ANY($${values.length}::text[])`; }
+    if (fType.length || fSub.length) { // Type เต็ม OR Sub Type ที่เลือก
+      const tX = "COALESCE(NULLIF(TRIM(bus_type), ''), '(ว่าง)')"; const sX = "COALESCE(NULLIF(TRIM(sub_type), ''), '(ว่าง)')"; const parts = [];
+      if (fType.length) { values.push(fType); parts.push(`${tX} = ANY($${values.length}::text[])`); }
+      if (fSub.length) { values.push(fSub); parts.push(`(${tX} || '|||' || ${sX}) = ANY($${values.length}::text[])`); }
+      statusSql += ` AND (${parts.join(" OR ")})`;
+    }
+    if (payFrom) { values.push(payFrom); statusSql += ` AND to_char(payment_date::date, 'YYYY-MM') >= $${values.length}`; }
+    if (payTo) { values.push(payTo); statusSql += ` AND to_char(payment_date::date, 'YYYY-MM') <= $${values.length}`; }
+    if (q.length < 2 && String(req.query.summary || "") === "1") { // สรุปต่อ BU+Supplier ฝั่ง Server (ไม่ต้องดึงทุกแถวมารวมที่หน้าจอ)
+      const sr = await pool.query(`SELECT bu, supplier_code, MAX(vendor_name) AS vendor_name, COUNT(*)::int AS count, MIN(payment_date) AS min_pay, MAX(payment_date) AS max_pay, COALESCE(SUM(exp_amount), 0) AS exp_amount, COALESCE(SUM(exp_vat), 0) AS exp_vat, COALESCE(SUM(avg_amount), 0) AS avg_amount, COALESCE(SUM(avg_vat), 0) AS avg_vat FROM vat_watchlist_report WHERE payment_date IS NOT NULL${statusSql} GROUP BY bu, supplier_code ORDER BY bu, supplier_code LIMIT 5000`, values);
+      return res.json({ summary: sr.rows });
+    }
+    if (q.length < 2) {
+      const r0 = await pool.query(`SELECT * FROM vat_watchlist_report WHERE payment_date IS NOT NULL${statusSql} ORDER BY bu, supplier_code, invoice_ref LIMIT ${limit}`, values);
+      return res.json(r0.rows);
+    }
+    const terms = q.split(/[,\n]+/).map((t) => t.trim()).filter(Boolean);
+    const subs = [];
+    if (terms.length > 1) {
+      values.push(terms);
+      const p = values.length;
+      ["invoice_ref", "check_no", "receive_doc_no"].forEach((c) => subs.push(`(SELECT id FROM vat_watchlist_report WHERE "${c}" = ANY($${p}::text[])${statusSql} LIMIT ${limit})`));
+    } else {
+      values.push("%" + q + "%");
+      const pc = values.length;
+      const isThai = /[^\x00-\x7F]/.test(q);
+      let pp = 0;
+      if (!isThai) { values.push(q + "%"); pp = values.length; } // Push เฉพาะตอนใช้ (Parameter ที่ไม่ได้ใช้ทำ Postgres Error)
+      const cols = isThai ? ["vendor_name"] : ["invoice_ref", "check_no", "receive_doc_no", "vendor_name"];
+      cols.forEach((c) => subs.push(`(SELECT id FROM vat_watchlist_report WHERE "${c}"::text ILIKE $${pc}${statusSql} LIMIT ${limit})`));
+      if (!isThai) subs.push(`(SELECT id FROM vat_watchlist_report WHERE supplier_code ILIKE $${pp}${statusSql} LIMIT ${limit})`);
+    }
+    const sql = `SELECT * FROM vat_watchlist_report WHERE id IN (${subs.join(" UNION ")}) ORDER BY bu, supplier_code, invoice_ref LIMIT ${limit}`;
+    const { rows } = await pool.query(sql, values);
+    res.json(rows);
+  } catch (err) {
+    console.error("vat_watchlist_report global_search error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 // MARKER_APP_VAT_WATCHLIST_AGING_SUMMARY_V1
 // -- GET /api/vat_watchlist_report/aging_summary -- นับจำนวนแถวแยกตาม BU x Aging Category --
 // -- (SQL GROUP BY ที่ Generic Table Router ไม่รองรับ) -- ต้องอยู่ก่อน Generic Mount ด้านล่าง --
@@ -705,6 +795,9 @@ app.post("/api/vat_watchlist_report/replace_bu", checkPermission("vat_watchlist_
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // MARKER_APP_REPLACE_BU_ADVISORY_LOCK_V1 -- ล็อกต่อ BU (เรียงชื่อกัน Deadlock) ให้ replace_bu ของ BU เดียวกันทำทีละรอบ: รอบที่สอง (กดซ้ำ/Retry) รอรอบแรก COMMIT ก่อน แล้ว DELETE จะลบแถวรอบแรกทิ้ง -> ไม่ซ้ำ
+    await client.query("SET LOCAL lock_timeout = '300s'");
+    for (const __b of [...new Set(bus.map((x) => String(x)))].sort()) { await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["vat_replace_bu:" + __b]); }
     await client.query("SET LOCAL lock_timeout = '20s'"); // MARKER_APP_REPLACE_BU_TIMING_LOCK_V1 -- ถ้ามี Transaction อื่นล็อกตารางค้างอยู่ ให้ Error ชัดเจนภายใน 20 วินาที แทนที่จะค้างเงียบ
     await client.query("SET LOCAL gin_pending_list_limit = 262144"); // MARKER_APP_REPLACE_BU_GIN_PENDING_V1 -- ตาราง vat_watchlist_report มี GIN Trigram Index 7 ตัว (invoice_ref/supplier_code/vendor_name/check_no/receive_doc_no/doc_no/branch) -- Insert ทีละหมื่นแถวช้ามาก ขยาย Pending List (256MB) ให้ GIN เก็บรวมไว้ก่อนแล้วค่อย Merge ทีหลัง (Autovacuum/VACUUM จัดการต่อ)
     await client.query("SET LOCAL work_mem = '256MB'"); // MARKER_APP_REPLACE_BU_GIN_PENDING_V1 -- ใช้ตอน GIN Flush Pending List ถ้าเกิดขึ้นระหว่าง Transaction
@@ -1042,13 +1135,48 @@ app.post("/api/vat_backup_tax_invoice/purge", async (req, res) => {
     if (Number(body.expected_count) !== count) {
       return res.status(409).json({ error: "จำนวนที่จะลบไม่ตรงกับที่ Preview ไว้ (ข้อมูลมีการเปลี่ยนแปลง) กรุณา Preview ใหม่", count });
     }
-    const del = await pool.query("DELETE FROM vat_backup_tax_invoice " + where, vals);
+    // MARKER_PURGE_REVERT_SEND_FP_V1 -- ลบ Tax Invoice จริง: แถว Incomplete ที่ผูกกับใบเหล่านี้และยังเป็น send_fp (ยังไม่ถูก Pop) ต้องกลับเป็น pending ในธุรกรรมเดียวกัน -- ผูกด้วย ⟦ids:..⟧ ใน ref_name ; ใบเก่าที่ไม่มี ids ผูกด้วย bu + invoice_ref/group_invoice (เฉพาะที่ไม่มีใบอื่นที่เหลืออยู่ถือ Ref เดียวกันอีก)
+    const pc = await pool.connect();
+    let del; let revertedFp = 0;
+    try {
+      await pc.query("BEGIN");
+      const doomed = await pc.query("SELECT bu, invoice_ref, group_invoice, ref_name FROM vat_backup_tax_invoice " + where, vals);
+      const idSet = new Set(); const refPairs = [];
+      doomed.rows.forEach((r) => {
+        const m = String(r.ref_name || "").match(/⟦ids:([^⟧]*)⟧/);
+        if (m) m[1].split(",").map((x) => x.trim()).filter((x) => /^\d+$/.test(x)).forEach((x) => idSet.add(x));
+        else [r.invoice_ref, r.group_invoice].forEach((rf) => { const k = String(rf || "").trim(); if (k && r.bu) refPairs.push([String(r.bu), k]); });
+      });
+      del = await pc.query("DELETE FROM vat_backup_tax_invoice " + where, vals);
+      const changedBus = new Set();
+      if (idSet.size > 0) {
+        const u1 = await pc.query("UPDATE vat_watchlist_report SET status = 'pending' WHERE id = ANY($1::bigint[]) AND status = 'send_fp' RETURNING bu", [Array.from(idSet).map((x) => Number(x))]);
+        revertedFp += u1.rowCount; u1.rows.forEach((x) => changedBus.add(x.bu));
+      }
+      if (refPairs.length > 0) {
+        const u2 = await pc.query(
+          `UPDATE vat_watchlist_report r SET status = 'pending'
+             FROM UNNEST($1::text[], $2::text[]) AS k(bu, ref)
+            WHERE r.bu = k.bu AND r.invoice_ref = k.ref AND r.status = 'send_fp'
+              AND NOT EXISTS (SELECT 1 FROM vat_backup_tax_invoice b WHERE b.bu = r.bu AND b.status IN ('pending', 'loaded') AND (b.invoice_ref = r.invoice_ref OR b.group_invoice = r.invoice_ref))
+            RETURNING r.bu`,
+          [refPairs.map((x) => x[0]), refPairs.map((x) => x[1])]
+        );
+        revertedFp += u2.rowCount; u2.rows.forEach((x) => changedBus.add(x.bu));
+      }
+      await pc.query("COMMIT");
+    } catch (txErr) {
+      await pc.query("ROLLBACK");
+      throw txErr;
+    } finally {
+      pc.release();
+    }
     const filterDesc = JSON.stringify({ source_type: body.source_type || null, status: body.status || null, bu: body.bu || null, date_from: body.date_from || null, date_to: body.date_to || null, older_than_months: body.older_than_months || null, all: body.all === true });
     pool.query(
       "INSERT INTO activity_log (username, user_email, action, module, created_at) VALUES ($1, $2, $3, 'VAT_TAX_INVOICE', NOW())",
-      [req.user?.username || null, req.user?.email || null, "PURGE_TAX_INVOICE deleted=" + del.rowCount + " filter=" + filterDesc]
+      [req.user?.username || null, req.user?.email || null, "PURGE_TAX_INVOICE deleted=" + del.rowCount + " reverted_send_fp=" + revertedFp + " filter=" + filterDesc]
     ).catch((e) => console.error("[purge tax invoice] activity_log error:", e.message));
-    return res.json({ deleted: del.rowCount });
+    return res.json({ deleted: del.rowCount, reverted_send_fp: revertedFp });
   } catch (err) {
     console.error("vat_backup_tax_invoice purge error:", err);
     res.status(500).json({ error: "Internal server error", detail: err.message });
@@ -1262,6 +1390,16 @@ app.post(
       }
 
       await client.query("COMMIT");
+      // MARKER_POPVAT_BULK_SERVER_BROADCAST_V1 -- Realtime จาก Server: Pop เสร็จแล้วแจ้งทุก Client (ทุกหน้า/ทุก User/ทุก Build) ให้รีเฟรชเอง ไม่ต้องพึ่ง Frontend ที่ยิง Broadcast เอง
+      if (!duplicate) {
+        try {
+          const refs = items.map((it) => it && it.match && it.match.invoice_ref).filter(Boolean).map(String);
+          wsBroadcast("vat_watchlist_draft_updated", { bu, invoice_refs: refs });
+          wsBroadcast("vat_upload_popvatdraft_updated", { bu });
+          wsBroadcast("vat_watchlist_report_updated", { bu });
+          if (grnValue !== null) wsBroadcast("company_list_updated", { bu });
+        } catch (_) { /* Broadcast พังไม่กระทบผลการ Pop */ }
+      }
       res.status(duplicate ? 200 : 201).json({
         success: true,
         duplicate,
@@ -1308,6 +1446,7 @@ app.use("/api/vat_backup_tax_invoice", createTableRouter("vat_backup_tax_invoice
 app.use("/api/vat_simpleinputdraft", createTableRouter("vat_simpleinputdraft")); // MARKER_APP_MOUNT_VAT_SIMPLEINPUT_ADI_DRAFT_V1
 app.use("/api/ie_simplevatdraft", createTableRouter("ie_simplevatdraft")); // MARKER_APP_MOUNT_IE_SIMPLEVATDRAFT_V1 -- IE Invoice Detail > Tab "Simple" (Sub-row Real Vendor Add -> Simple)
 app.use("/api/vat_adi_transferdraft", createTableRouter("vat_adi_transferdraft")); // MARKER_APP_MOUNT_VAT_SIMPLEINPUT_ADI_DRAFT_V1
+app.use("/api/vat_simpledraft_hold", createTableRouter("vat_simpledraft_hold")); // MARKER_APP_MOUNT_VAT_SIMPLEDRAFT_HOLD_V1 -- ที่พัก Draft Simple ใช้ร่วมทุก Feature (คอลัมน์ feature)
 app.use("/api/vat_watchlist_round_state", createTableRouter("vat_watchlist_round_state")); // MARKER_APP_MOUNT_VAT_WATCHLIST_ROUND_STATE_V1 -- Round-based Active BU Update Tracking (Donut + Confirm ปิดรอบ)
 app.use("/api/vat_waiting_for_claim", createTableRouter("vat_waiting_for_claim")); // MARKER_APP_MOUNT_VAT_WAITING_FOR_CLAIM_V1 -- VAT Controller > Backup > Transaction, Tab 4 (Backup_Report Input Tax-Waiting for Claim)
 app.use("/api/vat_reconcile_input_summary", createTableRouter("vat_reconcile_input_summary")); // MARKER_APP_MOUNT_VAT_RECONCILE_INPUT_SUMMARY_V1 -- VAT Input Rec. Dashboard > Quick Preview Popup > Inline Edit (Excel Grid)
@@ -1966,7 +2105,7 @@ app.get("/api/user_transactions/dashboard", async (req, res) => {
           ((COALESCE(NULLIF(cross_check->>'confirmed_at',''), cross_check->>'completed_at'))::timestamptz AT TIME ZONE 'Asia/Bangkok') AS ts_real,
           (fill_started_at AT TIME ZONE 'Asia/Bangkok') AS fill_bkk,
           ((COALESCE(NULLIF(cross_check->>'confirmed_at',''), cross_check->>'completed_at'))::timestamptz AT TIME ZONE 'Asia/Bangkok') AS created_bkk,
-          (CASE WHEN jsonb_typeof(rows) = 'array' THEN jsonb_array_length(rows) ELSE 1 END) AS line_count,
+          (CASE WHEN jsonb_typeof(cross_check->'checked') = 'array' AND jsonb_array_length(cross_check->'checked') > 0 THEN jsonb_array_length(cross_check->'checked') ELSE 1 END) AS line_count, /* MARKER_APP_USER_TRANSACTIONS_COLAP_COUNT_CHECKED_ONLY_V1 -- นับเฉพาะ Invoice ที่ User ติ๊กใน Cross Check (cross_check.checked) ไม่ใช่ทุกแถวของไฟล์ที่ Upload | ไม่มีรายการติ๊ก (เช่น Input Summary ที่ Auto-Confirm ตอน Save) = นับ 1 ต่อไฟล์ */
           (fill_started_at IS NOT NULL) AS has_fill_flag,
           bu_code AS bu, /* MARKER_APP_USER_TRANSACTIONS_DASHBOARD_COLAP_BU_INVOICE_FIX_V1 -- เดิมใช้ bu_code_name (Label "รหัส - ชื่อบริษัท" เช่น "5898 - Miracle Planet Co., Ltd.") ผิด ไม่ใช่ BU Code จริง -- เปลี่ยนเป็น bu_code ตรงๆ */
           (CASE WHEN jsonb_typeof(rows) = 'array' THEN (

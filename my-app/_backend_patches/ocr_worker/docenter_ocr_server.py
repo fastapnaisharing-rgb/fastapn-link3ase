@@ -177,6 +177,57 @@ async def _idle_watchdog():
             _os.kill(_os.getpid(), signal.SIGTERM)
 
 
+# MARKER_DOCENTER_CPU_GOVERNOR_V2 -- ปรับ Priority/Core ตามภาระ CPU ของงานอื่นระหว่าง OCR
+# ว่าง (งานอื่นใช้ CPU < 40%) -> BELOW_NORMAL + สูงสุด 4 Core ; ไม่ว่าง -> IDLE + Core 0+1 (เหมือนเดิม)
+# ตรวจซ้ำทุก 3 วินาทีระหว่างทำงาน และคืนเป็น IDLE + Core 0+1 เมื่อจบ
+import threading as _gov_threading
+from contextlib import contextmanager as _gov_contextmanager
+
+def _gov_apply():
+    try:
+        p = psutil.Process(os.getpid())
+        ncpu = psutil.cpu_count(logical=True) or 2
+        p.cpu_percent(None)
+        sysp = psutil.cpu_percent(interval=0.5)
+        mine = p.cpu_percent(None) / ncpu
+        other = max(0.0, sysp - mine)
+        if other < 40 and ncpu > 2:
+            cores = list(range(min(ncpu, 4)))
+            p.cpu_affinity(cores)
+            p.nice(getattr(psutil, "BELOW_NORMAL_PRIORITY_CLASS", 0))
+            log.info(f"[governor] other CPU {other:.0f}% -> BELOW_NORMAL, cores {cores}")
+        else:
+            p.cpu_affinity([0, 1])
+            p.nice(getattr(psutil, "IDLE_PRIORITY_CLASS", 19))
+            log.info(f"[governor] other CPU {other:.0f}% -> IDLE, cores [0, 1]")
+    except Exception as e:
+        log.warning(f"[governor] apply failed: {e}")
+
+def _gov_reset():
+    try:
+        p = psutil.Process(os.getpid())
+        p.cpu_affinity([0, 1])
+        p.nice(getattr(psutil, "IDLE_PRIORITY_CLASS", 19))
+    except Exception:
+        pass
+
+@_gov_contextmanager
+def cpu_governor():
+    stop = _gov_threading.Event()
+    _gov_apply()
+    def _loop():
+        while not stop.wait(3.0):
+            _gov_apply()
+    t = _gov_threading.Thread(target=_loop, daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        t.join(timeout=2)
+        _gov_reset()
+
+
 @asynccontextmanager
 async def lifespan(app):
     global ocr_engine, ocr_semaphore
@@ -273,6 +324,308 @@ def rotate_image(image, rot: int):
     if rot == 180:  return image.transpose(PILImage.ROTATE_180)
     if rot == 270:  return image.transpose(PILImage.ROTATE_90)
     return image
+
+
+# MARKER_DOCENTER_AUTO_ORIENT_V1
+# ── Auto-Orient: เครื่องสแกน (RICOH) เขียน /Rotate 270 ลง PDF แต่ภาพจริงตั้งตรงอยู่แล้ว ──
+# ── poppler หมุนตาม /Rotate -> ภาพตะแคง -> OCR อ่านไม่ออก. ลอง "ภาพต้นฉบับ" ก่อน ──
+import hashlib as _hashlib
+_ORIENT_CACHE = {}
+_ORIENT_KEYS = ["doc type", "bu code", "branch", "vendor", "receive date", "invoice", "grt",
+                "batch", "ผู้ประกอบการ", "รายการ", "ยอด", "มูลค่า", "serial code"]
+_ORIENT_MIN_SCORE = 4
+
+
+def pdf_to_images_orig(pdf_bytes: bytes, dpi: int = 200):
+    """Render โดยไม่ใช้ /Rotate ของหน้า (ภาพต้นฉบับ) -> (images, had_rotate)"""
+    import fitz  # pymupdf (ใช้อยู่แล้วใน /extract-pages)
+    from PIL import Image as PILImage
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    out, had_rot = [], False
+    try:
+        for page in doc:
+            if page.rotation:
+                had_rot = True
+                page.set_rotation(0)
+            pix = page.get_pixmap(dpi=dpi, alpha=False)
+            out.append(PILImage.frombytes("RGB", [pix.width, pix.height], pix.samples))
+    finally:
+        doc.close()
+    return out, had_rot
+
+
+def _orient_score(img) -> int:
+    """OCR หน้าแรกแบบย่อ แล้วนับคำหัวกระดาษที่อ่านเจอ (ยิ่งมากยิ่งตั้งถูก)"""
+    try:
+        # MARKER_DOCENTER_ORIENT_FAST_V1 -- ตรวจทิศจาก "แถบบน" เท่านั้น (หัวกระดาษมีคำ key ครบ) เร็วกว่า OCR ทั้งหน้า ~3 เท่า
+        small = img.copy()
+        try:
+            _frac = float(os.environ.get("DOCENTER_ORIENT_CROP", "0.38"))
+        except Exception:
+            _frac = 0.38
+        if 0.1 <= _frac < 1.0:
+            small = small.crop((0, 0, small.width, int(small.height * _frac)))
+        small.thumbnail((1800, 1800))
+        items = ocr_image_full(small)
+    except Exception as e:
+        log.warning(f"[orient] score failed: {e}")
+        return 0
+    txt = " ".join(i["text"] for i in items).lower()
+    return sum(1 for k in _ORIENT_KEYS if k in txt)
+
+
+def _decide_orientation(pdf_bytes: bytes, rendered):
+    """คืน (source, extra_rot): source = 'orig' (ไม่ใช้ /Rotate) | 'rendered' (ใช้ /Rotate ปกติ)"""
+    _ensure_ocr_engine()
+    cands = []
+    try:
+        orig, had_rot = pdf_to_images_orig(pdf_bytes, dpi=200)
+        if had_rot and orig:
+            cands.append(("orig", orig[0]))
+    except Exception as e:
+        log.warning(f"[orient] render original failed: {e}")
+    if rendered:
+        cands.append(("rendered", rendered[0]))
+    best = ("rendered", 0, -1, None)
+    for src, img in cands:
+        sc = _orient_score(img)
+        log.info(f"[orient] {src}: score={sc}")
+        if sc >= _ORIENT_MIN_SCORE:
+            return (src, 0)
+        if sc > best[2]:
+            best = (src, 0, sc, img)
+    # ยังอ่านไม่ได้ -> ลองหมุนเพิ่มจากตัวที่ดีที่สุด (ทางเลือกสุดท้าย)
+    base_img = best[3]
+    if base_img is not None:
+        for rot in (90, 270, 180):
+            sc = _orient_score(rotate_image(base_img, rot))
+            log.info(f"[orient] {best[0]}+{rot}: score={sc}")
+            if sc >= _ORIENT_MIN_SCORE:
+                return (best[0], rot)
+    return (best[0], 0)
+
+
+def get_oriented_images(pdf_bytes: bytes, extra_rotation: int = 0):
+    """แทน pdf_to_images + rotate_image เดิม -> (images, auto_rotation_info)"""
+    rendered = pdf_to_images(pdf_bytes, dpi=200)
+    if extra_rotation:  # ผู้ใช้สั่งหมุนเอง -> เคารพตามนั้น
+        return [rotate_image(i, extra_rotation) for i in rendered], "user"
+    key = _hashlib.md5(pdf_bytes).hexdigest()
+    mode = _ORIENT_CACHE.get(key)
+    if mode is None:
+        mode = _decide_orientation(pdf_bytes, rendered)
+        if len(_ORIENT_CACHE) > 100:
+            _ORIENT_CACHE.clear()
+        _ORIENT_CACHE[key] = mode
+    src, rot = mode
+    imgs = rendered
+    if src == "orig":
+        try:
+            imgs, _ = pdf_to_images_orig(pdf_bytes, dpi=200)
+        except Exception as e:
+            log.warning(f"[orient] re-render original failed: {e}")
+            imgs = rendered
+    if rot:
+        imgs = [rotate_image(i, rot) for i in imgs]
+    log.info(f"[orient] use {src}" + (f" +{rot}°" if rot else ""))
+    return imgs, f"{src}+{rot}"
+
+
+# ── Profile AP09 (Input Tax Invoice): คอลัมน์ต่างจาก APN01 ──────────────────────
+AP09_COL_NAMES = ["Branch", "Vendor Name", "Receive Date", "GRT No.", "Tax Invoice Date",
+                  "Tax Invoice No.", "Description", "ยอดก่อนภาษี", "ยอดภาษี", "ยอดรวม"]
+AP09_HEADER_KEYWORDS = {
+    "Branch":           ["branch"],
+    "Vendor Name":      ["vendor name", "vendor"],
+    "Receive Date":     ["receive date"],
+    "GRT No.":          ["grt no", "grt"],
+    "Tax Invoice Date": ["tax invoice date"],
+    "Tax Invoice No.":  ["tax invoice no"],
+    "Description":      ["description", "desctiption", "descr"],
+    "ยอดก่อนภาษี":      ["ยอดก่อน", "ก่อนภาษี"],
+    "ยอดภาษี":          ["ยอดภาษี"],
+    "ยอดรวม":           ["ยอดรวม"],
+}
+AP09_NUM_COLS = {"ยอดก่อนภาษี", "ยอดภาษี", "ยอดรวม"}
+AP09_DATE_COLS = {"Receive Date", "Tax Invoice Date"}
+# ตำแหน่งสำรอง (สัดส่วนความกว้างภาพ) วัดจากแผ่นจริง -- ใช้เมื่อหาหัวคอลัมน์ไม่ครบ >=3 คอลัมน์
+AP09_DEFAULT_DEFS = [
+    {"name": "Branch",           "x_start": 0.00,  "x_end": 0.12},
+    {"name": "Vendor Name",      "x_start": 0.12,  "x_end": 0.307},
+    {"name": "Receive Date",     "x_start": 0.307, "x_end": 0.369},
+    {"name": "GRT No.",          "x_start": 0.369, "x_end": 0.42},
+    {"name": "Tax Invoice Date", "x_start": 0.42,  "x_end": 0.49},
+    {"name": "Tax Invoice No.",  "x_start": 0.49,  "x_end": 0.583},
+    {"name": "Description",      "x_start": 0.583, "x_end": 0.75},
+    {"name": "ยอดก่อนภาษี",      "x_start": 0.75,  "x_end": 0.81},
+    {"name": "ยอดภาษี",          "x_start": 0.81,  "x_end": 0.866},
+    {"name": "ยอดรวม",           "x_start": 0.866, "x_end": 1.00},
+]
+
+
+def detect_profile(items: list, meta: dict, prev: str = "APN") -> str:
+    """เลือก Profile คอลัมน์: 'AP09' หรือ 'APN' (APN01/AP07/TRANS/IMP เดิม) -- หน้าต่อ (ไม่มีหัว) สืบทอดจากหน้าก่อน"""
+    dt = str((meta or {}).get("doc_type", "")).strip().upper()
+    if dt == "AP09":
+        return "AP09"
+    if dt in SUPPORTED_DOC_TYPES:
+        return "APN"
+    txt = " ".join(i["text"] for i in items).lower()
+    if "grt no" in txt and "tax invoice no" in txt:
+        return "AP09"
+    if "gr transaction" in txt and "invoice number" in txt:
+        return "APN"
+    return prev
+
+
+def profile_kwargs(profile: str) -> dict:
+    if profile == "AP09":
+        return dict(col_names=AP09_COL_NAMES, header_keywords=AP09_HEADER_KEYWORDS,
+                    num_cols=AP09_NUM_COLS, date_cols=AP09_DATE_COLS, default_defs=AP09_DEFAULT_DEFS)
+    return dict(col_names=COL_NAMES, header_keywords=HEADER_KEYWORDS,
+                num_cols=NUM_COLS, date_cols={"Receive Date"}, default_defs=None)
+
+
+# MARKER_DOCENTER_SINGLE_PASS_V1
+# ── อ่านแบบ "หยุดที่ 35% ก่อน ถ้าไม่เจอค่อยอ่านต่อเฉพาะส่วนที่เหลือ" ────────────────────────────────
+# Lightweight อ่านแถบบน 35% -> (Node) จับคู่ Serial/Invoice/GRT/ยอด -> เจอ = แนบเลย ไม่ต้องอ่านต่อ
+# ไม่เจอ -> Full OCR (/ocr) ใช้ผลแถบบนที่เก็บไว้ + อ่านเฉพาะแถบล่างที่เหลือ (ไม่อ่านส่วนบนซ้ำ)
+# ข้อความที่ถูกเส้น 35% ตัดกลางบรรทัดจะไม่ถูกเก็บจากแถบบน แต่ให้แถบล่างเริ่มอ่านจากบรรทัดนั้นแทน
+_STRIP_CACHE = {}   # page_key -> {"top_items": [...], "split_y": int, "size": (w, h)}
+
+
+def _page_key(img):
+    return (img.size, _hashlib.md5(img.tobytes()).hexdigest())
+
+
+def _split_top_items(items: list, cut_y: float):
+    """แยกผลอ่านแถบบน: (kept, split_y) -- kept = บรรทัดที่อยู่ในแถบทั้งบรรทัด, split_y = จุดเริ่มอ่านแถบล่าง"""
+    kept, cut = [], []
+    for it in items:
+        (cut if it["y2"] >= cut_y - 3 else kept).append(it)
+    split_y = min([it["y1"] for it in cut], default=cut_y)
+    split_y = int(max(0, min(split_y, cut_y)))
+    return kept, split_y
+
+
+def remember_top_strip(img, items: list, cut_y: float):
+    try:
+        kept, split_y = _split_top_items(items, cut_y)
+        if len(_STRIP_CACHE) >= 60:
+            _STRIP_CACHE.pop(next(iter(_STRIP_CACHE)))
+        _STRIP_CACHE[_page_key(img)] = {"top_items": kept, "split_y": split_y, "size": img.size}
+    except Exception as e:
+        log.warning(f"[strip] remember failed: {e}")
+
+
+def merge_bottom_items(top_items: list, bottom_items: list, offset_y: int, split_y: int) -> list:
+    """เอาผลแถบล่าง (พิกัดสัมพัทธ์ตามแถบ) ย้ายเป็นพิกัดทั้งหน้า + ตัดรายการที่ซ้ำกับแถบบน"""
+    out = list(top_items)
+    for it in bottom_items:
+        y1 = it["y1"] + offset_y
+        if y1 < split_y - 1:   # อยู่ในส่วนที่แถบบนอ่านไปแล้ว
+            continue
+        n = dict(it)
+        n["y1"] = y1
+        n["y2"] = it["y2"] + offset_y
+        n["cy"] = it["cy"] + offset_y
+        out.append(n)
+    return out
+
+
+def ocr_page_items_progressive(img) -> list:
+    """OCR หน้านี้: ถ้า Lightweight เคยอ่านแถบบนไว้ -> อ่านเฉพาะแถบล่างที่เหลือ; ไม่เคย -> อ่านทั้งหน้า (เหมือนเดิม)"""
+    c = _STRIP_CACHE.get(_page_key(img))
+    if not c:
+        return ocr_image_full(img)
+    w, h = img.size
+    off = max(0, c["split_y"] - 4)
+    bottom_img = img.crop((0, off, w, h))
+    bottom = ocr_image_full(bottom_img)
+    log.info(f"[strip] reuse top strip ({len(c['top_items'])} items) + OCR bottom from y={off}")
+    return merge_bottom_items(c["top_items"], bottom, off, c["split_y"])
+
+
+def parse_grid_from_items(items: list, h_lines, v_lines, img_w: int, img_h: int, col_names: list,
+                          header_keywords=None, num_cols=None, date_cols=None):
+    """จัดข้อความที่ OCR ทั้งหน้าไว้แล้วเข้าเซลล์ตามตำแหน่ง (ไม่ OCR ทีละเซลล์ซ้ำ) -- ไม่สำเร็จคืน None ให้ใช้วิธีเดิม"""
+    import bisect
+    header_keywords = header_keywords or HEADER_KEYWORDS
+    num_cols = num_cols if num_cols is not None else NUM_COLS
+    date_cols = date_cols if date_cols is not None else {"Receive Date"}
+    ys = sorted(set([0] + list(h_lines) + [img_h]))
+    xs = sorted(set([0] + list(v_lines) + [img_w]))
+    if len(ys) < 3 or len(xs) < 3 or not items:
+        return None
+    nR, nC = len(ys) - 1, len(xs) - 1
+    cells = {}
+    for it in items:
+        ri = bisect.bisect_right(ys, it["cy"]) - 1
+        ci = bisect.bisect_right(xs, it["cx"]) - 1
+        if 0 <= ri < nR and 0 <= ci < nC:
+            cells.setdefault((ri, ci), []).append(it)
+
+    def cell_text(ri, ci):
+        lst = sorted(cells.get((ri, ci), []), key=lambda i: (round(i["cy"] / 8), i["cx"]))
+        return " ".join(i["text"] for i in lst).strip()
+
+    header_row_idx, col_map = None, {}
+    for ri in range(nR):
+        if ys[ri + 1] - ys[ri] < 5:
+            continue
+        texts = [cell_text(ri, ci) for ci in range(nC)]
+        combined = " " + " ".join(t.lower() for t in texts)
+        matched = sum(1 for kws in header_keywords.values() if any(kw in combined for kw in kws))
+        if matched >= 3:
+            header_row_idx = ri
+            for ci, t in enumerate(texts):
+                tl = t.lower()
+                for col_name, keywords in header_keywords.items():
+                    if any(kw in tl for kw in keywords):
+                        col_map[ci] = col_name
+                        break
+                else:
+                    col_map[ci] = col_names[ci] if ci < len(col_names) else f"col_{ci}"
+            break
+    if header_row_idx is None:
+        return None   # หาแถวหัวตารางไม่เจอ -> ให้วิธีเดิม (OCR ทีละเซลล์/Map ตามลำดับ) จัดการ
+
+    rows = []
+    for ri in range(header_row_idx + 1, nR):
+        if ys[ri + 1] - ys[ri] < 8:
+            continue
+        record, has_data = {}, False
+        for ci in range(nC):
+            col_name = col_map.get(ci, f"col_{ci}")
+            text = cell_text(ri, ci)
+            if text and text not in ["-", "—", ""]:
+                has_data = True
+                if col_name in num_cols:
+                    text = clean_number(text) if is_number(text.replace(",", "")) else text
+                elif col_name in date_cols:
+                    text = parse_date(text) if text else ""
+            record[col_name] = text
+        if has_data:
+            rows.append(record)
+    return rows or None
+
+
+def parse_rows_by_profile(cv_img, items, img_width, h_lines, v_lines, profile: str, header_cy: float = 0):
+    kw = profile_kwargs(profile)
+    if len(h_lines) >= 3 and len(v_lines) >= 3:
+        # MARKER_DOCENTER_SINGLE_PASS_V1 -- ใช้ผล OCR ทั้งหน้าที่มีอยู่แล้ว จัดเข้าเซลล์ตามตำแหน่งก่อน (เร็วกว่าหลายเท่า)
+        # ถ้าไม่สำเร็จ (หาหัวตารางไม่เจอ/ไม่ได้แถว) ค่อยถอยไป OCR ทีละเซลล์แบบเดิม
+        _fast = parse_grid_from_items(items, h_lines, v_lines, cv_img.shape[1], cv_img.shape[0], kw["col_names"],
+                                      header_keywords=kw["header_keywords"], num_cols=kw["num_cols"],
+                                      date_cols=kw["date_cols"])
+        if _fast:
+            return _fast
+        return parse_with_grid(cv_img, h_lines, v_lines, kw["col_names"],
+                               header_keywords=kw["header_keywords"], num_cols=kw["num_cols"],
+                               date_cols=kw["date_cols"])
+    return parse_with_ocr_fallback(items, img_width, header_cy,
+                                   header_keywords=kw["header_keywords"], num_cols=kw["num_cols"],
+                                   date_cols=kw["date_cols"], default_defs=kw["default_defs"])
 
 
 def is_number(text: str) -> bool:
@@ -462,8 +815,12 @@ def parse_metadata(items: list) -> dict:
     return meta
 
 
-def parse_with_grid(cv_img, h_lines, v_lines, col_names: list) -> list:
+def parse_with_grid(cv_img, h_lines, v_lines, col_names: list,
+                    header_keywords=None, num_cols=None, date_cols=None) -> list:
     """crop + OCR ทีละ cell"""
+    header_keywords = header_keywords or HEADER_KEYWORDS  # MARKER_DOCENTER_AUTO_ORIENT_V1
+    num_cols = num_cols if num_cols is not None else NUM_COLS
+    date_cols = date_cols if date_cols is not None else {"Receive Date"}
     h, w = cv_img.shape[:2]
     gray = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
     ys = sorted(set([0] + h_lines + [h]))
@@ -486,12 +843,12 @@ def parse_with_grid(cv_img, h_lines, v_lines, col_names: list) -> list:
             t = ocr_cell(cell)
             cell_texts.append(t)
             row_text_combined += " " + t.lower()
-        matched = sum(1 for kws in HEADER_KEYWORDS.values() if any(kw in row_text_combined for kw in kws))
+        matched = sum(1 for kws in header_keywords.values() if any(kw in row_text_combined for kw in kws))
         if matched >= 3:
             header_row_idx = ri
             for ci, t in enumerate(cell_texts):
                 t_lower = t.lower()
-                for col_name, keywords in HEADER_KEYWORDS.items():
+                for col_name, keywords in header_keywords.items():
                     if any(kw in t_lower for kw in keywords):
                         col_map[ci] = col_name
                         break
@@ -519,9 +876,9 @@ def parse_with_grid(cv_img, h_lines, v_lines, col_names: list) -> list:
             text = ocr_cell(cell).strip()
             if text and text not in ["-", "—", ""]:
                 has_data = True
-                if col_name in NUM_COLS:
+                if col_name in num_cols:
                     text = clean_number(text) if is_number(text.replace(",", "")) else text
-                elif col_name == "Receive Date":
+                elif col_name in date_cols:
                     text = parse_date(text) if text else ""
             record[col_name] = text
         if has_data:
@@ -529,12 +886,16 @@ def parse_with_grid(cv_img, h_lines, v_lines, col_names: list) -> list:
     return rows
 
 
-def parse_with_ocr_fallback(items: list, img_width: int, header_cy: float) -> list:
+def parse_with_ocr_fallback(items: list, img_width: int, header_cy: float,
+                            header_keywords=None, num_cols=None, date_cols=None, default_defs=None) -> list:
     """Fallback OCR mode"""
+    header_keywords = header_keywords or HEADER_KEYWORDS  # MARKER_DOCENTER_AUTO_ORIENT_V1
+    num_cols = num_cols if num_cols is not None else NUM_COLS
+    date_cols = date_cols if date_cols is not None else {"Receive Date"}
     col_cx = {}
     for item in items:
         t = item["text"].lower().strip()
-        for col_name, keywords in HEADER_KEYWORDS.items():
+        for col_name, keywords in header_keywords.items():
             if any(kw in t for kw in keywords) and col_name not in col_cx:
                 col_cx[col_name] = item["cx"] / img_width
 
@@ -545,6 +906,8 @@ def parse_with_ocr_fallback(items: list, img_width: int, header_cy: float) -> li
             x_start = max(0.0, cx - 0.04) if i == 0 else (found_cols[i-1][1] + cx) / 2
             x_end = 1.0 if i == len(found_cols)-1 else (cx + found_cols[i+1][1]) / 2
             col_defs.append({"name": name, "x_start": round(x_start, 3), "x_end": round(min(1.0, x_end), 3)})
+    elif default_defs:
+        col_defs = default_defs
     else:
         col_defs = [
             {"name": "Branch",             "x_start": 0.00, "x_end": 0.06},
@@ -576,9 +939,9 @@ def parse_with_ocr_fallback(items: list, img_width: int, header_cy: float) -> li
             for col in col_defs:
                 if col["x_start"] <= cx_norm < col["x_end"]:
                     text = item["text"].strip()
-                    if col["name"] in NUM_COLS:
+                    if col["name"] in num_cols:
                         text = clean_number(text) if is_number(text.replace(",", "")) else text
-                    elif col["name"] == "Receive Date":
+                    elif col["name"] in date_cols:
                         text = parse_date(text) if text else ""
                     record[col["name"]] = (record[col["name"]] + " " + text).strip() if record[col["name"]] else text
                     break
@@ -699,23 +1062,30 @@ def parse_metadata_from_text(ocr_text: str, existing: dict) -> dict:
     log.info(f"Fallback metadata: doc_type={meta.get('doc_type')} bu_short={meta.get('bu_short')} receive_date={meta.get('receive_date')}")
     return meta
 
+# MARKER_DOCENTER_WARMUP_V1 -- Lock กัน /warmup กับ Request จริงโหลดโมเดลซ้อนกัน (ไม่ Thread-safe)
+import threading as _threading
+_ocr_load_lock = _threading.Lock()
+
+
 def _ensure_ocr_engine():
     """Lazy Load PaddleOCR -- โหลดเฉพาะตอนมีงานจริง (ไม่โหลดตอน Server Start)"""
     global ocr_engine
     if ocr_engine is None:
-        log.info("Loading PaddleOCR model (Lazy Load -- Request แรกหลัง Start/Idle)...")
-        from paddleocr import PaddleOCR
-        ocr_engine = PaddleOCR(use_textline_orientation=True, lang="th")
-        log.info("PaddleOCR model loaded ✓")
+        with _ocr_load_lock:
+            if ocr_engine is None:
+                log.info("Loading PaddleOCR model (Lazy Load -- Request แรกหลัง Start/Idle)...")
+                from paddleocr import PaddleOCR
+                ocr_engine = PaddleOCR(use_textline_orientation=True, lang="th")
+                log.info("PaddleOCR model loaded ✓")
 
 
 def run_ocr_sync(pdf_bytes: bytes, filename: str, extra_rotation: int = 0) -> dict:
     _ensure_ocr_engine()
     # ── Convert PDF ครั้งเดียว DPI 200 ────────────────────────────────────
-    images_raw = pdf_to_images(pdf_bytes, dpi=200)
-    # rotate ตาม user request
-    images = [rotate_image(img, extra_rotation) for img in images_raw] if extra_rotation else images_raw
-    log.info(f"PDF converted: {len(images)} page(s)" + (f" rotation={extra_rotation}°" if extra_rotation else ""))
+    # MARKER_DOCENTER_AUTO_ORIENT_V1 -- ใช้ภาพต้นฉบับ/Auto-Orient แทนการ Render ตาม /Rotate ตรงๆ
+    images, _auto_rot = get_oriented_images(pdf_bytes, extra_rotation)
+    log.info(f"PDF converted: {len(images)} page(s) orient={_auto_rot}" + (f" rotation={extra_rotation}°" if extra_rotation else ""))
+    _profile = "APN"
 
     all_metadata = {}
     all_rows = []
@@ -725,26 +1095,25 @@ def run_ocr_sync(pdf_bytes: bytes, filename: str, extra_rotation: int = 0) -> di
         cv_img    = np.array(img)
         img_width = img.size[0]
 
-        items = ocr_image_full(img)
+        items = ocr_page_items_progressive(img)  # MARKER_DOCENTER_SINGLE_PASS_V1
         all_items_per_page.append(items)
 
         if page_idx == 0:
             all_metadata = parse_metadata(items)
+        _profile = detect_profile(items, all_metadata if page_idx == 0 else parse_metadata(items), _profile)
 
         gray    = cv2.cvtColor(cv_img, cv2.COLOR_RGB2GRAY)
         h_lines = detect_lines(gray, 'h')
         v_lines = detect_lines(gray, 'v')
-        log.info(f"Page {page_idx+1}: {len(h_lines)} H-lines, {len(v_lines)} V-lines")
+        log.info(f"Page {page_idx+1}: {len(h_lines)} H-lines, {len(v_lines)} V-lines profile={_profile}")
 
-        if len(h_lines) >= 3 and len(v_lines) >= 3:
-            data_rows = parse_with_grid(cv_img, h_lines, v_lines, COL_NAMES)
-        else:
+        header_cy = 0
+        for item in items:
+            if any(kw in item["text"].lower() for kw in ["branch", "vendor name"]):
+                header_cy = max(header_cy, item["cy"])
+        if not (len(h_lines) >= 3 and len(v_lines) >= 3):
             log.info("Fallback OCR mode")
-            header_cy = 0
-            for item in items:
-                if any(kw in item["text"].lower() for kw in ["branch", "vendor name"]):
-                    header_cy = max(header_cy, item["cy"])
-            data_rows = parse_with_ocr_fallback(items, img_width, header_cy)
+        data_rows = parse_rows_by_profile(cv_img, items, img_width, h_lines, v_lines, _profile, header_cy)
 
         all_rows.extend(data_rows)
 
@@ -785,6 +1154,7 @@ def run_ocr_sync(pdf_bytes: bytes, filename: str, extra_rotation: int = 0) -> di
         "rows":        all_rows,
         "total_rows":  len(all_rows),
         "pages":       len(images),
+        "auto_orient": _auto_rot,
         "ocr_text":    all_ocr_text,
         "pdf_image":   pdf_image_b64,
     }
@@ -793,6 +1163,28 @@ def run_ocr_sync(pdf_bytes: bytes, filename: str, extra_rotation: int = 0) -> di
 @app.get("/health")
 async def health():
     return {"status": "ok", "model_loaded": ocr_engine is not None}
+
+
+# MARKER_DOCENTER_WARMUP_V1 -- Browser เรียกทันทีที่มีไฟล์เข้ามา: โหลดโมเดลล่วงหน้า (ตอบกลับทันที โหลดทำเบื้องหลัง)
+@app.post("/warmup")
+async def warmup():
+    global _last_request_time
+    _last_request_time = time.time()  # กัน Idle Watchdog ปิดกลางทาง
+    if ocr_engine is not None:
+        return {"status": "ready"}
+    loop = asyncio.get_event_loop()
+
+    def _load():
+        global _last_request_time
+        try:
+            _ensure_ocr_engine()
+        except Exception as e:
+            log.error(f"[warmup] failed: {e}")
+        finally:
+            _last_request_time = time.time()
+
+    loop.run_in_executor(None, _load)
+    return {"status": "loading"}
 
 
 @app.post("/ocr")
@@ -835,11 +1227,10 @@ async def ocr_pdf(file: UploadFile = File(...), rotation: int = 0):
         try:
             # Semaphore: PaddleOCR not thread-safe -- 1 request at a time
             async with ocr_semaphore:
-                await loop.run_in_executor(None, _set_ocr_affinity)
-                try:
-                    result = await loop.run_in_executor(None, run_ocr_sync, pdf_bytes, file.filename, rotation)
-                finally:
-                    await loop.run_in_executor(None, _reset_ocr_affinity)
+                def _run_full():
+                    with cpu_governor():  # MARKER_DOCENTER_CPU_GOVERNOR_V2
+                        return run_ocr_sync(pdf_bytes, file.filename, rotation)
+                result = await loop.run_in_executor(None, _run_full)
         finally:
             await loop.run_in_executor(None, _release_ocr_lock, lock_id)
         log.info(f"OCR done: {file.filename} -> {result['total_rows']} rows, {result['pages']} pages")
@@ -859,14 +1250,15 @@ DOCENTER_LIGHTWEIGHT_TOP_PCT = 0.35  # Confirm แล้ว (30-35%)
 
 
 def run_ocr_lightweight_sync(pdf_bytes: bytes, filename: str, extra_rotation: int = 0,
-                              on_start=None, on_page=None) -> dict:
+                              on_start=None, on_page=None, full: bool = False) -> dict:
     # MARKER_DOCENTER_LIGHTWEIGHT_STREAMING_V1 -- เพิ่ม on_start/on_page callback ให้ฝั่ง async endpoint
     # เรียกกลับได้ทีละหน้า (ผ่าน Queue) เพื่อ Stream ผลออกไปแบบ Real-time
     # โดยไม่กระทบ Logic การ OCR เดิมแม้แต่น้อย (ยังรันแบบ Sync ในเธรดเดียวเหมือนเดิม)
     _ensure_ocr_engine()
-    images_raw = pdf_to_images(pdf_bytes, dpi=200)
-    images = [rotate_image(img, extra_rotation) for img in images_raw] if extra_rotation else images_raw
-    log.info(f"[lightweight] PDF converted: {len(images)} page(s)" + (f" rotation={extra_rotation}°" if extra_rotation else ""))
+    # MARKER_DOCENTER_AUTO_ORIENT_V1
+    images, _auto_rot = get_oriented_images(pdf_bytes, extra_rotation)
+    log.info(f"[lightweight] PDF converted: {len(images)} page(s) orient={_auto_rot}" + (f" rotation={extra_rotation}°" if extra_rotation else ""))
+    _profile = "APN"
 
     if on_start:
         on_start(len(images))
@@ -875,11 +1267,20 @@ def run_ocr_lightweight_sync(pdf_bytes: bytes, filename: str, extra_rotation: in
 
     for page_idx, img in enumerate(images):
         w, h = img.size
-        top_crop = img.crop((0, 0, w, int(h * DOCENTER_LIGHTWEIGHT_TOP_PCT)))
-        cv_top = np.array(top_crop)
-        crop_width = top_crop.size[0]
+        # MARKER_DOCENTER_ONEPASS_V1 -- full=True: อ่านเต็มหน้ารอบเดียว (หัว+ตาราง) ส่ง rows/meta/ocr_text ออกไปพร้อม Signal
+        # Node ใช้ผลชุดเดียวกันทั้ง Match และบันทึก ไม่ต้องยิง /ocr ซ้ำ  (full=False = พฤติกรรมเดิมทุกประการ)
+        if full:
+            top_crop = img
+            cv_top = np.array(img)
+            crop_width = w
+            items = ocr_page_items_progressive(img)
+        else:
+            top_crop = img.crop((0, 0, w, int(h * DOCENTER_LIGHTWEIGHT_TOP_PCT)))
+            cv_top = np.array(top_crop)
+            crop_width = top_crop.size[0]
 
-        items = ocr_image_full(top_crop)
+            items = ocr_image_full(top_crop)
+            remember_top_strip(img, items, top_crop.size[1])  # MARKER_DOCENTER_SINGLE_PASS_V1 -- เก็บผลแถบบนไว้ให้ Full OCR ใช้ต่อ
 
         # MARKER_DOCENTER_LIGHTWEIGHT_PERPAGE_DOCTYPE_V1
         # ── ตรวจ doc_type "ทุกหน้า" ไม่ใช่แค่หน้าแรก -- 1 PDF อาจมีหลาย ──
@@ -893,10 +1294,20 @@ def run_ocr_lightweight_sync(pdf_bytes: bytes, filename: str, extra_rotation: in
         h_lines = detect_lines(gray_top, 'h')
         v_lines = detect_lines(gray_top, 'v')
 
-        if len(h_lines) >= 3 and len(v_lines) >= 3:
-            rows = parse_with_grid(cv_top, h_lines, v_lines, COL_NAMES)
-        else:
-            rows = parse_with_ocr_fallback(items, crop_width, 0)
+        _profile = detect_profile(items, meta, _profile)
+        _hdr_cy = 0
+        if full:
+            for _it in items:
+                if any(kw in _it["text"].lower() for kw in ["branch", "vendor name"]):
+                    _hdr_cy = max(_hdr_cy, _it["cy"])
+        rows = parse_rows_by_profile(cv_top, items, crop_width, h_lines, v_lines, _profile, _hdr_cy)
+
+        # MARKER_DOCENTER_SERIALCODE_TEXT_FALLBACK_V1 -- Serial Code ที่ parse_metadata จับตำแหน่งไม่ได้ -> หาจากข้อความทั้งหน้า
+        if not meta.get("serial_code"):
+            _all_txt = " ".join(i["text"] for i in items)
+            _m = re.search(r"serial\s*code\s*[:：]?\s*([A-Za-z0-9][A-Za-z0-9_.\-]{5,})", _all_txt, re.IGNORECASE)
+            if _m:
+                meta["serial_code"] = _m.group(1).strip()
 
         first_row = rows[0] if rows else {}
         # MARKER_DOCENTER_LIGHTWEIGHT_MATCHFIELDS_V1 -- เพิ่ม branch + amount เข้า page_signal ให้ครบ 4 Field
@@ -909,12 +1320,23 @@ def run_ocr_lightweight_sync(pdf_bytes: bytes, filename: str, extra_rotation: in
             # (รุ่นใหม่จาก excelReport.js) ส่งออกไปให้ Node.js ลอง Match แบบเร็วก่อน 4-field
             "serial_code":       meta.get("serial_code", ""),
             "vendor_name":       first_row.get("Vendor Name", ""),
-            "invoice_number":    first_row.get("Invoice Number", ""),
-            "gr_transaction_no": first_row.get("GR Transaction No.", ""),
+            "invoice_number":    first_row.get("Invoice Number", "") or first_row.get("Tax Invoice No.", ""),
+            "gr_transaction_no": first_row.get("GR Transaction No.", "") or first_row.get("GRT No.", ""),
             "branch":            first_row.get("Branch", ""),
-            "amount":            first_row.get("มูลค่ารวม", ""),
+            "amount":            first_row.get("มูลค่ารวม", "") or first_row.get("ยอดรวม", ""),
             "has_data":          bool(first_row),
         }
+        if full:
+            _txt = " ".join(i["text"] for i in items)
+            _meta_full = dict(meta)
+            try:
+                if not metadata_is_valid(_meta_full):
+                    _meta_full = parse_metadata_from_text(_txt, _meta_full)
+            except Exception as _e:
+                log.warning(f"[onepass] metadata fallback failed: {_e}")
+            page_signal["rows"] = rows
+            page_signal["meta"] = _meta_full
+            page_signal["ocr_text"] = _txt
         page_signals.append(page_signal)
         if on_page:
             on_page(page_signal)
@@ -934,12 +1356,12 @@ def run_ocr_lightweight_sync(pdf_bytes: bytes, filename: str, extra_rotation: in
 # ── Group/Match/Auto-Attach และ Broadcast Progress ได้ทันทีที่แต่ละหน้า ──
 # ── พร้อม (ไม่ต้องรอ PDF ทั้งไฟล์ OCR เสร็จก่อน) ─────────────────────────
 @app.post("/ocr-lightweight")
-async def ocr_pdf_lightweight(file: UploadFile = File(...), rotation: int = 0):
+async def ocr_pdf_lightweight(file: UploadFile = File(...), rotation: int = 0, full: int = 0):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="รับเฉพาะไฟล์ PDF เท่านั้น")
     global _last_request_time
     _last_request_time = time.time()
-    log.info(f"Lightweight OCR request (streaming): {file.filename} (rotation={rotation}°)")
+    log.info(f"Lightweight OCR request (streaming): {file.filename} (rotation={rotation}°{', one-pass FULL' if full else ''})")
     pdf_bytes = await file.read()
     if len(pdf_bytes) > 30 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="ไฟล์ใหญ่เกิน 30MB")
@@ -957,10 +1379,11 @@ async def ocr_pdf_lightweight(file: UploadFile = File(...), rotation: int = 0):
 
         def _run():
             try:
-                result = run_ocr_lightweight_sync(
-                    pdf_bytes, file.filename, rotation,
-                    on_start=on_start, on_page=on_page,
-                )
+                with cpu_governor():  # MARKER_DOCENTER_CPU_GOVERNOR_V2
+                    result = run_ocr_lightweight_sync(
+                        pdf_bytes, file.filename, rotation,
+                        on_start=on_start, on_page=on_page, full=bool(full),
+                    )
                 loop.call_soon_threadsafe(queue.put_nowait, ("done", result))
             except Exception as e:
                 log.error(f"Lightweight OCR error: {file.filename} -> {e}\n{traceback.format_exc()}")
@@ -1026,12 +1449,20 @@ async def extract_pdf_pages(file: UploadFile = File(...), pages: str = Form(...)
                 result_bytes = new_doc.tobytes()
                 new_doc.close()
                 src_doc.close()
+                # MARKER_DOCENTER_SUBPDF_ORIENT_CARRY_V1 -- Sub-PDF มี md5 ใหม่ ถ้าไม่ส่งต่อผลตัดสินทิศ
+                # Full OCR จะต้องเสียเวลา OCR ตรวจทิศซ้ำอีกรอบ (Cache เดิมใช้ md5 ของไฟล์เป็น Key)
+                try:
+                    _om = _ORIENT_CACHE.get(_hashlib.md5(pdf_bytes).hexdigest())
+                    if _om is not None and not rotation:
+                        _ORIENT_CACHE[_hashlib.md5(result_bytes).hexdigest()] = _om
+                except Exception as _e:
+                    log.warning(f"[extract-pages] carry orient failed: {_e}")
                 log.info(f"[extract-pages] Sub-PDF สร้างสำเร็จ: {len(page_list)} หน้า -> {len(result_bytes)} bytes")
                 return {"success": True, "pdf_base64": base64.b64encode(result_bytes).decode("utf-8")}
 
             # output == "image" (Default) -- สำหรับ Attach เข้า Record เดิม
-            images_raw = pdf_to_images(pdf_bytes, dpi=200)
-            images = [rotate_image(img, rotation) for img in images_raw] if rotation else images_raw
+            # MARKER_DOCENTER_AUTO_ORIENT_V1 -- รูป Preview/Attach ต้องตั้งตรงเหมือนที่ OCR ใช้
+            images, _ = get_oriented_images(pdf_bytes, rotation)
             extracted = []
             for p in page_list:
                 if 1 <= p <= len(images):

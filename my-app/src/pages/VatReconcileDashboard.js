@@ -24,6 +24,7 @@ import VatReconcileSystem from './VatReconcileSystem';
 import BranchFormModal from './BranchFormModal'; // MARKER_VATRECONCILE_BRANCHFORM_V1 -- ฟอร์ม New/Edit Branch (เหมือน Master Data > Branch)
 import { subscribeWs, broadcastWs } from '../wsManager';
 import { db } from '../lib/db'; // MARKER_RECON_FIRSTDRAFT_TO_TIMELINE_V1
+import { spLaunch } from '../spHandlerAutoUpdate'; // MARKER_SP_LISTENER_LAUNCH_V1
 
 const VAT_RECONCILE_API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000/api';
 
@@ -245,14 +246,12 @@ async function markReportSentToSp(file) {
 }
 function launchSpHandler(fileName, t) {
   const uri = `fastapn-sp://send?name=${encodeURIComponent(fileName)}&bu=${encodeURIComponent(t.buCode)}&period=${encodeURIComponent(t.period)}`;
-  const a = document.createElement('a');
-  a.href = uri; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+  spLaunch(uri); // MARKER_SP_LISTENER_LAUNCH_V1
 }
 // MARKER_VATRECONCILE_SP_DELETE_FRONT_V1 -- ลบไฟล์ใน SharePoint ผ่าน Folder Path เดียวกับตอนส่ง (Handler action=delete)
 function launchSpDelete(fileName, t) {
   const uri = `fastapn-sp://delete?name=${encodeURIComponent(fileName)}&bu=${encodeURIComponent(t.buCode)}&period=${encodeURIComponent(t.period)}`;
-  const a = document.createElement('a');
-  a.href = uri; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+  spLaunch(uri); // MARKER_SP_LISTENER_LAUNCH_V1
 }
 
 // MARKER_VATRECONCILE_FILE_ICONS_V1 -- ไอคอนปุ่ม Download / ลบ / ส่ง SharePoint ในตารางไฟล์ Report
@@ -692,7 +691,7 @@ export default function VatReconcileDashboard({ defaultPeriod, onNavigate }) {
     try {
       const token = sessionStorage.getItem('fastapn_token') || '';
       const before = spDest.at || '';
-      const a = document.createElement('a'); a.href = `fastapn-sp://check?dest=recon&api=${encodeURIComponent(spApiRoot())}&token=${encodeURIComponent(token)}`; a.style.display = 'none'; document.body.appendChild(a); a.click(); a.remove();
+      spLaunch(`fastapn-sp://check?dest=recon&api=${encodeURIComponent(spApiRoot())}&token=${encodeURIComponent(token)}`); // MARKER_SP_LISTENER_LAUNCH_V1
       for (let i = 0; i < 8; i += 1) { // รอ Handler รายงานกลับ (สูงสุด ~12 วินาที)
         await new Promise((r) => setTimeout(r, 1500));
         const d = await loadSpDest();

@@ -973,7 +973,7 @@ export default function ReconcileZoneLayout({
         const list = all.filter((x) => !q || `${x.bu} ${x.period} ${x.account}`.toLowerCase().includes(q));
         const nSel = all.filter((x) => staleSel[staleKey(x)]).length;
         const linesSel = all.filter((x) => staleSel[staleKey(x)]).reduce((t, x) => t + (x.lines || 0), 0);
-        const allShownSel = list.length > 0 && list.every((x) => staleSel[staleKey(x)]);
+        const allShownSel = list.some((x) => x.period_closed) && list.filter((x) => x.period_closed).every((x) => staleSel[staleKey(x)]);
         const th = { padding: '7px 10px', fontSize: 11.5, fontWeight: 700, color: '#57606a', textAlign: 'left', background: '#f6f8fa', position: 'sticky', top: 0, borderBottom: '1px solid #d0d7de' };
         const td = { padding: '6px 10px', fontSize: 12.5, borderBottom: '0.5px solid #f1f3f5' };
         return (
@@ -981,7 +981,7 @@ export default function ReconcileZoneLayout({
             <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, width: 760, maxWidth: '94vw', maxHeight: '86vh', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 40px rgba(0,0,0,0.25)', padding: 20 }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: '#1f2937', marginBottom: 4 }}>ข้อมูล AP ค้าง — โยนไฟล์เข้ามาแต่ไม่มีใคร Confirm</div>
               <div style={{ fontSize: 12, color: '#57606a', marginBottom: 10, lineHeight: 1.5 }}>
-                แสดงข้อมูล AP ของ Period ที่ปิดแล้ว{staleData?.closed_period ? ` (≤ ${formatPeriodMMMYY(staleData.closed_period)})` : ''} ที่ BU + Account นั้น<b> ไม่มีไฟล์ที่ Confirm</b> ระบบไม่นับวันหมดอายุและไม่ลบให้เอง — เลือกรายการที่ต้องการแล้วกดล้าง (ลบจริง ไม่แตะ Detail of Overhead / DT / ไฟล์รายงาน)
+                แสดงข้อมูล AP ทุก Period ที่ BU + Account นั้น<b> ไม่มีไฟล์ที่ Confirm (ยังไม่มี Expire date Stamp)</b>{staleData?.closed_period ? ` — ล้างได้เฉพาะ Period ที่ปิดแล้ว (≤ ${formatPeriodMMMYY(staleData.closed_period)})` : ' — ยังไม่มี Period ที่ปิด จึงล้างไม่ได้'} ระบบไม่นับวันหมดอายุและไม่ลบให้เอง — เลือกรายการที่ต้องการแล้วกดล้าง (ลบจริง ไม่แตะ Detail of Overhead / DT / ไฟล์รายงาน)
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                 <input value={staleQ} onChange={(e) => setStaleQ(e.target.value)} placeholder="ค้นหา BU / Period / Account..." style={{ flex: 1, padding: '7px 10px', fontSize: 12.5, border: '1px solid #d0d7de', borderRadius: 8, outline: 'none' }} />
@@ -989,12 +989,11 @@ export default function ReconcileZoneLayout({
               </div>
               <div style={{ flex: 1, minHeight: 160, overflow: 'auto', border: '1px solid #eaeef2', borderRadius: 8 }}>
                 {!staleData && !staleErr && <div style={{ padding: 18, textAlign: 'center', color: '#8b95a1', fontSize: 12.5 }}>กำลังโหลด…</div>}
-                {staleData && !staleData.closed_period && <div style={{ padding: 18, textAlign: 'center', color: '#8b95a1', fontSize: 12.5 }}>ยังไม่มี Period ที่ปิด จึงยังไม่มีรายการค้าง</div>}
-                {staleData && staleData.closed_period && all.length === 0 && <div style={{ padding: 18, textAlign: 'center', color: '#1a7f37', fontSize: 12.5 }}>ไม่มีข้อมูลค้าง ✓</div>}
+                                {staleData && all.length === 0 && <div style={{ padding: 18, textAlign: 'center', color: '#1a7f37', fontSize: 12.5 }}>ไม่มีข้อมูลค้าง ✓</div>}
                 {list.length > 0 && (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead><tr>
-                      <th style={{ ...th, width: 34 }}><input type="checkbox" checked={allShownSel} onChange={() => setStaleSel((p) => { const n = { ...p }; list.forEach((x) => { if (allShownSel) delete n[staleKey(x)]; else n[staleKey(x)] = true; }); return n; })} /></th>
+                      <th style={{ ...th, width: 34 }}><input type="checkbox" checked={allShownSel} onChange={() => setStaleSel((p) => { const n = { ...p }; list.filter((x) => x.period_closed).forEach((x) => { if (allShownSel) delete n[staleKey(x)]; else n[staleKey(x)] = true; }); return n; })} /></th>
                       <th style={th}>BU</th><th style={th}>Period</th><th style={th}>Account</th>
                       <th style={{ ...th, textAlign: 'right' }}>บรรทัด</th><th style={th}>นำเข้าล่าสุด</th><th style={th}>สถานะ</th>
                     </tr></thead>
@@ -1002,14 +1001,14 @@ export default function ReconcileZoneLayout({
                       {list.map((x) => {
                         const k = staleKey(x); const on = !!staleSel[k];
                         return (
-                          <tr key={k} onClick={() => setStaleSel((p) => { const n = { ...p }; if (n[k]) delete n[k]; else n[k] = true; return n; })} style={{ cursor: 'pointer', background: on ? '#eef6ff' : '#fff' }}>
-                            <td style={td}><input type="checkbox" checked={on} onChange={() => {}} /></td>
+                          <tr key={k} onClick={() => { if (!x.period_closed) return; setStaleSel((p) => { const n = { ...p }; if (n[k]) delete n[k]; else n[k] = true; return n; }); }} style={{ cursor: x.period_closed ? 'pointer' : 'default', background: on ? '#eef6ff' : '#fff', opacity: x.period_closed ? 1 : 0.8 }}>
+                            <td style={td}><input type="checkbox" checked={on} disabled={!x.period_closed} onChange={() => {}} /></td>
                             <td style={{ ...td, fontWeight: 700 }}>{x.bu}</td>
                             <td style={td}>{formatPeriodMMMYY(x.period)}</td>
                             <td style={{ ...td, fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>{x.account}</td>
                             <td style={{ ...td, textAlign: 'right' }}>{Number(x.lines || 0).toLocaleString()}</td>
                             <td style={{ ...td, color: '#57606a' }}>{x.last_import ? new Date(x.last_import).toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-                            <td style={td}><span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: x.has_job ? '#fff4e5' : '#f1f3f5', color: x.has_job ? '#9a6700' : '#57606a' }}>{x.has_job ? 'มีไฟล์ แต่ไม่ Confirm' : 'ไม่เคย Export'}</span></td>
+                            <td style={td}><span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: x.has_job ? '#fff4e5' : '#f1f3f5', color: x.has_job ? '#9a6700' : '#57606a' }}>{x.has_job ? 'มีไฟล์ แต่ไม่ Confirm' : 'ไม่เคย Export'}</span>{!x.period_closed && <span title="Period ยังไม่ปิด — ล้างจากหน้านี้ไม่ได้" style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: '#e6f4ea', color: '#1a7f37' }}>Period ยังเปิด</span>}</td>
                           </tr>
                         );
                       })}
@@ -1257,6 +1256,14 @@ export default function ReconcileZoneLayout({
                             const expAt = confirmedExpMap[`${String(r.bu).toUpperCase()}|${a.code}`] || null; // MARKER_RECONCILEZONE_CONFIRMED_EXP_V1
                             const cellBg = isColSelected ? '#f0f6ff' : undefined;
                             const borderLeft = (ai === 0 && gi > 0) ? `2px solid ${BORDER}` : `1px solid #e1e4e8`; // MARKER_RECONCILEZONE_ACCOUNT_DIVIDER_V1
+                            // MARKER_RECONCILEZONE_WAIT_CLEAR_V1 -- Confirm แล้ว (มีวันหมดอายุ) แต่ข้อมูล AP ยังไม่ถูกล้าง = Badge ฟ้า "Wait Clear" แทนจุดเขียว (ล้างอัตโนมัติเมื่อครบกำหนด -> กลับเป็น No Data)
+                            if (expAt && hasAp) {
+                              return (
+                                <td key={a.code} colSpan={2} onClick={() => setCcAccountSelection(`acc:${a.code}`)} onDoubleClick={() => openDotPreview(r.bu, a.code)} onContextMenu={(e) => openApMenu(e, r.bu, a.code)} title={`Confirm แล้ว · AP ${Number(cell.count).toLocaleString()} บรรทัด รอล้างข้อมูล (หมดอายุ ${fmtDmyExp(expAt)}) · ดับเบิลคลิกเพื่อ Preview`} style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, borderLeft, verticalAlign: 'middle' }}>
+                                  <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 10.5, fontWeight: 700, background: '#ddf4ff', color: '#0969da', border: '1px solid #54aeff', whiteSpace: 'nowrap' }}>Wait Clear</span>
+                                </td>
+                              );
+                            }
                             // MARKER_RECONCILEZONE_NODATA_BADGE_V1 -- Account ที่ไม่มีทั้ง TB และ AP = Badge แดง "No Data" ช่องเดียวคร่อม 2 คอลัมน์
                             if (!cell?.tbActive && !hasAp) {
                               return (

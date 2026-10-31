@@ -519,6 +519,40 @@ router.get("/history", async (req, res) => {
         if (bt) { bt.status = 'pv-backup'; /* รวมทุกประเภท Backup: UI ใช้ซ่อนจากประวัติ Export */ bt.finishedAt = f.finished_at; bt.expireAt = f.expire_at; bt.period = f.period || null; }
       });
     }
+    // MARKER_VATEXPORT_HISTORY_SP_UPLOAD_V1 -- ส่งเลข BU (SEGMENT3) + งวด (YYYY.MM) ต่อ Batch ให้ Frontend ส่งไฟล์เข้า SharePoint Z_AllSystemUpload (<เลข BU>\\<YYYY.MM>) ตามหลักเดียวกับ Folder Path ของไฟล์ Export (งวดว่าง = เดือนปัจจุบัน)
+    if (batchIds.length > 0) {
+      try {
+        const buList = [...new Set(Array.from(batchMap.values()).map((b) => b.bu).filter(Boolean))];
+        const [segRes, perRes] = await Promise.all([
+          pool.query(`SELECT bu, "SEGMENT3" AS seg3, "BOOK" AS book FROM company_list WHERE bu = ANY($1)`, [buList]),
+          pool.query(
+            `SELECT batch_id, MIN(NULLIF(period, '')) AS period FROM (
+               SELECT batch_id, period FROM vat_upload_popvatdraft WHERE batch_id = ANY($1)
+               UNION ALL SELECT batch_id, period FROM vat_simpleinputdraft WHERE batch_id = ANY($1)
+               UNION ALL SELECT batch_id, period FROM vat_adi_transferdraft WHERE batch_id = ANY($1)
+             ) t GROUP BY batch_id`,
+            [batchIds]
+          ),
+        ]);
+        const segByBu = new Map();
+        const crgBuSet = new Set(); // MARKER_VATEXPORT_CRG_SUBFOLDER_V1 -- BU ที่ BOOK = CRG (กลุ่ม CRG) -> Frontend/Handler ส่งไฟล์ลง <BU>\\<YYYY.MM>\\<SEGMENT3> (โฟลเดอร์ย่อยแยกเฉพาะ CRG Group)
+        segRes.rows.forEach((r) => { if (!segByBu.has(r.bu) && r.seg3) segByBu.set(r.bu, String(r.seg3).trim()); if (String(r.book || "").trim().toUpperCase() === "CRG") crgBuSet.add(r.bu); });
+        const perByBatch = new Map(perRes.rows.map((r) => [r.batch_id, r.period]));
+        const toSpPeriod = (s) => {
+          const v = String(s || "").trim();
+          let m = v.match(/^(\d{1,2})[-/.](\d{4})$/);
+          if (m) return `${m[2]}.${m[1].padStart(2, "0")}`;
+          m = v.match(/^(\d{4})[-/.](\d{1,2})/);
+          if (m) return `${m[1]}.${m[2].padStart(2, "0")}`;
+          const n = new Date();
+          return `${n.getFullYear()}.${String(n.getMonth() + 1).padStart(2, "0")}`;
+        };
+        // MARKER_VATEXPORT_CRG_PARENT_HEAD_V1 -- กลุ่ม CRG : โฟลเดอร์แม่ = SEGMENT3 ของ BU หัวกลุ่ม (company_list.bu = ชื่อ BOOK เช่น CRG -> 5000) , โฟลเดอร์ย่อย = SEGMENT3 ของ BU เอง -> 5000\\YYYY.MM\\5895 ; ไม่พบหัวกลุ่ม = ใช้ของ BU เองเหมือนเดิม
+        let headSeg = "";
+        if (crgBuSet.size > 0) { try { const hr = await pool.query(`SELECT "SEGMENT3" AS seg3 FROM company_list WHERE UPPER(TRIM(bu)) = 'CRG' AND "SEGMENT3" IS NOT NULL AND TRIM("SEGMENT3") <> '' LIMIT 1`); headSeg = hr.rows[0] ? String(hr.rows[0].seg3).trim() : ""; } catch (e) { /* ignore */ } }
+        batchMap.forEach((bt) => { const own = segByBu.get(bt.bu) || ""; if (crgBuSet.has(bt.bu) && headSeg) { bt.spBu = headSeg; bt.spSub = own || headSeg; } else { bt.spBu = own; bt.spSub = ""; } bt.spPeriod = toSpPeriod(perByBatch.get(bt.batchId)); });
+      } catch (e) { console.error("GET /vat-export/history SP info error:", e.message); }
+    }
     res.json({ ok: true, batches: Array.from(batchMap.values()) });
   } catch (err) {
     console.error("GET /vat-export/history error:", err.message);
@@ -540,7 +574,7 @@ router.get("/file/:id/download", async (req, res) => {
     const gzBuffer = fs.readFileSync(record.file_path);
     const fileBuffer = zlib.gunzipSync(gzBuffer);
 
-    await pool.query(`UPDATE file_storage SET downloaded_at = NOW() WHERE id = $1`, [id]);
+    await pool.query(`UPDATE file_storage SET downloaded_at = COALESCE(downloaded_at, NOW()) WHERE id = $1`, [id]); // MARKER_VATEXPORT_DOWNLOADED_AT_FREEZE_V1 -- กด Download แล้วเวลาหยุดที่ครั้งแรก (โหลดซ้ำไม่อัปเดตเวลา)
 
     const contentType = record.file_name.endsWith(".xlsx")
       ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

@@ -13,13 +13,17 @@
  */
 import React from "react";
 import JSZip from "jszip";
+import * as XLSX from "xlsx"; // MARKER_INBOX_EXPORT_BY_BU_V1
 import { readPdfTaxInvoice } from "../utils/pdfTaxInvoiceReader";
 
+const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000'; // MARKER_INBOX_PDF_REF_SERVER_V1
+const SERVER_SWITCH_MS = 45000; // ประเมินว่าเครื่องนี้ต้องใช้เวลาเกินนี้ -> ให้ Server ช่วยอ่าน
+const authHeader = () => { try { const t = sessionStorage.getItem('fastapn_token'); return t ? { Authorization: `Bearer ${t}` } : {}; } catch (_) { return {}; } };
 let _pdfjsPromise = null;
 function loadPdfjs() {
   if (!_pdfjsPromise) {
     const base = new URL((process.env.PUBLIC_URL || "") + "/pdfjs/", window.location.href).href;
-    _pdfjsPromise = import(/* webpackIgnore: true */ base + "pdf.min.mjs").then((lib) => {
+    _pdfjsPromise = import(/* webpackIgnore: true */ base + "pdf.min.js") /* MARKER_PDFTAXINV_LIBJS_V1 (.js เพราะ IIS ไม่รู้จัก .mjs -> 404.3 ; ไฟล์เนื้อหาเหมือน .mjs ทุกไบต์) */.then((lib) => {
       lib.GlobalWorkerOptions.workerSrc = base + "pdf.worker.min.js"; // MARKER_PDFTAXINV_WORKERJS_V1 (.js เพราะ Dev server ค้างตอนส่ง .mjs)
       return lib;
     }).catch((e) => { _pdfjsPromise = null; throw e; });
@@ -47,10 +51,31 @@ async function expandInputs(files) {
   return { pdfs, skipped };
 }
 
+// MARKER_PDFTAXINV_PERF_V1 -- แบบ Lazy: ไม่โหลดทุกไฟล์เข้า RAM พร้อมกัน อ่านข้อมูลของแต่ละไฟล์ตอนจะใช้จริงแล้วปล่อยทิ้ง
+async function expandInputsLazy(files) {
+  const pdfs = [];
+  let skipped = 0;
+  for (const f of files) {
+    const lower = f.name.toLowerCase();
+    if (lower.endsWith(".zip")) {
+      const zip = await JSZip.loadAsync(await f.arrayBuffer());
+      for (const entry of Object.values(zip.files)) {
+        if (entry.dir || /(^|\/)__MACOSX\//.test(entry.name)) continue;
+        if (/\.pdf$/i.test(entry.name)) pdfs.push({ name: entry.name.split("/").pop(), getData: () => entry.async("arraybuffer"), from: f.name });
+        else skipped++;
+      }
+    } else if (lower.endsWith(".pdf")) {
+      pdfs.push({ name: f.name, getData: () => f.arrayBuffer(), from: null });
+    } else skipped++;
+  }
+  return { pdfs, skipped };
+}
+const yieldUi = () => new Promise((res) => setTimeout(res, 0));
+
 const fmt = (n) => (n === null || n === undefined ? "—" : Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const buKey = (r) => (r.buyer && r.buyer.taxId ? `${r.buyer.taxId}-${r.buyer.branch || "?"}` : "(ไม่พบ)");
 
-export default function VatPdfTaxInvoicePreview({ files, onClose, onMatch, onOpenConfirm }) {
+export default function VatPdfTaxInvoicePreview({ files, presetRows, onClose, onMatch, onOpenConfirm }) { // MARKER_INBOX_EXCEL_V1 -- presetRows = แถวจาก Inbox Excel (ข้ามขั้นอ่าน PDF)
   const [rows, setRows] = React.useState([]);
   const [progress, setProgress] = React.useState({ done: 0, total: 0 });
   const [skipped, setSkipped] = React.useState(0);
@@ -63,26 +88,136 @@ export default function VatPdfTaxInvoicePreview({ files, onClose, onMatch, onOpe
     let off = false;
     (async () => {
       try {
-        const [pdfjs, { pdfs, skipped: sk }] = await Promise.all([loadPdfjs(), expandInputs(files)]);
+        const pdfFilesForRef = (presetRows && presetRows.__pdfFiles) || ((presetRows && presetRows.length > 0) ? files : null); // MARKER_INBOX_PDF_REF_V1
+        if (presetRows && presetRows.length > 0 && true) { // MARKER_INBOX_EXCEL_V1
+          const acc = presetRows.map((r) => ({ ...r }));
+          if (pdfFilesForRef && pdfFilesForRef.length > 0) { // MARKER_INBOX_PDF_REF_V1 -- อ่าน PDF (PDF.js เร็ว) จับคู่กับแถว Excel ด้วยชื่อไฟล์ (PdfFileNAme) หรือ เลขที่ใบกำกับ+Tax ID ผู้ขาย แล้วเติม Invoice Ref. ที่ Excel ไม่มี
+            setMatchMsg('กำลังอ่าน PDF เพื่อเติม Invoice Ref.…');
+            const [pdfjs, { pdfs }] = await Promise.all([loadPdfjs(), expandInputsLazy(pdfFilesForRef)]); // MARKER_PDFTAXINV_INBOX_LAZY_V1 -- เดิม expandInputs โหลด PDF ทุกไฟล์เข้า RAM พร้อมกัน (1,000+ ไฟล์ = หน้าค้าง) -> Lazy อ่านทีละไฟล์ตอนใช้จริง
+            if (off) return;
+            const nk = (v) => String(v || '').split(/[\\/]/).pop().replace(/\.pdf$/i, '').trim().toLowerCase();
+            const nn = (v) => String(v || '').replace(/[^0-9a-z]/gi, '').toLowerCase();
+            const byName = new Map(); const byNoTax = new Map();
+            acc.forEach((r) => { if (!r.invoiceRef) { byName.set(nk(r.fileName), r); byNoTax.set(`${nn(r.invoiceNo)}|${(r.supplier && r.supplier.taxId) || ''}`, r); } });
+            // MARKER_INBOX_PDF_REF_SERVER_V1 -- อ่านเฉพาะ PDF ที่ชื่อตรงกับแถว Excel ที่ยังไม่มี Ref (ถ้าไม่มีชื่อตรงเลย ค่อยอ่านทั้งหมดเพื่อจับด้วยเลขที่ใบกำกับ+Tax ID)
+            let cand = pdfs.filter((x) => byName.has(nk(x.name)));
+            if (cand.length === 0) cand = pdfs;
+            if (byName.size === 0) cand = []; // ทุกแถวมี Ref จาก Excel แล้ว -> ไม่ต้องอ่าน PDF เลย
+            setProgress({ done: 0, total: cand.length });
+            let filled = 0; let doneN = 0; let viaServer = 0;
+            const applyRd = (name, rd) => {
+              if (!rd) return;
+              const target = byName.get(nk(name)) || byNoTax.get(`${nn(rd.invoiceNo)}|${(rd.supplier && rd.supplier.taxId) || ''}`);
+              if (target && !target.invoiceRef && !target.creditNote && !(target.lines && target.lines.length) && rd.lines && rd.lines.length > 0) { // MARKER_INBOX_PDF_LINES_V1 -- ใบเสร็จ/ใบกำกับภาษีที่มีรายการ Invoice No. (เช่น The Mall: IN…) -> เติม Invoice Ref. รายใบแจ้งหนี้ + VAT/ยอดเฉพาะบรรทัดที่มี VAT ให้แถว Inbox (Excel ไม่มี Ref) ไป Match Step 1 (Ref.) ; Ref ที่ไม่มี VAT (ค่าเช่า/ภาษีที่ดิน/อากร) ไม่นับ เพราะไม่อยู่ใน Incomplete
+                const gm = new Map();
+                rd.lines.forEach((l) => { if (!l.invoiceNo || !(l.vat > 0)) return; const g = gm.get(l.invoiceNo) || { invoiceNo: l.invoiceNo, amount: 0, vat: 0 }; g.amount = Math.round((g.amount + (l.amount || 0)) * 100) / 100; g.vat = Math.round((g.vat + l.vat) * 100) / 100; gm.set(l.invoiceNo, g); });
+                if (gm.size > 0) { target.lines = [...gm.values()].map((g) => ({ ...g, total: Math.round((g.amount + g.vat) * 100) / 100 })); target.refFromPdf = true; filled++; return; }
+              }
+              if (!rd.invoiceRef) return;
+              if (target && !target.invoiceRef) { target.invoiceRef = rd.invoiceRef; target.refFromPdf = true; filled++; }
+            };
+            const readLocal = async (x) => {
+              let tid; try { const data = await x.getData(); return await Promise.race([readPdfTaxInvoice(pdfjs, data, x.name), new Promise((_, rej) => { tid = setTimeout(() => rej(new Error('timeout')), 15000); })]); } catch (_) { return null; } finally { if (tid) clearTimeout(tid); } // MARKER_PDFTAXINV_INBOX_LAZY_V1
+            };
+            // ชุดแรก (สูงสุด 8 ใบ) อ่านในเครื่องนี้ + จับเวลา เพื่อประเมินว่าเครื่องนี้ช้าไหม
+            const BENCH = Math.min(8, cand.length);
+            const t0 = Date.now();
+            let i = 0;
+            for (; i < BENCH; i++) {
+              const rd = await readLocal(cand[i]); if (off) return;
+              applyRd(cand[i].name, rd); doneN++; setProgress({ done: doneN, total: cand.length });
+              await yieldUi();
+            }
+            const avgMs = BENCH > 0 ? (Date.now() - t0) / BENCH : 0;
+            const projectedMs = avgMs * (cand.length - i);
+            let useServer = false; let serverBatch = 20;
+            if (cand.length - i > 0 && projectedMs > SERVER_SWITCH_MS) { // เครื่องนี้ช้า/ไฟล์เยอะ -> ถาม Server ว่าอ่านให้ได้ไหม (ไม่ได้ก็อ่านต่อเองจนจบ)
+              try {
+                const pr = await fetch(`${API_BASE}/vat-pdf-taxinvoice/ping`, { headers: authHeader() });
+                const pj = await pr.json().catch(() => ({}));
+                if (pr.ok && pj.ok) { useServer = true; serverBatch = Math.max(5, Math.min(pj.maxFiles || 20, 20)); }
+              } catch (_) { useServer = false; }
+            }
+            if (useServer) {
+              setMatchMsg(`เครื่องนี้อ่านช้า (ประมาณ ${Math.round(projectedMs / 1000)} วินาที) — ให้ Server ช่วยอ่าน…`);
+              const rest = cand.slice(i);
+              const batches = []; for (let k = 0; k < rest.length; k += serverBatch) batches.push(rest.slice(k, k + serverBatch));
+              let bi = 0; let serverFailed = [];
+              const worker = async () => {
+                while (bi < batches.length && !off) {
+                  const batch = batches[bi++];
+                  try {
+                    const fd = new FormData();
+                    const datas = []; for (const x of batch) datas.push(await x.getData()); // MARKER_PDFTAXINV_INBOX_LAZY_V1
+                    batch.forEach((x, k) => fd.append('files', new Blob([datas[k]], { type: 'application/pdf' }), x.name));
+                    fd.append('names', JSON.stringify(batch.map((x) => x.name)));
+                    const r = await fetch(`${API_BASE}/vat-pdf-taxinvoice/read`, { method: 'POST', headers: authHeader(), body: fd });
+                    const j = await r.json().catch(() => ({}));
+                    if (!r.ok || !j.ok) throw new Error((j && j.error) || 'Server อ่านไม่สำเร็จ');
+                    batch.forEach((x, k) => applyRd(x.name, j.results && j.results[k]));
+                    viaServer += batch.length;
+                  } catch (_) { serverFailed = serverFailed.concat(batch); } // ชุดไหน Server อ่านไม่ได้ -> กลับมาอ่านเองทีหลัง
+                  doneN += batch.length; if (!off) setProgress({ done: Math.min(doneN, cand.length), total: cand.length });
+                }
+              };
+              await Promise.all([worker(), worker()]);
+              if (off) return;
+              for (const x of serverFailed) { const rd = await readLocal(x); if (off) return; applyRd(x.name, rd); }
+            } else {
+              for (; i < cand.length; i++) {
+                const rd = await readLocal(cand[i]); if (off) return;
+                applyRd(cand[i].name, rd); doneN++;
+                if (i % 5 === 0) { setProgress({ done: doneN, total: cand.length }); await new Promise((r) => setTimeout(r, 0)); } // พักให้หน้าเว็บตอบสนอง
+              }
+            }
+            setProgress({ done: cand.length, total: cand.length });
+            setMatchMsg(`เติม Invoice Ref. จาก PDF ได้ ${filled} ใบ${viaServer ? ` (Server ช่วยอ่าน ${viaServer} ใบ)` : ''} — กำลัง Match…`);
+          }
+          setRows(acc);
+          if (onMatch) {
+            setMatchMsg('กำลัง Match กับรายการค้าง…');
+            const res = await onMatch(acc, (m) => { if (!off) setMatchMsg(m); });
+            if (!off) { setMatches(res); if (onOpenConfirm) onOpenConfirm(acc, res); } // MARKER_INBOX_AR_LAYOUT_V1 -- Inbox: Match เสร็จเปิดหน้าแบบ AR_Collection (Tab BU / พร้อม Pop VAT / ต้องตรวจสอบ / ไม่ Match เลย) ทันที
+            setMatchMsg('');
+          }
+          return;
+        }
+        const [pdfjs, { pdfs, skipped: sk }] = await Promise.all([loadPdfjs(), expandInputsLazy(files)]);
         if (off) return;
         setSkipped(sk);
         setProgress({ done: 0, total: pdfs.length });
         const acc = [];
         for (let i = 0; i < pdfs.length; i++) {
-          const r = await Promise.race([
-            readPdfTaxInvoice(pdfjs, pdfs[i].data, pdfs[i].name),
-            new Promise((_, rej) => setTimeout(() => rej(new Error("อ่านไฟล์ " + pdfs[i].name + " เกิน 30 วินาที — Worker ของ PDF.js อาจโหลดไม่ได้ (ดู Network: pdf.worker.min.js)")), 30000)),
-          ]);
+          let r;
+          let tid;
+          try {
+            const data = await pdfs[i].getData();
+            r = await Promise.race([
+              readPdfTaxInvoice(pdfjs, data, pdfs[i].name),
+              new Promise((_, rej) => { tid = setTimeout(() => rej(new Error("อ่านไฟล์ " + pdfs[i].name + " เกิน 30 วินาที")), 30000); }),
+            ]);
+          } catch (e) {
+            // MARKER_PDFTAXINV_PERF_V1 -- ไฟล์เดียวอ่านไม่ได้/ช้าเกิน ไม่หยุดทั้งชุด: บันทึกเป็น "อ่านไม่ได้" แล้วอ่านไฟล์ถัดไปต่อ
+            r = { fileName: pdfs[i].name, status: "unreadable", supplier: {}, buyer: {}, warnings: [(e && e.message) || "อ่านไม่ได้"], invoiceNo: null, invoiceDate: null, invoiceRef: null, beforeVat: null, vat: null, grandTotal: null };
+          } finally { if (tid) clearTimeout(tid); }
           r.from = pdfs[i].from;
           acc.push(r);
           if (off) return;
-          { setRows(acc.slice()); setProgress({ done: i + 1, total: pdfs.length }); }
+          if ((i + 1) % (pdfs.length > 300 ? 100 : 20) === 0 || i === pdfs.length - 1) { // MARKER_PDFTAXINV_BIGBATCH_V1 -- ไฟล์เยอะ (>300) อัปเดตตารางทุก 100 ไฟล์ (เดิมทุก 20 = Render ทั้งตารางซ้ำเป็นร้อยรอบ -> หน่วงจนค้าง/จอดับ) // อัปเดตตาราง/ความคืบหน้าทุก 20 ไฟล์ (เดิมทุกไฟล์ -> หน้าจอค้างเมื่อไฟล์เยอะ) แล้วคืนเวลาให้ UI
+            setRows(acc.slice()); setProgress({ done: i + 1, total: pdfs.length });
+            await yieldUi();
+          } else if ((i + 1) % 5 === 0) setProgress({ done: i + 1, total: pdfs.length });
         }
         setRows(acc.slice());
         if (onMatch && acc.length > 0) {
           setMatchMsg('กำลัง Match กับรายการค้าง…');
           const res = await onMatch(acc, (m) => { if (!off) setMatchMsg(m); });
-          if (!off) setMatches(res);
+          if (!off) {
+            setMatches(res);
+            // MARKER_PDF_AR_LAYOUT_V1 -- โยน PDF/รูป: Matching ต่างจาก AR แต่ผลแสดงหน้าแบบ AR_Collection (แยก Tab BU / พร้อม Pop VAT / ต้องตรวจสอบ) เหมือน Inbox
+            const okN = (res || []).filter((m) => m && (m.status === 'match' || m.status === 'review')).length;
+            if (onOpenConfirm && okN > 0) onOpenConfirm(acc, res);
+          }
           setMatchMsg('');
         }
       } catch (e) {
@@ -92,15 +227,44 @@ export default function VatPdfTaxInvoicePreview({ files, onClose, onMatch, onOpe
       }
     })();
     return () => { off = true; };
-  }, [files]);
+  }, [files, presetRows]);
 
   const okCount = rows.filter((r) => r.status === "ok").length;
   const reviewCount = rows.filter((r) => r.status === "review").length;
   const unreadable = rows.filter((r) => r.status === "unreadable").length;
-  const matchOf = (r) => (matches ? matches[rows.indexOf(r)] : null);
+  const idxMap = React.useMemo(() => new Map(rows.map((r, i) => [r, i])), [rows]); // MARKER_PDFTAXINV_PERF_V1 -- แทน rows.indexOf (O(n) ต่อแถว)
+  const matchOf = (r) => (matches ? matches[idxMap.get(r)] : null);
   const mCount = React.useMemo(() => { const c = { match: 0, review: 0, notfound: 0 }; (matches || []).forEach((m) => { if (m && c[m.status] !== undefined) c[m.status]++; }); return c; }, [matches]);
-  const sorted = React.useMemo(() => rows.slice().sort((a, b) => (buKey(a) + a.invoiceNo).localeCompare(buKey(b) + b.invoiceNo)), [rows]);
-  const groups = [...new Set(sorted.map(buKey))];
+  const isInboxView = !!(presetRows && presetRows.length > 0); // MARKER_INBOX_EXCEL_GROUP_BY_BU_V1
+  const grpKey = (r) => { const m = matches ? matches[idxMap.get(r)] : null; return matches ? (m && m.bu ? "BU " + m.bu : "ไม่พบ BU") : "ผู้ซื้อ " + buKey(r); }; // MARKER_INBOX_EXCEL_GROUP_BY_BU_V1 -- หลัง Match แยกกลุ่มตาม BU เหมือน AR_Collection
+  const stOrd = (r) => { const m = matches ? matches[idxMap.get(r)] : null; return !m ? 3 : m.status === "match" ? 0 : m.status === "review" ? 1 : 2; };
+  const BUSY_VIEW_MAX = 150; // MARKER_PDFTAXINV_BIGBATCH_V1 -- ระหว่างอ่าน/Match แสดงเฉพาะ 150 แถวล่าสุด (Render 1,000+ แถวซ้ำๆ ทำให้เครื่องค้าง) | เสร็จแล้วแสดงครบ
+  const viewRows = busy && rows.length > BUSY_VIEW_MAX ? rows.slice(-BUSY_VIEW_MAX) : rows;
+  const sorted = React.useMemo(() => viewRows.slice().sort((a, b) => grpKey(a).localeCompare(grpKey(b)) || stOrd(a) - stOrd(b) || String(a.invoiceNo).localeCompare(String(b.invoiceNo))), [viewRows, matches]); // eslint-disable-line react-hooks/exhaustive-deps
+  const itemsByGroup = React.useMemo(() => { const m = new Map(); sorted.forEach((r) => { const k = grpKey(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }); return m; }, [sorted, matches]); // eslint-disable-line react-hooks/exhaustive-deps
+  const groups = [...itemsByGroup.keys()];
+
+  // MARKER_INBOX_EXPORT_BY_BU_V1 -- Export ผล Match เป็น Excel แยก Sheet ตาม BU (Match + ต้องตรวจสอบ) + Sheet "ไม่พบ" + Sheet สรุป
+  const exportExcel = () => {
+    const wb = XLSX.utils.book_new();
+    const rowOf = (r, m) => { const x = (m && m.rows && m.rows[0]) || {}; return {
+      "BU": (m && m.bu) || "", "ผล Match": !m ? "" : m.status === "match" ? "Match" : m.status === "review" ? "ต้องตรวจสอบ" : "ไม่พบ",
+      "Supplier Code": x.supplier_code || "", "ชื่อผู้ค้า": x.vendor_name || "",
+      "Tax ID ผู้ขาย": r.supplier && r.supplier.taxId || "", "สาขาผู้ขาย": r.supplier && r.supplier.branch || "",
+      "Tax ID ผู้ซื้อ": r.buyer && r.buyer.taxId || "", "สาขาผู้ซื้อ": r.buyer && r.buyer.branch || "",
+      "เลขที่ใบกำกับภาษี": r.invoiceNo || "", "วันที่ใบกำกับภาษี": r.invoiceDate || "", "Invoice Ref.": r.invoiceRef || "",
+      "ก่อน VAT": r.beforeVat, "VAT": r.vat, "รวม": r.grandTotal,
+      "Incomplete Invoice Ref.": m && m.rows ? m.rows.map((y) => y.invoice_ref || "").join(", ") : "",
+      "วันที่ชำระ": x.payment_date || "", "ยอดรวม Incomplete": m && m.rows ? m.rows.reduce((t, y) => t + (Number(y.total) || 0), 0) : "",
+      "กรณี": m && m.matchCase ? m.matchCase : "", "หมายเหตุ": m ? m.reasons.join(" ") : "", "ไฟล์": r.fileName || "" }; };
+    const byBu = {}; const nf = []; const summary = [];
+    rows.forEach((r) => { const m = matchOf(r); if (!m) return; const row = rowOf(r, m); if (m.status === "notfound") nf.push(row); else { const k = m.bu || "ไม่ทราบ BU"; (byBu[k] = byBu[k] || []).push(row); } });
+    Object.keys(byBu).sort().forEach((k) => { const arr = byBu[k]; summary.push({ "BU": k, "จำนวนใบ": arr.length, "Match": arr.filter((x) => x["ผล Match"] === "Match").length, "ต้องตรวจสอบ": arr.filter((x) => x["ผล Match"] === "ต้องตรวจสอบ").length, "รวมก่อน VAT": arr.reduce((t, x) => t + (Number(x["ก่อน VAT"]) || 0), 0), "รวม VAT": arr.reduce((t, x) => t + (Number(x["VAT"]) || 0), 0), "รวมทั้งสิ้น": arr.reduce((t, x) => t + (Number(x["รวม"]) || 0), 0) }); });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary.length ? summary : [{ "หมายเหตุ": "ไม่มีใบที่ Match" }]), "สรุปตาม BU");
+    Object.keys(byBu).sort().forEach((k) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(byBu[k]), String(k).replace(/[\\/?*\[\]:]/g, "_").slice(0, 31)));
+    if (nf.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(nf), "ไม่พบ");
+    XLSX.writeFile(wb, "Inbox_Match_ตาม_BU.xlsx");
+  };
 
   const th = { textAlign: "left", padding: "7px 10px", fontSize: "12px", background: "#eef2f7", position: "sticky", top: 0, whiteSpace: "nowrap", zIndex: 1 };
   const td = { padding: "6px 10px", borderTop: "1px solid #e6eaf0", fontSize: "12.5px", verticalAlign: "top" };
@@ -110,13 +274,14 @@ export default function VatPdfTaxInvoicePreview({ files, onClose, onMatch, onOpe
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <div style={{ fontSize: "17px", fontWeight: 500 }}>PDF Tax Invoice — ผลการอ่านไฟล์</div>
+        <div style={{ fontSize: "17px", fontWeight: 500 }}>{presetRows && presetRows.length > 0 && (!files || files.length === 0) ? "Inbox Excel — ผลการอ่านไฟล์" : "PDF Tax Invoice — ผลการอ่านไฟล์"}</div>
         <div style={{ display: "flex", gap: "8px" }}>
-          {onOpenConfirm && matches && (mCount.match + mCount.review) > 0 && (
+          {onOpenConfirm && matches && (mCount.match + (isInboxView ? 0 : mCount.review)) > 0 && (
             <button onClick={() => onOpenConfirm(rows, matches)} style={{ border: 0, background: "#16794a", color: "#fff", borderRadius: "6px", padding: "6px 16px", cursor: "pointer", fontWeight: 600 }}>
-              ไปขั้น Confirm → Draft Popvat {mCount.match} · Backup {mCount.review}
+              {isInboxView ? `ไปขั้น Confirm → Draft Popvat ${mCount.match}` : `ไปขั้น Confirm → Draft Popvat ${mCount.match} · Backup ${mCount.review}`}
             </button>
           )}
+          {matches && <button onClick={exportExcel} style={{ border: "0.5px solid #16794a", background: "#fff", color: "#16794a", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontWeight: 600 }}>Export Excel (แยก BU)</button>}
           <button onClick={onClose} style={{ border: "0.5px solid #ccc", background: "#fff", borderRadius: "6px", padding: "6px 14px", cursor: "pointer" }}>ปิด</button>
         </div>
       </div>
@@ -132,6 +297,7 @@ export default function VatPdfTaxInvoicePreview({ files, onClose, onMatch, onOpe
         {skipped > 0 && <div style={chip("#eee", "#555")}>ข้ามไฟล์ที่ไม่ใช่ PDF: {skipped}</div>}
         {busy && <div style={chip("#e8f0fe", "#1a56b0")}>กำลังอ่าน {progress.done}/{progress.total}…</div>}
       </div>
+      {busy && rows.length > BUSY_VIEW_MAX && <div style={{ fontSize: "12px", color: "#777", marginBottom: "8px", flexShrink: 0 }}>ระหว่างประมวลผลแสดงเฉพาะ {BUSY_VIEW_MAX} แถวล่าสุดจากทั้งหมด {rows.length} แถว — เสร็จแล้วจะแสดงครบ</div>}
       {error && <div style={{ color: "#b42323", marginBottom: "10px", flexShrink: 0 }}>เกิดข้อผิดพลาด: {error}</div>}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", border: "1px solid #e6eaf0", borderRadius: "8px" }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -145,15 +311,16 @@ export default function VatPdfTaxInvoicePreview({ files, onClose, onMatch, onOpe
           </thead>
           <tbody>
             {groups.map((g) => {
-              const items = sorted.filter((r) => buKey(r) === g);
+              const items = itemsByGroup.get(g) || [];
+              const gc = { match: 0, review: 0, notfound: 0 }; items.forEach((r) => { const m = matchOf(r); if (m && gc[m.status] !== undefined) gc[m.status]++; });
               return (
                 <React.Fragment key={g}>
-                  <tr><td colSpan={11} style={{ ...td, background: "#f6f8fb", fontWeight: 600 }}>BU ผู้ซื้อ {g} · {items.length} ใบ · รวม {fmt(items.reduce((s, r) => s + (r.grandTotal || 0), 0))}</td></tr>
+                  <tr><td colSpan={11} style={{ ...td, background: "#f6f8fb", fontWeight: 600 }}>{g} · {items.length} ใบ{matches ? ` · Match ${gc.match} · ต้องตรวจสอบ ${gc.review} · ไม่พบ ${gc.notfound}` : ""} · รวม {fmt(items.reduce((s, r) => s + (r.grandTotal || 0), 0))}</td></tr>
                   {items.map((r, i) => (
                     <tr key={g + i}>
                       <td style={td} title={r.from ? "จาก " + r.from : ""}>{r.fileName}</td>
                       <td style={td}>{r.supplier.taxId ? `${r.supplier.taxId}-${r.supplier.branch || "?"}` : "—"}<br /><small style={{ color: "#888" }}>{r.supplierKey || "ไม่รู้จัก Template"}</small></td>
-                      <td style={td}>{g}</td>
+                      <td style={td}>{buKey(r)}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{r.invoiceNo || "—"}</td>
                       <td style={td}>{r.invoiceDate || "—"}</td>
                       <td style={td}>{r.invoiceRef || "—"}</td>

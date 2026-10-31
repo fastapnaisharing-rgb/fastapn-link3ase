@@ -17,13 +17,16 @@ import APScanOCR from './pages/APScanOCR';
 import VatController, { invalidateVatSupportCache } from './pages/VatController'; // MARKER_BRANCHLIST_CROSSMODULE_BROADCAST_FIX_V1
 import { maybeUpdateSpHandler } from './spHandlerAutoUpdate'; // MARKER_SP_HANDLER_AUTOUPDATE_V1
 import VatDashboard from './pages/VatDashboard'; // MARKER_APP_VAT_DASHBOARD_SEPARATE_FILE_V1
+import VatToolbox from './pages/VatToolbox'; // MARKER_VAT_TOOLBOX_V1
 import VatFreeze from './pages/VatFreeze'; // MARKER_APP_VAT_FREEZE_PAGE_V1
 import DetailOfAccount from './pages/DetailOfAccount'; // MARKER_GL_DETAIL_OF_ACCOUNT_PAGE_V1
 import GLFunctionalController from './pages/GLFunctionalController'; // MARKER_GL_AP_RECON_COMPONENT_V1
+import GenerateGLMacroPage from './pages/GenerateGLMacroPage'; // MARKER_GL_GENERATE_MACRO_IMPORT_V1
 import './App.css';
 import { useUserRole } from './contexts/useUserRole';
 import { db } from './lib/db';
 import { useRealtimeRefresh } from './useRealtimeRefresh';
+import { useTeamPresence } from './teamPresence'; // MARKER_TEAM_PRESENCE_SHARED_V1
 import { broadcastWs, subscribeWsStatus, subscribeWs } from './wsManager'; // MARKER_APP_TEAM_LOGIN_TOAST_V1 -- subscribeWs สำหรับ Toast เข้า/ออกระบบของทีม
 // // MARKER_APP_SIGNAL_DOT_V1 -- เพิ่ม subscribeWsStatus สำหรับ Signal Dot หน้าชื่อ (ความเสี่ยงขาดการเชื่อมต่อ)
 // MARKER_APP_BATCH_REVIEW_BELL_V1
@@ -180,6 +183,7 @@ const PAGE_MAINTENANCE_MAP = {
   'vat-simple-input-report': 'vat-controller',
   'ie-gr': 'ie-gr', 'ie-drafts': 'ie-drafts', 'ie-generate-macro-logic': 'ie-generate-macro-logic', // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE
   'gl-ap-recon': 'gl-functional',
+  'gl-generate-macro': 'gl-functional', // MARKER_GL_GENERATE_MACRO_ROUTE_V1
   'gl-detail-of-account': 'gl-functional', // MARKER_GL_DETAIL_OF_ACCOUNT_MENU_V1
   'i-pro-interface': 'i-pro-interface',
 };
@@ -1369,7 +1373,63 @@ function MainApp() {
   const [openMenu, setOpenMenu] = useState(null);
   const closeTimerRef = useRef(null);
   const sidebarRef = useRef(null);
+  const [flyoutPinned, setFlyoutPinned] = useState(false); // MARKER_APP_FLYOUT_PIN_V1 -- ปักหมุด Flyout เมนูซ้ายให้ค้างไว้ (ราย User: เก็บใน localStorage ตามอีเมลที่ล็อกอิน)
+  const flyoutPinnedRef = useRef(false);
+  const lastBeatOkRef = useRef(Date.now()); // MARKER_TEAM_PRESENCE_SHARED_V1
+  const activePageRef = useRef('home'); // MARKER_APP_FLYOUT_PIN_V1 -- ปักหมุดไม่ทำงานที่หน้า Home
+  const pinHolds = () => flyoutPinnedRef.current; // MARKER_APP_FLYOUT_PIN_HOME_V2 -- ปักหมุดได้ทุกหน้า รวม Home (ปุ่มหมุดขึ้นตั้งแต่เปิด Flyout)
   const { currentUser, userRole, userName, logout, userPermissions: userPermissionsRaw } = useAuth(); // MARKER_GUEST_MODULE_BYPASS_V1
+  // MARKER_APP_OCR_DONE_NOTIFY_V1 -- แจ้งเตือน "OCR เสร็จแล้ว" ทุกหน้า (ไม่ต้องเปิดหน้าต่าง OCR ค้างไว้) เฉพาะไฟล์ที่ตัวเองอัปโหลด
+  const ocrNotifySeenRef = useRef(new Set());
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    const token = sessionStorage.getItem('fastapn_token');
+    if (!token) return undefined;
+    const me = [userName, currentUser?.email, currentUser?.username].filter(Boolean).map(x => String(x).toLowerCase());
+    let cancelled = false, es = null, timer = null;
+    const mine = (p) => !p.uploaded_by || me.includes(String(p.uploaded_by).toLowerCase());
+    const once = (key) => { if (ocrNotifySeenRef.current.has(key)) return false; ocrNotifySeenRef.current.add(key); return true; };
+    const connect = () => {
+      if (cancelled) return;
+      es = new EventSource(`http://10.101.87.126:4000/api/docenter/queue/stream?token=${encodeURIComponent(token)}`);
+      es.addEventListener('queue_done', (e) => {
+        try {
+          const p = JSON.parse(e.data);
+          if (!mine(p) || !once('done:' + p.id)) return;
+          showToastRef.current('success', `✅ OCR เสร็จแล้ว: ${p.file_name || 'ไฟล์'}${p.groups ? ` (${p.groups} Serial Code)` : ''}`, 12000);
+        } catch (_) {}
+      });
+      es.addEventListener('queue_review', (e) => {
+        try {
+          const p = JSON.parse(e.data);
+          if (!mine(p) || !once('review:' + p.id + ':' + (p.remaining || 0))) return;
+          showToastRef.current('warning', `⚠️ OCR เสร็จแล้ว: ${p.file_name || 'ไฟล์'} แต่มี ${p.remaining || ''} กลุ่มต้องตรวจสอบ (ดูที่ Queue)`, 15000);
+        } catch (_) {}
+      });
+      es.onerror = () => { try { es.close(); } catch (_) {} if (!cancelled) timer = setTimeout(connect, 5000); };
+    };
+    connect();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); if (es) try { es.close(); } catch (_) {} };
+  }, [currentUser, userName]);
+  activePageRef.current = activePage;
+  const flyoutPinKey = currentUser?.email ? `fastapn_flyout_pin:${String(currentUser.email).toLowerCase()}` : ''; // MARKER_APP_FLYOUT_PIN_V1 -- แยกค่าตาม User
+  useEffect(() => { // โหลดค่าปักหมุดของ User นี้ (สลับ User = โหลดของคนใหม่) ถ้าเคยปักไว้ให้เปิด Flyout เมนูล่าสุดทันที
+    flyoutPinnedRef.current = false; setFlyoutPinned(false);
+    if (!flyoutPinKey) return;
+    try {
+      const raw = localStorage.getItem(flyoutPinKey);
+      const o = raw ? JSON.parse(raw) : null;
+      if (o && o.pinned) {
+        flyoutPinnedRef.current = true; setFlyoutPinned(true); // เปิดแอพที่ Home = ยังไม่เปิด Flyout ค้าง จะตรึงเมื่อเข้าหน้าอื่นแล้ว
+      }
+    } catch (_) { /* อ่านค่าไม่ได้ = ไม่ปักหมุด */ }
+  }, [flyoutPinKey]);
+  useEffect(() => { // ปักหมุดอยู่แล้วสลับไปเมนูอื่น -> จำเมนูล่าสุด
+    if (!flyoutPinnedRef.current || !openMenu || !flyoutPinKey) return;
+    try { localStorage.setItem(flyoutPinKey, JSON.stringify({ pinned: true, menu: openMenu })); } catch (_) { /* ไม่เป็นไร */ }
+  }, [openMenu, flyoutPinKey]);
   const isGuest = String(userRole || '').toLowerCase() === 'guest'; // MARKER_GUEST_ROLE_V1 -- Guest เห็นเฉพาะเมนูที่ตั้ง Permission ขั้นต่ำ = Guest (และต้องมี Permission โมดูลที่ Owner เปิดให้รายคน)
   // MARKER_GUEST_MODULE_BYPASS_V1 -- Guest ไม่ต้องมี Permission โมดูล (VAT/I-Pro/GL/IE/Function/Manual) | เข้าได้เฉพาะเมนูที่ตั้ง Permission ขั้นต่ำ = Guest (menuMinRoleOk) | docAccess/menuGrants ใช้ค่าจริงจาก Backend
   const userPermissions = isGuest ? { ...(userPermissionsRaw || {}), VAT: true, 'I-Pro': true, GL: true, IE: true, Function: true, Manual: true } : userPermissionsRaw;
@@ -1378,7 +1438,11 @@ function MainApp() {
   // MARKER_SP_HANDLER_AUTOUPDATE_V1 -- Login แล้ว (มี currentUser) ให้ Handler SharePoint ตรวจ/อัปเดตตัวเอง (หน่วงเล็กน้อยไม่ขวางหน้าแรก)
   useEffect(() => {
     if (!currentUser) return undefined;
-    const tm = setTimeout(() => { maybeUpdateSpHandler(); }, 4000);
+    // MARKER_SP_HANDLER_AUTOUPDATE_ONCE_PER_LOGIN_V1 -- ยิงแค่ 1 ครั้งต่อการ Login (ผูกกับ Token) | Refresh/เปิดหน้าใหม่ใน Login เดิม = ไม่ยิงซ้ำ (เดิมยิงทุกครั้งที่โหลดหน้า)
+    let tk = ''; try { tk = sessionStorage.getItem('fastapn_token') || ''; } catch (_) { /* เงียบ */ }
+    let done = ''; try { done = sessionStorage.getItem('fastapn_sp_update_login') || ''; } catch (_) { /* เงียบ */ }
+    if (!tk || done === tk) return undefined;
+    const tm = setTimeout(() => { try { sessionStorage.setItem('fastapn_sp_update_login', tk); } catch (_) { /* เงียบ */ } maybeUpdateSpHandler(); }, 4000);
     return () => clearTimeout(tm);
   }, [currentUser]);
   const hasAnyDocAccess = Object.values(userPermissions?.docAccess || {}).some(v => v === true);
@@ -1402,7 +1466,7 @@ function MainApp() {
   // [CHANGE 1] เพิ่ม 'condition-rule' เข้า MASTER_PAGES เพื่อให้ sidebar highlight ถูกต้อง
   const MASTER_PAGES = ['bu-info','bu-branch','coa-costcenter','coa-account','coa-subaccount','itemcode','vendor-apcode','vendor-smcode','vendor-iecode','vendor-category','condition-rule'];
   const IE_PAGES = ['ie-gr', 'ie-drafts', 'ie-generate-macro-logic']; // MARKER_APP_IE_GENERATE_MACRO_LOGIC_ROUTE
-  const GL_PAGES = ['gl-ap-recon', 'gl-detail-of-account']; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
+  const GL_PAGES = ['gl-ap-recon', 'gl-generate-macro', 'gl-detail-of-account']; // MARKER_GL_FUNCTIONAL_MENU_APP_V1
   const isAPActive     = AP_PAGES.includes(activePage);
   const isVATActive    = VAT_PAGES.includes(activePage);
   const isIEActive     = IE_PAGES.includes(activePage);
@@ -1444,13 +1508,16 @@ function MainApp() {
   const GL_ALL_ITEMS = GL_FUNCTIONAL_MENU.groups.flatMap(g => g.items);
   // MARKER_GL_REPORT_OVERRIDE_V1 -- Override รายคน (Access Panel > Document Access > GL Report) ปิดสิทธิ์ = docAccess.gl เป็น false -> ซ่อนเมนู + เข้าหน้าไม่ได้ (Backend ก็ปฏิเสธด้วย)
   const glOverrideOk = isOwner || userPermissions?.docAccess?.gl !== false;
-  const glItemOk = (it) => glOverrideOk && menuMinRoleOk(it.id) && hasAnyPermission(itemPerms(it)); // MARKER_MENU_MIN_ROLE_V1
+  // MARKER_GL_PERM_ALWAYS_SEE_MENU_V1 -- มี Permission GL = ต้องเห็นเมนู GL เสมอ: docAccess.gl (ผูกกับ Manual/IE/I-Pro ใน GL Access) ไม่ใช้ตัดเมนูที่ requiredPermissions มี GL อยู่แล้ว (Generate by GL Macro, Detail of Account) | Account Payable Recon. ยังใช้กฎเดิม
+  const glOwnPerm = (it) => userPermissions?.GL === true && (itemPerms(it) || []).includes('GL');
+  const glItemOk = (it) => (glOverrideOk || glOwnPerm(it)) && menuMinRoleOk(it.id) && hasAnyPermission(itemPerms(it)); // MARKER_MENU_MIN_ROLE_V1
   const GL_MODULE_PERMS = ['VAT', 'Manual', 'GL', 'IE']; // MARKER_GL_MODULE_PERMS_V1 -- เมนูใหญ่ GL Functional เห็นได้เมื่อมีสิทธิ์ใดสิทธิ์หนึ่งนี้ (เมนูย่อยยังกรองตามสิทธิ์ของตัวเอง)
-  const canAccessGLModule = GL_ALL_ITEMS.some(it => glItemOk(it)) || (glOverrideOk && menuMinRoleOk('gl-functional') && hasAnyPermission(GL_MODULE_PERMS));
+  const canAccessGLModule = GL_ALL_ITEMS.some(it => glItemOk(it)) || ((glOverrideOk || userPermissions?.GL === true) && menuMinRoleOk('gl-functional') && hasAnyPermission(GL_MODULE_PERMS));
   const isMasterActive = MASTER_PAGES.includes(activePage);
 
   useEffect(() => {
     const handler = (e) => {
+      if (pinHolds()) return; // MARKER_APP_FLYOUT_PIN_V1 -- ปักหมุดอยู่ (และไม่ใช่หน้า Home) = ไม่ปิดตอนคลิกข้างนอก
       if (sidebarRef.current && !sidebarRef.current.contains(e.target)) {
         setSidebarExpanded(true);
         setOpenMenu(null);
@@ -1471,44 +1538,22 @@ function MainApp() {
     return () => clearInterval(interval);
   }, [currentUser]);
 
-  // MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1 -- Poll คน Online สำหรับ Hover Popup (เฉพาะ Owner/Admin ที่ใช้)
-  const loadTeamOnline = async () => {
-    if (!(isOwner || isAdmin)) return;
-    try {
-      const [{ data: roles }, { data: sessions }] = await Promise.all([
-        db.from('user_roles').select('*'),
-        db.from('menu_active_sessions').select('*'),
-      ]);
-      const cutoff = Date.now() - 5 * 60 * 1000;
-      const sessByUser = {};
-      (sessions || []).forEach(s => { sessByUser[s.user_name] = s; });
-      const online = [];
-      const offline = [];
-      (roles || []).forEach(r => {
-        const sess = sessByUser[r.username];
-        const lastSeen = sess?.last_seen ? new Date(sess.last_seen).getTime() : 0;
-        const entry = { ...r, menu_id: sess?.menu_id, lastSeen: sess?.last_seen };
-        if (lastSeen >= cutoff) online.push(entry); else offline.push(entry);
-      });
-      // MARKER_APP_TEAM_ONLINE_OWNER_FIX_V1 -- Owner ไม่มีแถวอยู่ใน user_roles เลย (Query ดึงจากตารางนี้ตรงๆ)
-      // ทำให้ Owner ไม่เคยถูกนับเป็น Online ในลิสต์นี้ได้เลย ไม่ว่าจะ Active จริงแค่ไหน -- เพิ่มตัวเองเข้าไปด้วยตรงนี้
-      const myUsername = userName || currentUser?.email;
-      if (isOwner && myUsername && !(roles || []).some(r => r.username === myUsername)) {
-        const mySess = sessByUser[myUsername];
-        online.push({ username: myUsername, role: 'Owner', permissions: {}, menu_id: mySess?.menu_id, lastSeen: mySess?.last_seen || new Date().toISOString() });
-      }
-      setTeamOnlineUsers(online);
-      setTeamOfflineUsers(offline);
-      setTeamMyPerm((roles || []).find(r => r.username === (userName || currentUser?.email)) || null);
-    } catch (e) { console.error('[sidebar team popup load]', e); }
-  };
+  // MARKER_APP_SIDEBAR_TEAM_ONLINE_POPUP_V1 -- คน Online สำหรับ Hover Popup (เฉพาะ Owner/Admin ที่ใช้)
+  // MARKER_TEAM_PRESENCE_SHARED_V1 -- ใช้ teamPresence.js (แหล่งเดียวกับ Home และ User Management) แทนดึงเอง: อัปเดต Realtime + หมดเวลา 5 นาทีเช็คในเครื่อง
+  const teamPresence = useTeamPresence(!!currentUser && (isOwner || isAdmin));
   useEffect(() => {
     if (!currentUser || !(isOwner || isAdmin)) return;
-    loadTeamOnline();
-    const teamIv = setInterval(loadTeamOnline, 30000);
-    return () => clearInterval(teamIv);
-  }, [currentUser, isOwner, isAdmin, userName]);
-  useRealtimeRefresh(['team_status_updated'], () => loadTeamOnline());
+    const online = [...teamPresence.onlineUsers];
+    // MARKER_APP_TEAM_ONLINE_OWNER_FIX_V1 -- Owner ไม่มีแถวอยู่ใน user_roles เลย ทำให้ Owner ไม่เคยถูกนับเป็น Online ในลิสต์นี้ได้เลย -- เพิ่มตัวเองเข้าไปด้วยตรงนี้
+    const myUsername = userName || currentUser?.email;
+    if (isOwner && myUsername && !teamPresence.roles.some(r => r.username === myUsername)) {
+      const mySess = teamPresence.sessByUser[myUsername];
+      online.push({ username: myUsername, role: 'Owner', permissions: {}, menu_id: mySess?.menu_id, lastSeen: mySess?.last_seen || new Date().toISOString() });
+    }
+    setTeamOnlineUsers(online);
+    setTeamOfflineUsers(teamPresence.offlineUsers);
+    setTeamMyPerm(teamPresence.roles.find(r => r.username === (userName || currentUser?.email)) || null);
+  }, [teamPresence.onlineUsers, teamPresence.offlineUsers, teamPresence.roles, currentUser, isOwner, isAdmin, userName]);
 
   // ── Real-time: ฟัง broadcast 'bucket_sent'/'bucket_recalled' จาก server ────
   // ── ให้ Toast ขึ้น/หายทันที ไม่ต้องรอ Poll รอบ 30 วิด้านบน ─────────────────
@@ -1994,6 +2039,9 @@ function MainApp() {
           { session_id: me, menu_id: activePage, user_name: me, last_seen: new Date().toISOString() },
           { onConflict: 'session_id' }
         );
+        // MARKER_TEAM_PRESENCE_SHARED_V1 -- กลับมาจาก Idle (Beat ก่อนหน้าห่างเกิน 4 นาที -> คนอื่นเห็นเราเป็น Offline อยู่) แจ้งให้ทุกคน Refresh ทันที
+        const gapMs = Date.now() - lastBeatOkRef.current; lastBeatOkRef.current = Date.now();
+        if (gapMs > 4 * 60 * 1000) broadcastWs('team_status_updated', { username: me });
       } catch (e) { console.error('[menu heartbeat]', e); }
     };
     // MARKER_APP_TEAM_STATUS_REALTIME_AWAIT_BEAT_V1 -- ต้องรอ Upsert last_seen เสร็จก่อนค่อย Broadcast (เดิมยิงพร้อมกัน -> ฝั่งรับ Refetch ทันทีได้ last_seen เก่า -> ยังเป็น Offline จนกว่า Poll 30 วิ)
@@ -2033,10 +2081,11 @@ function MainApp() {
   const clearCloseTimer = () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); };
   const startCloseTimer = () => {
     clearCloseTimer();
+    if (pinHolds()) return; // MARKER_APP_FLYOUT_PIN_V1 -- ปักหมุดอยู่ (และไม่ใช่หน้า Home) = ไม่ปิดตอนเมาส์ออก
     closeTimerRef.current = setTimeout(() => { setSidebarExpanded(true); setOpenMenu(null); }, 300);
   };
 
-  const handleSidebarEnter = () => { clearCloseTimer(); setSidebarExpanded(true); setOpenMenu(null); };
+  const handleSidebarEnter = () => { clearCloseTimer(); if (pinHolds()) return; setSidebarExpanded(true); setOpenMenu(null); }; // MARKER_APP_FLYOUT_PIN_V1
   const handleMasterEnter  = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('master'); };
   const handleAPEnter      = () => { clearCloseTimer(); setSidebarExpanded(false); setOpenMenu('ap'); };
   const handleFlyoutEnter  = () => { clearCloseTimer(); };
@@ -2056,7 +2105,24 @@ function MainApp() {
     clearTeamHoverTimer();
     teamHoverTimerRef.current = setTimeout(() => setShowTeamPopup(false), 300);
   };
-  const selectPage = (id) => { setActivePage(id); setSidebarExpanded(true); setOpenMenu(null); };
+  const selectPage = (id) => { setActivePage(id); if (flyoutPinnedRef.current) return; setSidebarExpanded(true); setOpenMenu(null); }; // MARKER_APP_FLYOUT_PIN_V1 -- ปักหมุดอยู่ = เลือกหน้าแล้ว Flyout ไม่ปิด
+  const toggleFlyoutPin = () => { // MARKER_APP_FLYOUT_PIN_V1
+    const next = !flyoutPinnedRef.current;
+    flyoutPinnedRef.current = next; setFlyoutPinned(next);
+    try {
+      if (flyoutPinKey) { if (next) localStorage.setItem(flyoutPinKey, JSON.stringify({ pinned: true, menu: openMenu || '' })); else localStorage.removeItem(flyoutPinKey); }
+    } catch (_) { /* เก็บค่าไม่ได้ = ใช้ได้ในหน้านี้ แต่ไม่จำข้ามการรีเฟรช */ }
+  };
+  const pinActive = flyoutPinned;
+  const pinButton = ( // MARKER_APP_FLYOUT_PIN_HOME_V2 -- แสดงทุกหน้า รวม Home
+    <button type="button" onClick={toggleFlyoutPin} title={flyoutPinned ? 'ยกเลิกการปักหมุด' : 'ปักหมุดเมนูไว้'} aria-pressed={flyoutPinned}
+      style={{ width: '26px', height: '26px', padding: 0, border: 'none', borderRadius: '6px', background: flyoutPinned ? '#e3f5ed' : 'transparent', color: flyoutPinned ? '#0f7a56' : '#9aa3b2', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+      onMouseEnter={(e) => { if (!flyoutPinned) { e.currentTarget.style.background = '#eef1f6'; e.currentTarget.style.color = '#1a3a5c'; } }}
+      onMouseLeave={(e) => { if (!flyoutPinned) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9aa3b2'; } }}>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill={flyoutPinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: flyoutPinned ? 'none' : 'rotate(45deg)' }}><path d="M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z" /></svg>
+    </button>
+  );
+
 
   // MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — ALL_FUNCTION_MENUS มาจาก menuConfig.js แล้ว (ลบ Local Array ซ้ำออก)
   const FUNCTION_MENUS = isOwner
@@ -2136,6 +2202,10 @@ function MainApp() {
         return isOwner
           ? <VatFreeze />
           : <NoAccessPage />;
+      case 'vat-monthly-report': // MARKER_VAT_TOOLBOX_V1 -- VAT Toolbox (เดิม Monthly Report)
+        return ((isOwner || userPermissions?.['VAT']) && menuMinRoleOk('vat-monthly-report'))
+          ? <VatToolbox />
+          : <NoAccessPage />;
       case 'vat-watchlist-ops':
       case 'vat-reconcile-ap01-05':
       case 'vat-simple-input-ops':
@@ -2144,7 +2214,6 @@ function MainApp() {
       case 'vat-direct-debit-recon':
       case 'vat-timeline':
       case 'vat-upload-file':
-      case 'vat-monthly-report':
       case 'vat-backup-transaction':
       case 'vat-backup-tax-invoice':
         return ((isOwner || userPermissions?.['VAT']) && menuMinRoleOk(activePage))
@@ -2162,6 +2231,12 @@ function MainApp() {
               onSubTabChange={sub => setActivePage(sub)}
               flyoutOpen={openMenu === 'gl'}
             />
+          : <NoAccessPage />;
+      }
+      case 'gl-generate-macro': { // MARKER_GL_GENERATE_MACRO_CASE_V1
+        const glMacroItem = GL_ALL_ITEMS.find(it => it.id === 'gl-generate-macro');
+        return glItemOk(glMacroItem)
+          ? <GenerateGLMacroPage currentUser={currentUser} userName={userName} isOwner={isOwner} isAdmin={isAdmin} />
           : <NoAccessPage />;
       }
       case 'gl-detail-of-account': { // MARKER_GL_DETAIL_OF_ACCOUNT_MENU_V1 -- เข้าได้เฉพาะ Permission GL (requiredPermissions ใน menuConfig.js)
@@ -2203,7 +2278,7 @@ function MainApp() {
       case 'home':
       default:
         // MARKER_APP_HOMEPAGE_GOTOUPLOAD_PROP_V1
-        return <Homepage onOpenInbox={handleOpenInbox} onGotoUpload={() => setActivePage('upload')} />;
+        return <Homepage onOpenInbox={handleOpenInbox} onGotoUpload={() => setActivePage('upload')} onGotoTimelineReset={() => { try { sessionStorage.setItem('tl_open_reset_all', '1'); } catch (e) { /* no-op */ } setActivePage('vat-timeline'); }} />;
     }
   };
 
@@ -2379,9 +2454,10 @@ function MainApp() {
         {/* ── Flyout: AP Controller ── */}
         {openMenu === 'ap' && (
           <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
-            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
-            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: pinActive ? '2px solid #5DCAA5' : '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: pinActive ? 'none' : '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 10px 10px 16px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>🧾 AP Controller</div>
+              {pinButton}
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {/* MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — Loop จาก menuConfig.js (AP_CONTROLLER_MENU.groups) เพิ่มเมนูใหม่ที่ menuConfig.js ที่เดียวพอ */}
@@ -2399,9 +2475,10 @@ function MainApp() {
         {/* ── Flyout: VAT Controller ── */}
         {openMenu === 'vat' && (
           <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
-            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
-            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: pinActive ? '2px solid #5DCAA5' : '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: pinActive ? 'none' : '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 10px 10px 16px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>💹 VAT Controller</div>
+              {pinButton}
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {/* MARKER_MENUCONFIG_SYNCED_AP_FLYOUT — Loop จาก menuConfig.js (VAT_CONTROLLER_MENU.groups) */}
@@ -2419,9 +2496,10 @@ function MainApp() {
         {/* ── Flyout: IE Controller ── */}
         {openMenu === 'ie' && (
           <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
-            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
-            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: pinActive ? '2px solid #5DCAA5' : '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: pinActive ? 'none' : '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 10px 10px 16px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>💸 I-Expense</div>
+              {pinButton}
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {/* MARKER_MENUCONFIG_SYNCED_IE_FLYOUT — Loop จาก menuConfig.js (IE_CONTROLLER_MENU.groups) */}
@@ -2439,9 +2517,10 @@ function MainApp() {
         {/* ── Flyout: GL Functional ── */} {/* MARKER_GL_FUNCTIONAL_MENU_APP_V1 */}
         {openMenu === 'gl' && (
           <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
-            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
-            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: pinActive ? '2px solid #5DCAA5' : '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: pinActive ? 'none' : '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 10px 10px 16px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>📊 GL Functional</div>
+              {pinButton}
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {!GL_ALL_ITEMS.some(it => glItemOk(it)) && (<div style={{ padding: '12px 16px', fontSize: '12px', color: '#888780', lineHeight: 1.5 }}>ยังไม่มีเมนูย่อยที่บัญชีนี้มีสิทธิ์ใช้งาน</div>)} {/* MARKER_GL_MODULE_PERMS_V1 */}
@@ -2463,9 +2542,10 @@ function MainApp() {
         {/* ── Flyout: Master Data ── */}
         {openMenu === 'master' && (
           <div onMouseEnter={handleFlyoutEnter} onMouseLeave={handleMouseLeave}
-            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: '4px 0 12px rgba(0,0,0,0.08)' }}>
-            <div style={{ padding: '14px 16px 10px', borderBottom: '0.5px solid #e8eaf0' }}>
+            style={{ position: 'absolute', left: '56px', top: 0, bottom: 0, width: '164px', background: 'white', borderRight: pinActive ? '2px solid #5DCAA5' : '0.5px solid #e8eaf0', zIndex: 20, display: 'flex', flexDirection: 'column', boxShadow: pinActive ? 'none' : '4px 0 12px rgba(0,0,0,0.08)' }}>
+            <div style={{ padding: '14px 10px 10px 16px', borderBottom: '0.5px solid #e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
               <div style={{ fontSize: '13px', fontWeight: '500', color: '#1a3a5c' }}>📦 Master Data</div>
+              {pinButton}
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0', scrollbarWidth: 'none' }}>
               {fpGroup('🏢', 'Business Unit')}

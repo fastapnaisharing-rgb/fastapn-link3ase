@@ -7,6 +7,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUserRole } from '../contexts/useUserRole';
 import { useDataCache } from '../contexts/DataCacheContext';
 
+// MARKER_HEAD_TINT_V1 -- สีหัวคอลัมน์แยกตามชื่อ (คงที่ต่อชื่อคอลัมน์) + แถบสีหนาด้านล่าง
+const __HEAD_PAL = [['#dbe6f5','#1a3a5c'],['#e0ecfc','#3b82f6'],['#efe7fb','#8b5cf6'],['#e3f4e8','#2f9e44'],['#fdeee0','#f08a24'],['#e6f6f2','#2fb58a'],['#fde8ea','#d1495b'],['#fff6d6','#d4a017']];
+const headTint = (k) => ({}); // สีหัวคอลัมน์ใช้สีเดิม (Navy)
+
+// MARKER_HEAD_ICON_V1 -- ไอคอนหน้าชื่อหัวคอลัมน์ (แบบ A อีโมจิ)
+const __HEAD_ICONS = {"bu": "🏢", "thai company name": "📛", "english company name": "🔤", "tax id": "🧾", "tax id bu": "🧾", "bu tax id": "🧾", "company code": "#️⃣", "company name": "🏛️", "vat %": "％", "last rate (%)": "📈", "book": "📒", "segment3": "🏷️", "branch code": "🏬", "branch direct": "🧭", "branch allocate": "🧮", "bu branch": "🌿", "%": "％", "db(%)": "％", "cpc": "🏦", "group-p": "👥", "status": "🚦", "inactive date": "📅", "code": "🔑", "supplier name": "🏭", "supplier no.": "🔢", "site": "📍", "tax-type": "🧾", "notice": "🔔", "sub acc": "📂", "no.": "🔢", "due": "⏰", "digit": "🔢", "email": "✉️", "sm-code": "🔖", "branch": "🌿", "debit account": "➖", "credit account": "➕", "at-match": "🔗", "rule1": "📏", "rule2": "📏", "rule3": "📏", "rule4": "📏", "rule5": "📏", "sy-running": "🔄", "ie-code": "💸", "ประเภท": "🗂️", "type": "🧩", "sub type": "🧩", "description": "📝", "account": "📚", "sub": "📂", "dis-g": "🎁", "i&g": "💹", "value": "💲", "oth": "➕", "spi-1": "⭐", "spec-tx": "🧾"};
+const headIcon = (label) => { const e = __HEAD_ICONS[String(label || '').trim().toLowerCase()]; return e ? e + ' ' : ''; };
+
+
 function useWindowWidth() {
   const [width, setWidth] = useState(window.innerWidth);
   useEffect(() => {
@@ -824,17 +833,17 @@ function ItemCodeList() {
   const totalW = containerW > 0 ? Math.max(fixedW + 100, containerW) : fixedW + 200;
 
   const S = {
-    container: { padding: isMobile ? '12px' : '20px', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box', minWidth: 0, overflow: 'hidden' },
+    container: { padding: isMobile ? '12px' : '20px', background:'#ffffff', display: 'flex', flexDirection: 'column', height: '100vh', boxSizing: 'border-box', minWidth: 0, overflow: 'hidden' },
     topbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexShrink: 0, flexWrap: 'wrap', gap: '8px' },
     btn: { padding: isMobile ? '6px 10px' : '7px 14px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', marginLeft: '8px' },
     outer: { background: 'white', borderRadius: '8px', border: '0.5px solid #e8e8e8', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 },
     theadWrap: { overflowX: 'auto', flexShrink: 0, scrollbarWidth: 'none' },
     tbodyWrap: { overflowY: 'auto', overflowX: 'auto', flex: 1, minWidth: 0 },
     table: { borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' },
-    th: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-    thSort: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', overflow: 'hidden', textOverflow: 'ellipsis' },
-    thCheck: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'center', fontSize: '11px', width: '36px' },
-    thAction: { background: '#1a3a5c', color: 'white', padding: '10px', textAlign: 'center', fontSize: '11px', fontWeight: '500' },
+    th: { background:'#1a3a5c', color:'white', padding:'10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+    thSort: { background:'#1a3a5c', color:'white', padding:'10px', textAlign: 'left', fontSize: '11px', fontWeight: '500', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', overflow: 'hidden', textOverflow: 'ellipsis' },
+    thCheck: { background:'#1a3a5c', color:'white', padding:'10px', textAlign: 'center', fontSize: '11px', width: '36px' },
+    thAction: { background:'#1a3a5c', color:'white', padding:'10px', textAlign: 'center', fontSize: '11px', fontWeight: '500' },
     td: { padding: '7px 10px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '0' },
     tdCenter: { padding: '6px 8px', fontSize: '11px', borderBottom: '0.5px solid #f0f0f0', textAlign: 'center' },
     input: { padding: '7px 10px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', width: '100%', marginBottom: '8px', boxSizing: 'border-box' },
@@ -884,7 +893,11 @@ function ItemCodeList() {
     <div style={S.container}>
       <div style={S.topbar}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: isMobile ? '14px' : '16px', fontWeight: '600', margin: 0 }}>🔖 Item Code List</h2>
+          <div style={{ borderLeft:'4px solid #2fb58a', paddingLeft:'14px' }}> {/* MARKER_MASTER_HEADER_V2 */}
+            <div style={{ fontSize:'11px', letterSpacing:'0.14em', fontWeight:700, color:'#2fb58a' }}>MASTER DATA</div>
+            <div style={{ fontSize:isMobile?'20px':'26px', lineHeight:1.15, fontWeight:800, color:'#1a3a5c', margin:'2px 0' }}>Item Code <span style={{ color:'#2fb58a' }}>List</span></div>
+            {!isMobile && <div style={{ fontSize:'12px', color:'#7b8794' }}>รายการ Item Code (AP / IE)</div>}
+          </div>
           {isAdmin && selected.length > 0 && (
             <button style={{ ...S.btn, background: '#c0392b', color: 'white', marginLeft: 0 }} onClick={handleBulkDelete}>
               🗑️{!isMobile && ` ลบ ${selected.length}`}
@@ -1041,10 +1054,10 @@ function ItemCodeList() {
                 {COLUMNS.map(c => (
                   <th
                     key={c.key}
-                    style={c.sortable ? S.thSort : S.th}
+                    style={{ ...(c.sortable ? S.thSort : S.th), ...headTint(c.key) }}
                     onClick={c.sortable ? () => setSortDir(d => d === 'asc' ? 'desc' : 'asc') : undefined}
                   >
-                    {c.label}{c.sortable ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                    {headIcon(c.label)}{c.label}{c.sortable ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                   </th>
                 ))}
                 <th style={S.thAction}>Action</th>

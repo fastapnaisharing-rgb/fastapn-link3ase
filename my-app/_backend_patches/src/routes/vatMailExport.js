@@ -6,6 +6,7 @@ import { Router } from "express";
 import { pool, getUsernameByEmail } from "../db.js";
 import ExcelJS from "exceljs"; // MARKER_VATMAILEXPORT_PREVIEW_EMAIL_VIEW_V1
 import zlib from "zlib";
+import JSZip from "jszip"; // MARKER_VATMAILEXPORT_CST_SLICER_V1 -- ฝัง Slicer Status ลง xlsx (ExcelJS ไม่รองรับ Slicer)
 import fs from "fs";
 import path from "path";
 import {
@@ -111,6 +112,24 @@ function restoreTypeAAging(rows, allowed) {
   return out;
 }
 
+// MARKER_VATMAILEXPORT_INCLUDE_BY_TAXID_V1 -- Include / Ignore / By Vendor จับด้วย supplier_code ตรงตัว แต่ผู้ค้ารายเดียวกันมีหลาย Code ตาม BU (เช่น N-xxxx / BTM-xxxx / REV-xxxx)
+// -- ขยายแต่ละ Code ที่เลือกเป็น "ทุก Code ที่ Tax ID เดียวกัน" (vendor_category."TAX ID" เฉพาะตัวเลข, ไม่นับแถวที่ลบแล้ว) | ไม่มี Tax ID / Query พัง = ใช้ Code เดิมตามที่เลือก
+async function expandCodesByTaxId(codes) {
+  const list = [...new Set((Array.isArray(codes) ? codes : []).map((c) => String(c || "").trim()).filter(Boolean))];
+  if (list.length === 0) return list;
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT v2."Code" AS code FROM vendor_category v1
+         JOIN vendor_category v2 ON regexp_replace(COALESCE(v2."TAX ID", ''), '\\D', '', 'g') = regexp_replace(COALESCE(v1."TAX ID", ''), '\\D', '', 'g')
+        WHERE v1."Code" = ANY($1) AND regexp_replace(COALESCE(v1."TAX ID", ''), '\\D', '', 'g') <> ''
+          AND (v2."deleted" IS NULL OR v2."deleted" = false)`,
+      [list]
+    );
+    rows.forEach((r) => { const c = String(r.code || "").trim(); if (c && !list.includes(c)) list.push(c); });
+  } catch (e) { console.error("expandCodesByTaxId:", e.message); }
+  return list;
+}
+
 async function fetchRows(cfg, scope, ctx) {
   const rules = parseJson(cfg.rules, {});
   const vendors = parseJson(cfg.vendors, []);
@@ -151,17 +170,17 @@ async function fetchRows(cfg, scope, ctx) {
   const exSubTypes = (rules.exclude_sub_types || []).map((s) => String(s || "").trim().toUpperCase()).filter(Boolean);
   if (exSubTypes.length) where.push(`NOT (UPPER(TRIM(COALESCE(sub_type, ''))) = ANY(${add(exSubTypes)}))`);
 
-  const ignore = (rules.ignore || []).map((x) => (typeof x === "string" ? x : x.code)).filter(Boolean);
+  const ignore = await expandCodesByTaxId((rules.ignore || []).map((x) => (typeof x === "string" ? x : x.code)).filter(Boolean)); // MARKER_VATMAILEXPORT_INCLUDE_BY_TAXID_V1
   if (ignore.length) where.push(`NOT (supplier_code = ANY(${add(ignore)}))`);
 
   let cond = `(${where.join(" AND ")})`;
   if (cfg.scope_mode === "BY_VENDOR") {
-    const vc = (Array.isArray(vendors) ? vendors : []).map((x) => (typeof x === "string" ? x : x.code)).filter((c) => c && c !== "{SupplierLine}" && c !== "{Operation_Supplier}"); // MARKER_VATMAILEXPORT_OPERATION_SUPPLIER_PH_V1 -- {Operation_Supplier} = Supplier มาจากหน้า Operation ไม่ใช่ Vendor จริง
+    const vc = await expandCodesByTaxId((Array.isArray(vendors) ? vendors : []).map((x) => (typeof x === "string" ? x : x.code)).filter((c) => c && c !== "{SupplierLine}" && c !== "{Operation_Supplier}")); // MARKER_VATMAILEXPORT_INCLUDE_BY_TAXID_V1 // MARKER_VATMAILEXPORT_OPERATION_SUPPLIER_PH_V1 -- {Operation_Supplier} = Supplier มาจากหน้า Operation ไม่ใช่ Vendor จริง
     if (vc.length) cond += ` AND supplier_code = ANY(${add(vc)})`; // MARKER_VATMAILEXPORT_BYVENDOR_EMPTY_APPLY_BU_V1 -- ไม่ระบุ Vendor = ทุก Supplier ของ BU
   }
 
   // Include = ดึงเพิ่มนอกเงื่อนไข (ยังจำกัด pending + BU + Aging 0-6 + ไม่อยู่ใน Ignore)
-  const include = (rules.include || []).map((x) => (typeof x === "string" ? x : x.code)).filter(Boolean);
+  const include = await expandCodesByTaxId((rules.include || []).map((x) => (typeof x === "string" ? x : x.code)).filter(Boolean)); // MARKER_VATMAILEXPORT_INCLUDE_BY_TAXID_V1
   let sql;
   if (include.length && cfg.scope_mode !== "BY_VENDOR") {
     const inc = `(status IN ('pending','type_a') AND bu = ANY($1) AND (status = 'type_a' OR aging_months BETWEEN 0 AND 6) AND supplier_code = ANY(${add(include)})${ignore.length ? ` AND NOT (supplier_code = ANY($${params.indexOf(ignore) + 1}))` : ""})`;
@@ -343,6 +362,10 @@ async function generateMails(cfg, ctx, username, preview) {
     const groups = new Map();
     rows.forEach((r) => { const k = r.supplier_code || "-"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
     const codes = [...groups.keys()];
+    // MARKER_VATMAILEXPORT_MERGE_SAME_VENDOR_V1 -- ผู้ค้ารายเดียวกันที่มีหลาย Supplier Code (เช่น I-net: N-xxxx / BTM-xxxx / REV-xxxx) + Tax ID เดียวกัน + To เดียวกัน = รวมเป็นเมลเดียว
+    // -- memberCodes: รหัสหลัก -> รหัสทั้งหมดที่รวมกัน (ฟังก์ชันหาอีเมล/ชื่อผู้รับ/ที่อยู่/BU Contact ด้านล่างไล่ดูทุกรหัสในกลุ่ม) | ไม่ตรงเงื่อนไข = แยกเมลเหมือนเดิม
+    const memberCodes = new Map();
+    const keysOf = (code) => memberCodes.get(code) || [code];
 
     const emailBySup = {};
     try {
@@ -362,8 +385,9 @@ async function generateMails(cfg, ctx, username, preview) {
       gv.forEach((v) => { const g = String(v.GREETING_NAME || "").trim(); const k = `${String(v.Code).trim()}|${String(v.BU || "").trim()}`; if (!greetByCodeBu[k]) greetByCodeBu[k] = g; if (!greetByCode[v.Code]) greetByCode[v.Code] = g; });
     } catch (e) { console.error("vendor_category GREETING_NAME:", e.message); } // ยังไม่ได้เพิ่มคอลัมน์ = ข้าม ใช้ชื่อผู้รับของ Config
     const resolveGreeting = (code, sub) => {
-      for (const b of new Set(sub.map((r) => String(r.bu || "").trim()))) { const g = greetByCodeBu[`${String(code).trim()}|${b}`]; if (g) return g; }
-      return greetByCode[code] || "";
+      for (const b of new Set(sub.map((r) => String(r.bu || "").trim()))) { for (const c of keysOf(code)) { const g = greetByCodeBu[`${String(c).trim()}|${b}`]; if (g) return g; } } // MARKER_VATMAILEXPORT_MERGE_SAME_VENDOR_V1
+      for (const c of keysOf(code)) { if (greetByCode[c]) return greetByCode[c]; }
+      return "";
     };
     const splitMails = (t) => String(t || "").split(/[;,\n]+/).map((x) => x.trim()).filter(Boolean);
     // MARKER_VATMAILEXPORT_BU_CC_V1 + MARKER_VATMAILEXPORT_PLACEHOLDER_OWNER_V1 -- ข้อมูลผู้ค้า (ที่อยู่/เบอร์ = ร่วมทุก BU) + BU Contact เจ้าของงาน (แยกตามผู้ค้า+BU) จาก vendor_category
@@ -373,10 +397,10 @@ async function generateMails(cfg, ctx, username, preview) {
       vx.forEach((v) => { const c = String(v.Code).trim(); const k = `${c}|${String(v.BU || "").trim()}`; if (!vcByCodeBu[k]) vcByCodeBu[k] = v; (vcByCode[c] = vcByCode[c] || []).push(v); });
     } catch (e) { console.error("vendor_category address/phone/bu_contact:", e.message); } // ยังไม่ได้เพิ่มคอลัมน์ = ข้าม (ค่าว่าง ไม่เพิ่ม CC)
     const buSet = (sub) => [...new Set(sub.map((r) => String(r.bu || "").trim()))];
-    const buContactOf = (code, sub, f) => [...new Set(buSet(sub).map((b) => String((vcByCodeBu[`${String(code).trim()}|${b}`] || {})[f] || "").trim()).filter(Boolean))];
+    const buContactOf = (code, sub, f) => [...new Set(buSet(sub).flatMap((b) => keysOf(code).map((c) => String((vcByCodeBu[`${String(c).trim()}|${b}`] || {})[f] || "").trim())).filter(Boolean))]; // MARKER_VATMAILEXPORT_MERGE_SAME_VENDOR_V1
     const supInfoOf = (code, sub, f) => { // ที่อยู่/เบอร์: ใช้ของ BU ในรายการก่อน ไม่มีค่อยใช้แถวอื่นของผู้ค้าเดียวกัน (ร่วมทุก BU)
-      for (const b of buSet(sub)) { const v = String((vcByCodeBu[`${String(code).trim()}|${b}`] || {})[f] || "").trim(); if (v) return v; }
-      return (vcByCode[String(code).trim()] || []).map((v) => String(v[f] || "").trim()).find(Boolean) || "";
+      for (const b of buSet(sub)) { for (const c of keysOf(code)) { const v = String((vcByCodeBu[`${String(c).trim()}|${b}`] || {})[f] || "").trim(); if (v) return v; } } // MARKER_VATMAILEXPORT_MERGE_SAME_VENDOR_V1
+      return keysOf(code).flatMap((c) => vcByCode[String(c).trim()] || []).map((v) => String(v[f] || "").trim()).find(Boolean) || "";
     };
     const supPhoneOf = (code, sub) => supInfoOf(code, sub, "PHONE") || sub.map((r) => String(r.phone || "").trim()).find(Boolean) || ""; // ไม่มีใน Vendor Category = ใช้เบอร์จากรายงาน (vat_watchlist_report.phone)
     const resolveBuCc = (code, sub) => { // อีเมลเจ้าของงาน (อาจหลายอัน คั่น ; ) -> รายการไม่ซ้ำ
@@ -387,9 +411,9 @@ async function generateMails(cfg, ctx, username, preview) {
     const resolveTo = (code, sub) => {
       const seen = new Set(); const out = [];
       const add = (t) => splitMails(t).forEach((m) => { const lk2 = m.toLowerCase(); if (!seen.has(lk2)) { seen.add(lk2); out.push(m); } });
-      [...new Set(sub.map((r) => String(r.bu || "").trim()))].forEach((b) => add(emailByCodeBu[`${String(code).trim()}|${b}`]));
-      if (!out.length) add(emailByCode[code]);   // ไม่มี Email ของ BU นี้ -> ใช้ Email กลางของผู้ขาย (BU อื่น)
-      if (!out.length) add(emailBySup[code]);    // สุดท้ายค่อยใช้ supplier_list เดิม
+      [...new Set(sub.map((r) => String(r.bu || "").trim()))].forEach((b) => keysOf(code).forEach((c) => add(emailByCodeBu[`${String(c).trim()}|${b}`]))); // MARKER_VATMAILEXPORT_MERGE_SAME_VENDOR_V1
+      if (!out.length) keysOf(code).forEach((c) => add(emailByCode[c]));   // ไม่มี Email ของ BU นี้ -> ใช้ Email กลางของผู้ขาย (BU อื่น)
+      if (!out.length) keysOf(code).forEach((c) => add(emailBySup[c]));    // สุดท้ายค่อยใช้ supplier_list เดิม
       return out.join("; ");
     };
     // MARKER_VATMAILEXPORT_ZONE_CC_V1 -- สั่งจาก Incomplete Zone: CC อัตโนมัติ = FAST_VAT_CC (.env) ถ้าไม่ตั้งค่าใช้ CC ของ Config
@@ -406,8 +430,49 @@ async function generateMails(cfg, ctx, username, preview) {
       return out.join("; ");
     };
 
+    // MARKER_VATMAILEXPORT_MERGE_SAME_VENDOR_V1 -- รวมกลุ่ม: Tax ID (vendor_category."TAX ID" เฉพาะตัวเลข) + To เดียวกัน | ไม่รู้ Tax ID หรือไม่มีอีเมล = ไม่รวม
+    const taxByCode = {};
+    try {
+      const { rows: tx } = await pool.query(`SELECT "Code", "TAX ID" AS tax FROM vendor_category WHERE "Code" = ANY($1)`, [codes]);
+      tx.forEach((v) => { const tn = String(v.tax || "").replace(/\D/g, ""); const c0 = String(v.Code).trim(); if (tn && !taxByCode[c0]) taxByCode[c0] = tn; });
+    } catch (e) { console.error("vendor_category TAX ID:", e.message); }
+    {
+      // MARKER_VATMAILEXPORT_MERGE_BY_NAME_FALLBACK_V1 -- รวมเมลผู้ค้ารายเดียวกัน: To เดียวกัน และ (Tax ID เดียวกัน หรือ ชื่อผู้ค้าหลังตัด Prefix BU/คำนำหน้าบริษัท เหมือนกัน) -- เดิมถ้า Tax ID ว่าง/ไม่ตรงจะไม่รวม ทำให้ I-net แตกเป็น 3 เมล
+      const nameKeyOf = (code) => String((groups.get(code)[0] || {}).vendor_name || "")
+        .replace(/^\s*[A-Za-z0-9]{2,6}\s*-\s*/, "")
+        .replace(/บริษัท|บจก\.?|บมจ\.?|จำกัด|\(?มหาชน\)?|\bco\.?,?|\bltd\.?|\blimited\b|\bpublic\b|\bcompany\b/gi, "")
+        .replace(/[\s.,()\-]+/g, "").toLowerCase();
+      const byTo = new Map();
+      for (const code of codes) {
+        const to0 = resolveTo(code, groups.get(code)).toLowerCase();
+        if (!to0) continue; // ไม่มีอีเมล = ไม่รวม
+        if (!byTo.has(to0)) byTo.set(to0, []);
+        byTo.get(to0).push(code);
+      }
+      for (const same of byTo.values()) {
+        if (same.length < 2) continue;
+        const parent = new Map(same.map((c) => [c, c]));
+        const find = (c) => { while (parent.get(c) !== c) { parent.set(c, parent.get(parent.get(c))); c = parent.get(c); } return c; };
+        const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(rb, ra); };
+        for (let i = 0; i < same.length; i++) for (let j = i + 1; j < same.length; j++) {
+          const a = same[i], b = same[j];
+          const ta = taxByCode[String(a).trim()], tb = taxByCode[String(b).trim()];
+          const na = nameKeyOf(a), nb = nameKeyOf(b);
+          if ((ta && tb && ta === tb) || (na && nb && na === nb)) union(a, b);
+        }
+        const comps = new Map();
+        same.forEach((c) => { const r = find(c); if (!comps.has(r)) comps.set(r, []); comps.get(r).push(c); });
+        for (const list of comps.values()) {
+          if (list.length < 2) continue;
+          list.sort((a, b) => groups.get(b).length - groups.get(a).length); // รหัสหลัก (ชื่อ/ชื่อไฟล์) = รหัสที่มีรายการมากสุด
+          const primary = list[0];
+          memberCodes.set(primary, list);
+          for (const c of list.slice(1)) { for (const r of groups.get(c)) groups.get(primary).push(r); groups.delete(c); }
+        }
+      }
+    }
     const suppliers = [];
-    for (const code of codes) {
+    for (const code of [...groups.keys()]) {
       const sub = groups.get(code);
       const name = sub[0].vendor_name || code;
       curCtx = [code, sub];
@@ -530,6 +595,286 @@ router.post("/files/delete", async (req, res) => {
     console.error("POST /vat-mail-export/files/delete error:", err);
     res.status(500).json({ error: err.message || "Internal server error" });
   }
+});
+
+// ── MARKER_VATMAILEXPORT_CST_REPORT_V1 -- CST Report (As off <เดือน>) จาก vat_waiting_for_claim (หน้า Transaction Backup > Waiting for Claim)
+// POST /api/vat-mail-export/cst-report/build { asof:'YYYY-MM', from?:'YYYY-MM', bu?, mode:'download'|'mail' }
+//   download -> { file_name, base64, count, total_vat, unclaim_vat }
+//   mail     -> เก็บไฟล์ชั่วคราว (module 'vat-mail') แล้วคืน { file_id, file_name, ... } ให้หน้าบ้านเปิด Outlook Draft (ลบไฟล์เองหลังเปิด)
+// สูตร (ถอดจากไฟล์ CST_Report_As off May/Jun-26 ตรง 231/231 แถว): Ofin 755/753 = ADJ Vat (= Total Vat x Rate ADJ / 100) ; Unclaim Vat = Total Vat - Ofin 755/753
+const CST_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const cstPeriodKey = (p) => { // คืน y*12+m (m=1..12) หรือ null ; รองรับ 'YYYY-MM' | 'MM/YYYY' | 'Jun-26' | 'Jun-2026'
+  const t = String(p == null ? "" : p).trim();
+  if (!t) return null;
+  let m = t.match(/^(\d{4})[-\/](\d{1,2})/);
+  if (m) return Number(m[1]) * 12 + Number(m[2]);
+  m = t.match(/^(\d{1,2})[-\/](\d{4})$/);
+  if (m) return Number(m[2]) * 12 + Number(m[1]);
+  m = t.match(/^([A-Za-z]{3})[A-Za-z]*[-\s\/](\d{2}|\d{4})$/);
+  if (m) {
+    const mi = CST_MON.findIndex((x) => x.toLowerCase() === m[1].toLowerCase());
+    if (mi < 0) return null;
+    const y = m[2].length === 2 ? 2000 + Number(m[2]) : Number(m[2]);
+    return y * 12 + mi + 1;
+  }
+  return null;
+};
+const cstPeriodLabel = (key) => `${CST_MON[(key - 1) % 12]}-${String(Math.floor((key - 1) / 12)).slice(-2)}`; // 'Jun-26'
+const cstDate = (v) => { // วันที่ -> Date (UTC เที่ยงคืน) กัน Excel เลื่อนวัน
+  if (!v) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : new Date(Date.UTC(v.getFullYear(), v.getMonth(), v.getDate()));
+  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+};
+const cstRate = (v) => { const t = String(v == null ? "" : v).trim(); if (t === "") return null; const n = Number(t); return Number.isFinite(n) ? n : t; }; // ตัวเลข -> number ; NR -> ข้อความ
+
+// MARKER_VATMAILEXPORT_CST_SLICER_V1 -- ฝัง Table Slicer "Status" ตามโครงสร้างไฟล์ CST_Report_As off ต้นฉบับ (slicerCache + slicer + drawing) ; ถ้าฝังไม่สำเร็จ คืนไฟล์ Table ธรรมดา ไม่ให้รายงานล้ม
+async function injectCstStatusSlicer(buffer, statusCol1) {
+  const zip = await JSZip.loadAsync(buffer);
+  const rd = async (p) => { const f = zip.file(p); if (!f) throw new Error("missing " + p); return f.async("string"); };
+  const tbl = await rd("xl/tables/table1.xml");
+  const tableId = (tbl.match(/<table [^>]*\bid="(\d+)"/) || [])[1];
+  zip.file("xl/tables/table1.xml", tbl.replace('totalsRowShown="1"', 'totalsRowShown="0"')); // ไม่มี Totals Row (ตรงกับไฟล์ต้นฉบับ)
+  if (!tableId) throw new Error("table id not found");
+  const NS_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  // 1) ไฟล์ Slicer / Cache / Drawing (รูปแบบเดียวกับไฟล์ต้นฉบับ)
+  zip.file("xl/slicerCaches/slicerCache1.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<slicerCacheDefinition xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x xr10" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:xr10="http://schemas.microsoft.com/office/spreadsheetml/2016/revision10" name="Slicer_Status" xr10:uid="{582E645D-9E71-4D1D-B3F7-7CCE159C136E}" sourceName="Status"><extLst><x:ext uri="{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"><x15:tableSlicerCache tableId="' + tableId + '" column="' + statusCol1 + '"/></x:ext></extLst></slicerCacheDefinition>');
+  zip.file("xl/slicers/slicer1.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<slicers xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x xr10" xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:xr10="http://schemas.microsoft.com/office/spreadsheetml/2016/revision10"><slicer name="Status" xr10:uid="{6556E740-C954-48EE-B2D5-05B8D4DDCAA6}" cache="Slicer_Status" caption="Status" columnCount="3" style="SlicerStyleDark1" rowHeight="257175"/></slicers>');
+  zip.file("xl/drawings/drawing1.xml",
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><xdr:absoluteAnchor><xdr:pos x="21432" y="114300"/><xdr:ext cx="3358523" cy="1026762"/><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice xmlns:sle15="http://schemas.microsoft.com/office/drawing/2012/slicer" Requires="sle15"><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Status"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/drawing/2010/slicer"><sle:slicer xmlns:sle="http://schemas.microsoft.com/office/drawing/2010/slicer" name="Status"/></a:graphicData></a:graphic></xdr:graphicFrame></mc:Choice><mc:Fallback><xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="0" name=""/><xdr:cNvSpPr><a:spLocks noTextEdit="1"/></xdr:cNvSpPr></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="21432" y="114300"/><a:ext cx="3358523" cy="1026762"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:prstClr val="white"/></a:solidFill><a:ln w="1"><a:solidFill><a:prstClr val="green"/></a:solidFill></a:ln></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip"/><a:lstStyle/><a:p><a:r><a:rPr lang="th-TH" sz="1100"/><a:t>Slicer (Status) ใช้ได้ใน Excel 2013 ขึ้นไป</a:t></a:r></a:p></xdr:txBody></xdr:sp></mc:Fallback></mc:AlternateContent><xdr:clientData/></xdr:absoluteAnchor></xdr:wsDr>');
+  // 2) Content Types
+  let ct = await rd("[Content_Types].xml");
+  const addCt = (part, type) => { if (!ct.includes('PartName="' + part + '"')) ct = ct.replace("</Types>", '<Override PartName="' + part + '" ContentType="' + type + '"/></Types>'); };
+  addCt("/xl/slicerCaches/slicerCache1.xml", "application/vnd.ms-excel.slicerCache+xml");
+  addCt("/xl/slicers/slicer1.xml", "application/vnd.ms-excel.slicer+xml");
+  addCt("/xl/drawings/drawing1.xml", "application/vnd.openxmlformats-officedocument.drawing+xml");
+  zip.file("[Content_Types].xml", ct);
+  // 3) Sheet rels + sheet xml (drawing ก่อน tableParts, slicerList ท้ายสุด)
+  const relP = "xl/worksheets/_rels/sheet1.xml.rels";
+  let rels = await rd(relP);
+  if (zip.file("xl/drawings/drawing1.xml") && /Target="[^"]*drawing1\.xml"/.test(rels)) throw new Error("drawing already exists");
+  rels = rels.replace("</Relationships>", '<Relationship Id="rIdCstDrw" Type="' + NS_R.replace("/relationships", "") + '/relationships/drawing" Target="../drawings/drawing1.xml"/><Relationship Id="rIdCstSlc" Type="http://schemas.microsoft.com/office/2007/relationships/slicer" Target="../slicers/slicer1.xml"/></Relationships>');
+  zip.file(relP, rels);
+  let sh = await rd("xl/worksheets/sheet1.xml");
+  if (!/xmlns:r=/.test(sh.slice(0, 600))) sh = sh.replace("<worksheet ", '<worksheet xmlns:r="' + NS_R + '" ');
+  if (!sh.includes("<tableParts")) throw new Error("tableParts not found");
+  sh = sh.replace("<tableParts", '<drawing r:id="rIdCstDrw"/><tableParts');
+  sh = sh.replace("</worksheet>", '<extLst><ext uri="{3A4CF648-6AED-40f4-86FF-DC5316D8AED3}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerList><x14:slicer r:id="rIdCstSlc"/></x14:slicerList></ext></extLst></worksheet>');
+  zip.file("xl/worksheets/sheet1.xml", sh);
+  // 4) Workbook (definedName Slicer_Status + slicerCaches) + workbook rels
+  let wbx = await rd("xl/workbook.xml");
+  if (!/xmlns:r=/.test(wbx.slice(0, 600))) wbx = wbx.replace("<workbook ", '<workbook xmlns:r="' + NS_R + '" ');
+  const dn = '<definedName name="Slicer_Status">#N/A</definedName>';
+  if (wbx.includes("</definedNames>")) wbx = wbx.replace("</definedNames>", dn + "</definedNames>");
+  else if (wbx.includes("<calcPr")) wbx = wbx.replace("<calcPr", "<definedNames>" + dn + "</definedNames><calcPr");
+  else wbx = wbx.replace("</sheets>", "</sheets><definedNames>" + dn + "</definedNames>");
+  const ext = '<extLst><ext uri="{46BE6895-7355-4a93-B00E-2C351335B9C9}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main"><x15:slicerCaches xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerCache r:id="rIdCstSc"/></x15:slicerCaches></ext></extLst>';
+  if (wbx.includes("<extLst>")) wbx = wbx.replace("</extLst>", ext.replace("<extLst>", "").replace("</extLst>", "") + "</extLst>");
+  else wbx = wbx.replace("</workbook>", ext + "</workbook>");
+  zip.file("xl/workbook.xml", wbx);
+  let wrels = await rd("xl/_rels/workbook.xml.rels");
+  wrels = wrels.replace("</Relationships>", '<Relationship Id="rIdCstSc" Type="http://schemas.microsoft.com/office/2007/relationships/slicerCache" Target="slicerCaches/slicerCache1.xml"/></Relationships>');
+  zip.file("xl/_rels/workbook.xml.rels", wrels);
+  return Buffer.from(await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
+}
+
+async function buildCstReportWorkbook(asofKey, fromKey, bu) {
+  const params = [];
+  let sql = `SELECT * FROM vat_waiting_for_claim`;
+  if (bu) { params.push(bu); sql += ` WHERE bu = $1`; }
+  const { rows: all } = await pool.query(sql, params);
+  let skipped = 0;
+  const picked = [];
+  for (const r of all) {
+    const k = cstPeriodKey(r.period);
+    if (k == null) { skipped++; continue; }
+    if (k > asofKey) continue;               // เกิน As of ไม่เอา
+    if (fromKey && k < fromKey) continue;    // ไม่กำหนด From = เอาทั้งหมดจนถึง As of
+    picked.push({ r, k });
+  }
+  picked.sort((a, b) => b.k - a.k || String(b.r.submit_date || "").localeCompare(String(a.r.submit_date || "")) || String(a.r.invoice_ref || "").localeCompare(String(b.r.invoice_ref || "")));
+
+  // คอลัมน์ 16 ช่อง (ตัด Branch Ofin ออกตามที่ผู้ใช้สั่ง): A Invoice Ref. | B PO Num. | C Period | D Vendor Name | E Branch R(%) | F Total Invoice | G Total Vat | H Rate ADJ. | I Ofin 755/753 | J Payment Date | K Taxinvoice D. | L Taxinvoice Num. | M Branch Address | N Submit Date | O Status | P Unclaim Vat
+  const HEAD = ["Invoice Ref.", "PO Num.", "Period", "Vendor Name", "Branch R(%)", "Total Invoice", "Total Vat", "Rate ADJ.", "Ofin 755/753", "Payment Date", "Taxinvoice D.", "Taxinvoice Num.", "Branch Address", "Submit Date", "Status", "Unclaim Vat"];
+  const WID = [16.6, 13.2, 10, 43.4, 14.4, 15.6, 16.6, 11.9, 15, 16.4, 15.6, 18.9, 26.6, 16.5, 11.6, 20.6];
+  const STATUS_COL = HEAD.indexOf("Status") + 1; // 15
+  const HDR_ROW = 8, FIRST = HDR_ROW + 1;
+  let totVat = 0, totUnclaim = 0;
+  const dataRows = picked.map(({ r, k }, idx) => {
+    const rowNo = FIRST + idx;
+    const gross = num(r.gross_amount), vat = num(r.vat_amount);
+    const rate = cstRate(r.adj_v != null && String(r.adj_v).trim() !== "" ? r.adj_v : r.rate_percent);
+    let ofin = null;
+    if (r.adj_vat != null && String(r.adj_vat).trim() !== "") ofin = num(r.adj_vat);
+    else if (typeof rate === "number") ofin = Math.round(vat * rate) / 100;   // fallback = Total Vat x Rate ADJ / 100
+    const unclaim = Math.round((vat - (ofin || 0)) * 100) / 100;
+    totVat += vat; totUnclaim += unclaim;
+    return [
+      r.invoice_ref || "", r.purchase_order || "", cstPeriodLabel(k), r.supplier_name || "", rate,
+      gross, vat, rate, ofin, r.payment_date ? cstDate(r.payment_date) : "-", cstDate(r.tax_invoice_date), r.tax_invoice_number || "",
+      r.branch || "", cstDate(r.submit_date), r.status || "",
+      { formula: `ROUND(G${rowNo}-N(I${rowNo}),2)`, result: unclaim }, // Unclaim Vat = Total Vat - Ofin 755/753
+    ];
+  });
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Report_CST", { views: [{ state: "frozen", ySplit: HDR_ROW, topLeftCell: "A" + FIRST }] });
+  WID.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  // Excel Table (ชื่อ Report_CST, ปุ่ม Filter ทุกหัวคอลัมน์, Style เดียวกับไฟล์ต้นฉบับ)
+  ws.addTable({
+    name: "Report_CST", displayName: "Report_CST", ref: "A" + HDR_ROW, headerRow: true, totalsRow: false,
+    style: { theme: "TableStyleLight8", showRowStripes: true, showColumnStripes: false, showFirstColumn: false, showLastColumn: false },
+    columns: HEAD.map((h) => ({ name: h, filterButton: true })),
+    rows: dataRows.length ? dataRows : [new Array(HEAD.length).fill(null)],
+  });
+  const ACC = '_(* #,##0.00_);_(* \\(#,##0.00\\);_(* "-"??_);_(@_)';
+  const DT = "[$-409]d\\-mmm\\-yy;@";
+  for (let c = 1; c <= HEAD.length; c++) {
+    const h = ws.getRow(HDR_ROW).getCell(c);
+    h.font = { name: "Calibri", size: 14, bold: true, color: { argb: "FFFFFFFF" } };
+    h.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF002060" } };
+    h.alignment = { horizontal: "center", vertical: "middle" };
+  }
+  for (let i = 0; i < dataRows.length; i++) {
+    const row = ws.getRow(FIRST + i);
+    for (let c = 1; c <= HEAD.length; c++) row.getCell(c).font = { name: "Tahoma", size: 11 };
+    [6, 7, 9, 16].forEach((c) => { row.getCell(c).numFmt = ACC; });
+    [10, 11, 14].forEach((c) => { row.getCell(c).numFmt = DT; row.getCell(c).alignment = { horizontal: "center" }; });
+    row.getCell(3).numFmt = "@"; row.getCell(3).alignment = { horizontal: "center" };
+  }
+  const mk = ws.getCell("CZ1"); // ตัวหมายรายงาน CST-R
+  mk.value = "CST-R";
+  mk.font = { name: "Tahoma", size: 11, color: { argb: "FF0000FF" } };
+  mk.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF00FF00" } };
+  mk.alignment = { horizontal: "center" };
+  let buffer = Buffer.from(await wb.xlsx.writeBuffer());
+  let slicer = true;
+  try { buffer = await injectCstStatusSlicer(buffer, STATUS_COL); } catch (e) { slicer = false; console.error("CST report: ฝัง Slicer ไม่สำเร็จ (ใช้ Table ธรรมดา):", e.message); }
+  return { buffer, count: picked.length, skipped, slicer, total_vat: Math.round(totVat * 100) / 100, unclaim_vat: Math.round(totUnclaim * 100) / 100 };
+}
+
+// MARKER_VATMAILEXPORT_CST_MAIL_CONFIG_V1 -- Config Email ของ CST Report (เป็นของ CST Report เท่านั้น ไม่ปนกับ vat_mail_config) : เก็บต่อ BU = To / CC / Greeting / Subject / Body ; ตารางสร้างเองถ้ายังไม่มี
+pool.query(`CREATE TABLE IF NOT EXISTS cst_report_mail_config (
+  bu text PRIMARY KEY, mail_to text NOT NULL DEFAULT '', mail_cc text NOT NULL DEFAULT '', greeting text NOT NULL DEFAULT '',
+  subject_template text NOT NULL DEFAULT '', body_template text NOT NULL DEFAULT '', updated_by text, updated_at timestamptz NOT NULL DEFAULT now())`).catch((e) => console.error("[migrate cst_report_mail_config]:", e.message));
+const CST_DEF_SUBJECT = "{BU}-ส่งรายงานการก่อสร้าง ประจำเดือน {PERIOD}"; // {PERIOD} = เดือน As of แบบ MM/YYYY (เช่น 01/2026)
+const cstCfgComplete = (c) => !!(c && String(c.mail_to || "").trim() && String(c.greeting || "").trim() && String(c.body_template || "").trim()); // บังคับ To + Greeting + Body (CC / Subject ไม่บังคับ)
+const cstFillTpl = (t, v) => String(t || "").replace(/\{(AS_OF|PERIOD|FROM|BU|COUNT|TOTAL_VAT|UNCLAIM_VAT|GREETING)\}/gi, (_, k) => { const x = v[String(k).toUpperCase()]; return x === undefined || x === null ? "" : String(x); }); // ตัวแปรไม่สนตัวพิมพ์เล็ก/ใหญ่ ({Greeting} = {GREETING})
+const cstFmt2 = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+async function cstLoadMailCfg(bu) { return (await pool.query(`SELECT bu, mail_to, mail_cc, greeting, subject_template, body_template, updated_by, updated_at FROM cst_report_mail_config WHERE bu = $1`, [bu])).rows[0] || null; }
+
+// GET /api/vat-mail-export/cst-report/mail-config?bu=CFW -> { config|null, complete, default_cc, default_subject }
+router.get("/cst-report/mail-config", async (req, res) => {
+  try {
+    const bu = String((req.query && req.query.bu) || "").trim();
+    if (!bu) return res.status(400).json({ error: "ไม่ระบุ BU" });
+    const config = await cstLoadMailCfg(bu);
+    res.json({ config, complete: cstCfgComplete(config), default_cc: DEFAULT_CC, default_subject: CST_DEF_SUBJECT });
+  } catch (err) { console.error("GET /vat-mail-export/cst-report/mail-config error:", err); res.status(500).json({ error: err.message || "Internal server error" }); }
+});
+// PUT /api/vat-mail-export/cst-report/mail-config { bu, mail_to, mail_cc, greeting, subject_template, body_template } -> บันทึกต่อ BU (ส่วนกลาง ทุกคนใช้ค่าเดียวกัน)
+router.put("/cst-report/mail-config", async (req, res) => {
+  try {
+    const username = await getUsernameByEmail(req.user.email);
+    const b = req.body || {};
+    const bu = String(b.bu || "").trim();
+    if (!bu || bu.length > 60) return res.status(400).json({ error: "ไม่ระบุ BU" });
+    const toList = dedupeMails(b.mail_to); const ccList = dedupeMails(b.mail_cc);
+    const bad = [...toList, ...ccList].filter((m) => !MAIL_RE.test(m));
+    if (bad.length) return res.status(400).json({ error: "รูปแบบอีเมลไม่ถูกต้อง: " + bad.join(", ") });
+    const greeting = String(b.greeting || "").trim().slice(0, 300);
+    const subject = String(b.subject_template || "").trim().slice(0, 300);
+    const bodyT = String(b.body_template || "").replace(/\r\n/g, "\n").trim().slice(0, 8000);
+    await pool.query(
+      `INSERT INTO cst_report_mail_config (bu, mail_to, mail_cc, greeting, subject_template, body_template, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (bu) DO UPDATE SET mail_to = EXCLUDED.mail_to, mail_cc = EXCLUDED.mail_cc, greeting = EXCLUDED.greeting, subject_template = EXCLUDED.subject_template, body_template = EXCLUDED.body_template, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      [bu, toList.join("; "), ccList.join("; "), greeting, subject, bodyT, username]);
+    const config = await cstLoadMailCfg(bu);
+    res.json({ ok: true, config, complete: cstCfgComplete(config) });
+  } catch (err) { console.error("PUT /vat-mail-export/cst-report/mail-config error:", err); res.status(500).json({ error: err.message || "Internal server error" }); }
+});
+
+router.post("/cst-report/build", async (req, res) => {
+  try {
+    const username = await getUsernameByEmail(req.user.email);
+    const body = req.body || {};
+    const asofKey = cstPeriodKey(body.asof);
+    if (!asofKey) return res.status(400).json({ error: "กรุณาระบุ As of (YYYY-MM)" });
+    const fromKey = body.from ? cstPeriodKey(body.from) : null;
+    if (body.from && !fromKey) return res.status(400).json({ error: "รูปแบบ From ไม่ถูกต้อง (YYYY-MM)" });
+    if (fromKey && fromKey > asofKey) return res.status(400).json({ error: "From ต้องไม่เกิน As of" });
+    const bu = String(body.bu || "").trim();
+    let mailCfg = null;
+    if (body.mode === "mail") { // MARKER_VATMAILEXPORT_CST_MAIL_CONFIG_V1 -- Send Email ต้องเลือก BU + มี Config (To / Greeting / Body) ครบ
+      if (!bu) return res.status(400).json({ error: "กรุณาเลือก BU ก่อนส่งอีเมล" });
+      mailCfg = await cstLoadMailCfg(bu);
+      if (!cstCfgComplete(mailCfg)) return res.status(400).json({ error: `BU ${bu} ยังไม่ได้ตั้งค่า Config Email (To / Greeting / Body)` });
+    }
+    const out = await buildCstReportWorkbook(asofKey, fromKey, bu);
+    if (out.count === 0) return res.status(404).json({ error: "ไม่พบรายการ Waiting for Claim ในช่วงที่เลือก" });
+    const fileName = `CST_Report_As off ${cstPeriodLabel(asofKey)}.xlsx`;
+    const meta = { file_name: fileName, count: out.count, skipped: out.skipped, total_vat: out.total_vat, unclaim_vat: out.unclaim_vat, asof_label: cstPeriodLabel(asofKey) };
+    if (body.mode === "mail") {
+      const fileId = await storeFile("vat-mail", bu || "CST", `cst${Date.now()}`, fileName, out.buffer, username);
+      const vars = { GREETING: cstFillTpl(String(mailCfg.greeting || "").trim(), { BU: bu }), AS_OF: cstPeriodLabel(asofKey), PERIOD: `${String(((asofKey - 1) % 12) + 1).padStart(2, "0")}/${Math.floor((asofKey - 1) / 12)}`, FROM: fromKey ? cstPeriodLabel(fromKey) : "", BU: bu, COUNT: out.count, TOTAL_VAT: cstFmt2(out.total_vat), UNCLAIM_VAT: cstFmt2(out.unclaim_vat) };
+      const mail = {
+        to: dedupeMails(mailCfg.mail_to).join("; "),
+        cc: withDefCc(mailCfg.mail_cc), // ทุกเมลมี CC ค่าเริ่มต้น (DEFAULT_CC) เสมอ
+        subject: cstFillTpl(String(mailCfg.subject_template || "").trim() || CST_DEF_SUBJECT, vars),
+        body: cstFillTpl(mailCfg.body_template, vars), // Body เป็นผู้กำหนดเอง (เช่น "เรียน {Greeting}") -- ไม่ต่อ Greeting หน้า Body อัตโนมัติ
+      };
+      return res.json({ ...meta, file_id: fileId, mail });
+    }
+    res.json({ ...meta, base64: out.buffer.toString("base64") });
+  } catch (err) {
+    console.error("POST /vat-mail-export/cst-report/build error:", err);
+    res.status(500).json({ error: err.message || "Internal server error" });
+  }
+});
+
+// MARKER_VATMAILEXPORT_WC_NOTES_V1 -- Note ของแท็บ Waiting for Claim (Transaction Backup) : เก็บเป็นประวัติต่อแถว (append-only: ใคร/เมื่อไร/ข้อความ/รูป) ในตารางของตัวเอง ไม่ปนกับ vat_watchlist_notes ของหน้า Operation ; ตารางสร้างเองถ้ายังไม่มี
+pool.query(`CREATE TABLE IF NOT EXISTS vat_waiting_claim_notes (
+  id bigserial PRIMARY KEY, wc_id bigint NOT NULL, bu text, invoice_ref text, note text NOT NULL DEFAULT '', image_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_by text, created_at timestamptz NOT NULL DEFAULT now())`).catch((e) => console.error("[migrate vat_waiting_claim_notes]:", e.message));
+pool.query(`CREATE INDEX IF NOT EXISTS idx_vat_waiting_claim_notes_wc ON vat_waiting_claim_notes (wc_id, created_at DESC)`).catch(() => {});
+// GET /api/vat-mail-export/wc-notes/summary -> [{ wc_id, cnt, last_note, last_by, last_at }]  (ไว้โชว์ไอคอน Note ในตาราง)
+router.get("/wc-notes/summary", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT ON (wc_id) wc_id, (COUNT(*) OVER (PARTITION BY wc_id))::int AS cnt, note AS last_note, created_by AS last_by, created_at AS last_at
+       FROM vat_waiting_claim_notes ORDER BY wc_id, created_at DESC, id DESC`);
+    res.json(rows);
+  } catch (err) { console.error("GET /vat-mail-export/wc-notes/summary error:", err); res.status(500).json({ error: err.message || "Internal server error" }); }
+});
+// GET /api/vat-mail-export/wc-notes?wc_id=123 -> ประวัติ Note ของแถวนั้น (ใหม่ -> เก่า)
+router.get("/wc-notes", async (req, res) => {
+  try {
+    const wcId = Number(req.query && req.query.wc_id);
+    if (!Number.isFinite(wcId)) return res.status(400).json({ error: "ไม่ระบุ wc_id" });
+    const { rows } = await pool.query(`SELECT id, wc_id, bu, invoice_ref, note, image_ids, created_by, created_at FROM vat_waiting_claim_notes WHERE wc_id = $1 ORDER BY created_at DESC, id DESC`, [wcId]);
+    res.json(rows);
+  } catch (err) { console.error("GET /vat-mail-export/wc-notes error:", err); res.status(500).json({ error: err.message || "Internal server error" }); }
+});
+// POST /api/vat-mail-export/wc-notes { wc_id, note, image_ids:[fileId] } -> เพิ่ม Note (ทุกคนที่เห็นหน้านี้เพิ่มได้ ; เพิ่มแล้วแก้/ลบไม่ได้ = ประวัติ)
+router.post("/wc-notes", async (req, res) => {
+  try {
+    const username = await getUsernameByEmail(req.user.email);
+    const b = req.body || {};
+    const wcId = Number(b.wc_id);
+    if (!Number.isFinite(wcId)) return res.status(400).json({ error: "ไม่ระบุแถว (wc_id)" });
+    const note = String(b.note || "").replace(/\r\n/g, "\n").trim().slice(0, 8000);
+    const imageIds = (Array.isArray(b.image_ids) ? b.image_ids : []).filter((x) => /^[\w-]{1,64}$/.test(String(x))).slice(0, 20); // fileId ของ file_storage (ตัวเลขหรือ UUID ก็ได้)
+    if (!note && imageIds.length === 0) return res.status(400).json({ error: "กรุณาพิมพ์ Note หรือแนบรูป" });
+    const src = (await pool.query(`SELECT bu, invoice_ref FROM vat_waiting_for_claim WHERE id = $1`, [wcId])).rows[0];
+    if (!src) return res.status(404).json({ error: "ไม่พบรายการ Waiting for Claim นี้" });
+    const ins = await pool.query(
+      `INSERT INTO vat_waiting_claim_notes (wc_id, bu, invoice_ref, note, image_ids, created_by) VALUES ($1,$2,$3,$4,$5::jsonb,$6)
+       RETURNING id, wc_id, bu, invoice_ref, note, image_ids, created_by, created_at`,
+      [wcId, src.bu || null, src.invoice_ref || null, note, JSON.stringify(imageIds), username]);
+    res.json({ ok: true, note: ins.rows[0] });
+  } catch (err) { console.error("POST /vat-mail-export/wc-notes error:", err); res.status(500).json({ error: err.message || "Internal server error" }); }
 });
 
 // ── Config CC (ต่อ BU + User) ──

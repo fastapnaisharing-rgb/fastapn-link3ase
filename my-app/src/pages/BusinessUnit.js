@@ -307,6 +307,51 @@ function ComboBox({ value, onChange, options, placeholder, bare, rows }) { // MA
   );
 }
 
+// MARKER_BUSINESSUNIT_BU_MULTI_FILTER_V1 -- ตัวกรอง BU แบบ Checkbox เลือกได้หลายตัว (พิมพ์ค้นหาได้ / แสดง 5 แถวแล้ว Scroll / Reset = ทั้งหมด)
+function BuMultiFilter({ options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 220 });
+  const ref = useRef(null);
+  const listRef = useRef(null);
+  useEffect(() => {
+    const h = (e) => {
+      if (ref.current && ref.current.contains(e.target)) return;
+      if (listRef.current && listRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+  const toggleOpen = () => {
+    if (!open && ref.current) { const r = ref.current.getBoundingClientRect(); setPos({ top: r.bottom + 2, left: r.left, width: Math.max(r.width, 220) }); }
+    setOpen(o => !o);
+  };
+  const shown = options.filter(o => o.toLowerCase().includes(q.trim().toLowerCase()));
+  const flip = (o) => onChange(selected.includes(o) ? selected.filter(x => x !== o) : [...selected, o]);
+  const label = selected.length === 0 ? 'BU: ทั้งหมด' : selected.length <= 2 ? 'BU: ' + selected.join(', ') : 'BU: ' + selected.length + ' รายการ';
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={toggleOpen} style={{ width: '100%', height: '30px', boxSizing: 'border-box', padding: '0 8px', borderRadius: '6px', border: '0.5px solid #ddd', background: selected.length ? '#e3f4e8' : '#fff', fontSize: '12px', textAlign: 'left', cursor: 'pointer', color: '#1f2933', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label} ▾</button>
+      {open && ReactDOM.createPortal(
+        <div ref={listRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: 'white', border: '1px solid #ddd', borderRadius: '8px', boxShadow: '0 4px 14px rgba(0,0,0,0.12)', zIndex: 99999, padding: '8px' }}>
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="พิมพ์ค้นหา BU..." style={{ width: '100%', boxSizing: 'border-box', padding: '5px 8px', fontSize: '12px', border: '0.5px solid #d0d0d0', borderRadius: '5px', marginBottom: '6px' }} />
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+            <button type="button" onClick={() => onChange(Array.from(new Set([...selected, ...shown])))} style={{ flex: 1, fontSize: '11px', border: '0.5px solid #ddd', background: '#fff', borderRadius: '5px', padding: '3px 0', cursor: 'pointer' }}>เลือกที่แสดง</button>
+            <button type="button" onClick={() => onChange([])} style={{ flex: 1, fontSize: '11px', border: '0.5px solid #ddd', background: '#fff', borderRadius: '5px', padding: '3px 0', cursor: 'pointer', color: '#1a3a5c' }}>↺ Reset (ทั้งหมด)</button>
+          </div>
+          <div style={{ maxHeight: '150px', overflowY: 'auto' }}>
+            {shown.length === 0 ? <div style={{ fontSize: '12px', color: '#999', padding: '8px', textAlign: 'center' }}>ไม่พบ</div> : shown.map(o => (
+              <label key={o} style={{ display: 'flex', alignItems: 'center', gap: '8px', height: '30px', padding: '0 6px', fontSize: '12px', cursor: 'pointer', borderRadius: '5px', background: selected.includes(o) ? '#f2fbf7' : 'transparent' }}>
+                <input type="checkbox" checked={selected.includes(o)} onChange={() => flip(o)} />{o}
+              </label>
+            ))}
+          </div>
+        </div>, document.body)}
+    </div>
+  );
+}
+
 // MARKER_FIXEDSELECT_KEYBOARD_V1 -- Dropdown เลือกได้เฉพาะรายการ (ไม่พิมพ์เอง) : Tab เข้า = เปิด, ArrowUp/Down เลื่อน, Enter เลือก, Esc ปิด, Tab ออก/คลิกนอก = ปิด (ไม่เปลี่ยนค่า)
 function FixedSelect({ value, onChange, options, placeholder }) {
   const [open, setOpen] = useState(false);
@@ -634,7 +679,9 @@ const branchFillFromCompany = (f) => {
   if (blank(n['BU-TaxID']) && !blank(c['TAX ID'])) n['BU-TaxID'] = String(c['TAX ID']).trim();
   if (blank(n['%'])) { const p = branchCompanyPct(n['BU-TaxID']); if (p) n['%'] = p; }
   const seg = String(c['SEGMENT3'] || '').trim(); const eng = String(c['ENGLISH COMPANY NAME'] || '').trim();
-  if (blank(n['Simple Company']) && seg && eng) n['Simple Company'] = `${seg}-${eng}`;
+  const cSimple = String(c['Simple Company'] || '').trim(); // MARKER_BU_SIMPLE_COMPANY_FIELD_V1 -- ค่าที่กรอกใน Company Info มาก่อน
+  if (blank(n['Simple Company']) && cSimple) n['Simple Company'] = cSimple;
+  else if (blank(n['Simple Company']) && seg && eng) n['Simple Company'] = `${seg}-${eng}`;
   return n;
 };
 // MARKER_BRANCH_IMPORT_AUTOFILL_V1 -- Import Template: เติมช่องที่ว่างให้อัตโนมัติ (เฉพาะ Branch Code ใหม่ ไม่แตะสาขาที่มีใน DB แล้ว)
@@ -649,6 +696,21 @@ const autofillBranchImportRows = (rows, existing) => {
     if (!code || have.has(code)) return r;
     const n = { ...r };
     if (blank(n['status'])) n['status'] = 'Active'; // MARKER_BRANCH_STATUS_DEFAULT_ACTIVE_V1
+    // MARKER_BRANCH_IMPORT_SIMPLE_BRANCH_FIRST_V1 -- Simple Company: ดึงจาก Branch ก่อน (Head Office รหัสตัด 2 ตัวท้าย+"01" หรือสาขาที่ Company ตรงกัน) แล้วค่อยให้ Company Info เติมช่องที่ยังว่าง
+    if (blank(n['Simple Company'])) {
+      const __ho = code.length >= 3 ? code.slice(0, -2) + '01' : '';
+      const __comp = String(n['Company for Show in Report Display'] || '').trim();
+      const __m = pool.find((b) => __ho && String(b['Branch Code'] || '').trim() === __ho && !blank(b['Simple Company']))
+        || pool.find((b) => __comp && norm(b['Company for Show in Report Display']) === norm(__comp) && !blank(b['Simple Company']));
+      if (__m) n['Simple Company'] = __m['Simple Company'];
+    }
+    // MARKER_SIMPLE_COMPANY_BU_MATCH_V1 -- BU Matching: Branch อื่นที่ BU เดียวกัน -> ค่าที่พบมากที่สุด (ก่อนใช้ Company Info)
+    if (blank(n['Simple Company']) && !blank(n['bu'])) {
+      const __k = norm(n['bu']); const __cnt = new Map();
+      pool.forEach((b) => { if (norm(b['bu']) === __k && !blank(b['Simple Company'])) { const v = String(b['Simple Company']).trim(); __cnt.set(v, (__cnt.get(v) || 0) + 1); } });
+      let __best = ''; let __n = 0; __cnt.forEach((c, v) => { if (c > __n) { __n = c; __best = v; } });
+      if (__best) n['Simple Company'] = __best;
+    }
     Object.assign(n, branchFillFromCompany(n)); // MARKER_BRANCH_FILL_FROM_COMPANY_V1
     if (!blank(n['BU-Branch'])) n['BU-Branch'] = String(n['BU-Branch']).trim().padStart(5, '0');
     const bu = String(n['bu'] || '').trim();
@@ -666,7 +728,7 @@ const autofillBranchImportRows = (rows, existing) => {
   });
 };
 // MARKER_BRANCH_IMPORT_MIN_REQUIRED_V1 -- Import สาขาใหม่: ต้องมีช่องขั้นต่ำครบ (หลังระบบเติมให้แล้ว) ไม่ครบ = ไม่ผ่าน (ไม่ถูก Import) และบอกว่าขาดอะไร
-const BRANCH_IMPORT_REQUIRED = [['Branch Code', 'Branch Code'], ['status', 'Status'], ['Company for Show in Report Display', 'Company for Report'], ['Simple Company', 'Simple Company'], ['bu', 'BU'], ['Group-P', 'Group-P'], ['BU-TaxID', 'BU Tax ID'], ['BU-Branch', 'BU Branch']];
+const BRANCH_IMPORT_REQUIRED = [['Branch Code', 'Branch Code'], ['status', 'Status'], ['Company for Show in Report Display', 'Company for Report'], ['bu', 'BU'], ['Group-P', 'Group-P'], ['BU-TaxID', 'BU Tax ID'], ['BU-Branch', 'BU Branch']];
 // MARKER_BRANCH_REQUIRED_MARK_V1 -- หัวคอลัมน์ใน Excel ที่ลงท้ายด้วย * (ช่องบังคับ) ให้ตัด * ออกก่อน แล้วค่อยจับคู่ชื่อ Field
 const stripReqMark = (rows) => rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [String(k).replace(/\s*\*+\s*$/, '').trim(), v])));
 const markInvalidNewBranchRows = (rows) => rows.map((r) => {
@@ -678,6 +740,114 @@ const markInvalidNewBranchRows = (rows) => rows.map((r) => {
   if (String(r['status'] || '').trim() === 'Relocate' && !has('Branch Allocate')) { miss.push('Branch Allocate (Relocate)'); keys.push('Branch Allocate'); }
   return miss.length ? { ...r, _status: 'invalid', _missing: miss, _missingKeys: keys } : r;
 });
+// MARKER_BUSINESSUNIT_BUTTON_ACCESS_CONFIG_V1 -- Config สิทธิ์ปุ่ม Business Unit (Owner เท่านั้น) : 3 Tab x 2 ด้าน (อนุญาต / ไม่อนุญาต)
+const BU_ACCESS_GROUPS = [
+  { key: 'ti', label: 'Template + Import', icon: '⬇', btns: ['⬇ Template', '📂 Import'], dflt: ['Owner', 'Admin'] },
+  { key: 'rb', label: 'Recycle Bin', icon: '🗑', btns: ['🗑 Recycle Bin'], dflt: ['Owner', 'Admin'] },
+  { key: 'nw', label: 'New', icon: '＋', btns: ['+ New'], dflt: ['Owner', 'Admin'] },
+];
+function BuAccessConfigModal({ current, me, onClose, onSaved }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sel, setSel] = useState({ ti: new Set(), rb: new Set(), nw: new Set() });
+  const [tab, setTab] = useState('ti');
+  const [q, setQ] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let off = false;
+    (async () => {
+      try {
+        const { data } = await db.from('user_roles').select('username,role');
+        if (off) return;
+        const list = (Array.isArray(data) ? data : []).filter(u => u.username).map(u => ({ name: String(u.username), role: String(u.role || 'Viewer') })).sort((a, b) => a.name.localeCompare(b.name));
+        setUsers(list);
+        const next = {};
+        BU_ACCESS_GROUPS.forEach(g => {
+          const saved = current && Array.isArray(current[g.key]) ? current[g.key].map(x => String(x).toLowerCase()) : null;
+          next[g.key] = new Set(list.filter(u => (u.role.toLowerCase() === 'owner') || (saved ? saved.includes(u.name.toLowerCase()) : g.dflt.map(x => x.toLowerCase()).includes(u.role.toLowerCase()))).map(u => u.name));
+        });
+        setSel(next);
+      } catch (e) { setErr('โหลดรายชื่อผู้ใช้ไม่สำเร็จ'); }
+      setLoading(false);
+    })();
+    return () => { off = true; };
+  }, [current]);
+  const isOwnerU = (u) => u.role.toLowerCase() === 'owner';
+  const g = BU_ACCESS_GROUPS.find(x => x.key === tab);
+  const cur = sel[tab];
+  const flip = (name) => setSel(s => { const n = new Set(s[tab]); if (n.has(name)) n.delete(name); else n.add(name); return { ...s, [tab]: n }; });
+  const setAll = (v) => setSel(s => { const n = new Set(s[tab]); users.forEach(u => { if (isOwnerU(u)) return; if (v) n.add(u.name); else n.delete(u.name); }); return { ...s, [tab]: n }; });
+  const ql = q.trim().toLowerCase();
+  const okList = users.filter(u => cur.has(u.name) && u.name.toLowerCase().includes(ql));
+  const noList = users.filter(u => !cur.has(u.name) && u.name.toLowerCase().includes(ql));
+  const save = async () => {
+    setSaving(true); setErr('');
+    try {
+      const val = {}; BU_ACCESS_GROUPS.forEach(x => { val[x.key] = users.filter(u => sel[x.key].has(u.name) || isOwnerU(u)).map(u => u.name); });
+      const { error } = await db.from('system_settings').upsert([{ key: 'bu_button_access', value: JSON.stringify(val), updated_by: me, updated_at: new Date().toISOString() }], { onConflict: 'key' });
+      if (error) throw error;
+      try { broadcastWs('system_settings_updated', { key: 'bu_button_access' }); } catch (e) { /* no-op */ }
+      onSaved(val);
+    } catch (e) { setErr('บันทึกไม่สำเร็จ: ' + (e && e.message ? e.message : e)); }
+    setSaving(false);
+  };
+  const row = (u) => (
+    <div key={u.name} onClick={() => { if (!isOwnerU(u)) flip(u.name); }} style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid ' + (isOwnerU(u) ? '#cfe6dc' : '#e3e6eb'), background: isOwnerU(u) ? '#f2fbf7' : '#fff', borderRadius: 10, padding: '6px 10px', fontSize: 13, cursor: isOwnerU(u) ? 'not-allowed' : 'pointer' }}>
+      <i style={{ width: 26, height: 26, borderRadius: '50%', background: '#1a3a5c', color: '#fff', display: 'grid', placeItems: 'center', fontStyle: 'normal', fontSize: 12, fontWeight: 700, flex: 'none' }}>{u.name[0].toUpperCase()}</i>
+      {u.name}
+      <small style={{ fontSize: 10, fontWeight: 700, color: '#6b7480', background: '#eef0f4', borderRadius: 99, padding: '0 8px' }}>{u.role}</small>
+      <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: '#7b8794' }}>{isOwnerU(u) ? '🔒 ล็อก' : (cur.has(u.name) ? 'ไม่อนุญาต ›' : '‹ อนุญาต')}</span>
+    </div>
+  );
+  const col = (title, color, bg, border, cnt, list) => (
+    <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid ' + border, background: bg === '#fdeeee' ? '#fffafa' : '#fff', display: 'flex', flexDirection: 'column', minHeight: 240 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', fontSize: 13, fontWeight: 700, background: bg, color }}>{title}<span style={{ marginLeft: 'auto', fontSize: 11, borderRadius: 99, padding: '2px 10px', color: '#fff', background: color === '#1f6b33' ? '#2f9e44' : '#d1495b' }}>{cnt}</span></div>
+      <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 300, overflow: 'auto' }}>
+        {list.length ? list.map(row) : <div style={{ color: '#a0a8b3', fontSize: 12, textAlign: 'center', padding: '30px 0' }}>ไม่มีผู้ใช้</div>}
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(20,30,50,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ background: '#fff', borderRadius: 16, width: 'min(860px, 96vw)', maxHeight: '94vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 18px 50px rgba(20,30,50,0.28)' }}>
+        <div style={{ flex: 'none', padding: '16px 22px', background: 'linear-gradient(180deg,#f7f9fc,#fff)', borderBottom: '1px solid #e6e4dc', display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div style={{ width: 38, height: 38, borderRadius: 11, background: '#eaf1fb', display: 'grid', placeItems: 'center', fontSize: 19 }}>🔐</div>
+          <div><div style={{ fontSize: 16, fontWeight: 700, color: '#1a3a5c' }}>Config สิทธิ์ใช้งานปุ่ม · Business Unit</div><div style={{ fontSize: 12, color: '#7b8794' }}>กดที่ชื่อผู้ใช้เพื่อย้ายระหว่าง "อนุญาต" และ "ไม่อนุญาต"</div></div>
+          <button type="button" onClick={onClose} style={{ marginLeft: 'auto', border: 'none', background: '#f0f0f0', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>✕</button>
+        </div>
+        <div style={{ flex: 'none', display: 'flex', gap: 24, padding: '0 22px', borderBottom: '1px solid #e6e4dc', marginTop: 6 }}>
+          {BU_ACCESS_GROUPS.map(x => (
+            <a key={x.key} onClick={() => { setTab(x.key); setQ(''); }} style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 2px', fontSize: 13.5, fontWeight: 600, color: tab === x.key ? '#1a3a5c' : '#7b8794', cursor: 'pointer', borderBottom: tab === x.key ? '3px solid #2fb58a' : '3px solid transparent', marginBottom: -1 }}>
+              {x.icon} {x.label}<span style={{ minWidth: 24, height: 20, borderRadius: 99, display: 'inline-grid', placeItems: 'center', fontSize: 11, fontWeight: 700, padding: '0 7px', background: tab === x.key ? '#1a3a5c' : '#eef0f4', color: tab === x.key ? '#fff' : '#6b7480' }}>{sel[x.key].size}</span>
+            </a>
+          ))}
+        </div>
+        <div style={{ flex: 'none', margin: '14px 22px 0', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, color: '#7b8794' }}>
+          ควบคุมปุ่ม: {g.btns.map(b => <span key={b} style={{ fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '2px 8px', background: '#eaf1fb', color: '#1a3a5c' }}>{b}</span>)} · ค่าเริ่มต้น: {g.dflt.join(' / ')}
+        </div>
+        <div style={{ flex: 'none', margin: '10px 22px 0', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาผู้ใช้..." style={{ height: 34, width: 240, border: '1px solid #d5dbe3', borderRadius: 9, padding: '0 12px', fontSize: 13, background: '#fafbfc' }} />
+          <button type="button" onClick={() => setAll(true)} style={{ height: 34, borderRadius: 9, border: '1px solid #d5dbe3', background: '#fff', color: '#4a5568', fontWeight: 700, fontSize: 12, padding: '0 12px', cursor: 'pointer' }}>อนุญาตทั้งหมด</button>
+          <button type="button" onClick={() => setAll(false)} style={{ height: 34, borderRadius: 9, border: '1px solid #d5dbe3', background: '#fff', color: '#4a5568', fontWeight: 700, fontSize: 12, padding: '0 12px', cursor: 'pointer' }}>ไม่อนุญาตทั้งหมด</button>
+        </div>
+        <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', margin: '12px 22px 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          {loading ? <div style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#888', padding: 30 }}>กำลังโหลด...</div> : <>
+            {col('✅ อนุญาต', '#1f6b33', '#e9f7ee', '#c9ecd4', cur.size, okList)}
+            {col('⛔ ไม่อนุญาต', '#a33a46', '#fdeeee', '#f5cfd3', users.length - cur.size, noList)}
+          </>}
+        </div>
+        {err && <div style={{ margin: '10px 22px 0', padding: '8px 12px', background: '#FCEBEB', color: '#791F1F', borderRadius: 8, fontSize: 12 }}>{err}</div>}
+        <div style={{ flex: 'none', display: 'flex', gap: 10, alignItems: 'center', padding: '16px 22px 18px' }}>
+          <span style={{ fontSize: 12, color: '#7b8794', marginRight: 'auto' }}>Owner เข้าถึงได้เสมอ (ย้ายไม่ได้)</span>
+          <button type="button" onClick={onClose} style={{ height: 38, borderRadius: 10, padding: '0 22px', fontSize: 13, fontWeight: 700, border: '1px solid #d5dbe3', background: '#fff', color: '#4a5568', cursor: 'pointer' }}>ยกเลิก</button>
+          <button type="button" disabled={saving || loading} onClick={save} style={{ height: 38, borderRadius: 10, padding: '0 22px', fontSize: 13, fontWeight: 700, border: '1px solid #1a3a5c', background: '#1a3a5c', color: '#fff', cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [tab, setTab] = useState(activeSubTab || 'info');
   const { currentUser, userName, userPermissions } = useAuth();  // MARKER_BUSINESSUNIT_INFO_FORM_REDESIGN_V1
@@ -690,6 +860,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
 
   const [infoItems, setInfoItems] = useState([]);
   const [infoSearch, setInfoSearch] = useState('');
+  const [infoBaseFilter, setInfoBaseFilter] = useState(''); // MARKER_BUSINESSUNIT_BASE_FILTER_V1
   const [infoSelected, setInfoSelected] = useState([]);
   const [infoSortField, setInfoSortField] = useState('bu');
   const [infoSortDir, setInfoSortDir] = useState('asc');
@@ -725,6 +896,17 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [branchImporting, setBranchImporting] = useState(false);
   const branchFileRef = useRef(null);
   const [showRecycleBin, setShowRecycleBin] = useState(false);
+  // MARKER_BUSINESSUNIT_BUTTON_ACCESS_CONFIG_V1 -- Config สิทธิ์ปุ่ม (Template+Import / Recycle Bin / New) เก็บใน system_settings key 'bu_button_access'
+  const [btnAccess, setBtnAccess] = useState(null); // null = ยังไม่เคยตั้ง -> ใช้สิทธิ์ตาม Role เดิม
+  const [showAccessCfg, setShowAccessCfg] = useState(false);
+  const loadBtnAccess = async () => {
+    try {
+      const { data } = await db.from('system_settings').select('*').eq('key', 'bu_button_access');
+      const row = Array.isArray(data) ? data[0] : null;
+      setBtnAccess(row && row.value ? JSON.parse(row.value) : null);
+    } catch (e) { setBtnAccess(null); }
+  };
+  useEffect(() => { loadBtnAccess(); }, []);
   const [recycleBinItems, setRecycleBinItems] = useState([]);
   const [recycleBinLoading, setRecycleBinLoading] = useState(false);
   const [recycleBinSelected, setRecycleBinSelected] = useState([]);
@@ -734,6 +916,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const [branchPage, setBranchPage] = useState(1);
   const [branchPageSize, setBranchPageSize] = useState(100);
   const [branchTaxFilter, setBranchTaxFilter] = useState('');
+  const [branchBuFilter, setBranchBuFilter] = useState([]); // MARKER_BUSINESSUNIT_BRANCH_BU_FILTER_V1
 
   const theadRef = useRef(null);
   const tbodyRef = useRef(null);
@@ -758,7 +941,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const INFO_COMBO = ['DEPARTMENT','AP GRT Control']; // MARKER_BUSINESSUNIT_INFO_BU_BOOK_PLAIN_INPUT_V1 -- BU / Book เป็นช่องพิมพ์ธรรมดา (เอา Dropdown ออก)
   // MARKER_BUSINESSUNIT_INFO_FORM_REDESIGN_V1
   const INFO_EDIT = [
-    ['bu','BU'],['THAI COMPANY NAME','Thai Company Name'],['ENGLISH COMPANY NAME','English Company Name'],
+    ['bu','BU'],['THAI COMPANY NAME','Thai Company Name'],['ENGLISH COMPANY NAME','English Company Name'],['Simple Company','Simple Company'], // MARKER_BU_SIMPLE_COMPANY_FIELD_V1
     ['bu_code_name','BU Code Name'],['system_bank','System Bank'],
     ['TAX ID','Tax ID'],['PREPARE BY','Prepare By'],['DEPARTMENT','Department'],
     ['COMPANY CODE','Company Code'],['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],
@@ -823,7 +1006,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   // MARKER_BUSINESSUNIT_REMOVE_COMBO_MATCH_APCONTROLLER_V1 -- ตรงกับ APController.js (เอา ComboBox ออกหมด)
   const BRANCH_COMBO = [];
   // ── Pattern เดียวกับ APController.js (BRANCH_REQUIRED_KEYS/BRANCH_FIELD_COLOR) ──
-  const BRANCH_REQUIRED_KEYS = ['Branch Code','status','Company for Show in Report Display','Simple Company','bu','Group-P','BU-TaxID','BU-Branch']; // MARKER_BRANCH_SIMPLE_COMPANY_REQUIRED_V1
+  const BRANCH_REQUIRED_KEYS = ['Branch Code','status','Company for Show in Report Display','bu','Group-P','BU-TaxID','BU-Branch']; // MARKER_BRANCH_SIMPLE_COMPANY_REQUIRED_V1 -> ปลดจากช่องบังคับแล้ว (MARKER_BU_SIMPLE_COMPANY_FIELD_V1: ระบบเติมอัตโนมัติถ้าไม่กรอก)
   const BRANCH_FIELD_COLOR = {
     'Branch Code': '#FCF3D5', 'status': '#FCF3D5', 'Company for Show in Report Display': '#FCF3D5', 'Simple Company': '#FCF3D5',
     'bu': '#FCF3D5', 'Group-P': '#FCF3D5', 'BU-TaxID': '#FCF3D5', 'BU-Branch': '#FCF3D5',
@@ -910,7 +1093,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     return unsubscribe;
   }, [fetchInfo]);
   useEffect(() => { if (activeSubTab) setTab(activeSubTab); }, [activeSubTab]);
-  useEffect(() => { setBranchPage(1); }, [branchSearch, branchSortField, branchSortDir, branchTaxFilter]);
+  useEffect(() => { setBranchPage(1); }, [branchSearch, branchSortField, branchSortDir, branchTaxFilter, branchBuFilter]);
 
   const handleTabChange = (t) => { setTab(t); if (onSubTabChange) onSubTabChange(t); };
   const handleFilterByTaxId = (taxId) => { setBranchTaxFilter(taxId); setBranchSearch(''); setBranchPage(1); handleTabChange('branch'); };
@@ -980,11 +1163,23 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     INTEGER_FIELDS.forEach(f => {
       if (autoForm[f] === '' || autoForm[f] === undefined) autoForm[f] = null;
     });
+    if (!String(autoForm['Simple Company'] || '').trim() && !infoItems.some(i => Object.prototype.hasOwnProperty.call(i, 'Simple Company'))) delete autoForm['Simple Company']; // MARKER_BU_SIMPLE_COMPANY_FIELD_V1 -- DB ยังไม่มีคอลัมน์ + ช่องว่าง = ไม่ส่ง
     const data = { ...autoForm, ...metaFields };
+    const __origForSimple = infoEditId ? infoItems.find(i => i.id === infoEditId) : null; // MARKER_BU_SIMPLE_COMPANY_APPLY_ALL_V1
     if (infoEditId) {
       const { data: updated, error } = await db.from('company_list').update(data).eq('id', infoEditId).select().single();
       if (error) throw error;
       setInfoItems(prev => prev.map(i => i.id === infoEditId ? { ...i, ...updated } : i));
+      // MARKER_BU_SIMPLE_COMPANY_APPLY_ALL_V1 -- Simple Company ของ BU เปลี่ยน (และไม่ว่าง) -> Apply All ให้ทุก Branch ของ BU นั้นทันที (ไม่ถาม)
+      const __newSimple = String(autoForm['Simple Company'] || '').trim();
+      const __oldSimple = String(__origForSimple?.['Simple Company'] || '').trim();
+      const __buVal = String(autoForm['bu'] || '').trim();
+      if (__newSimple && __newSimple !== __oldSimple && __buVal) {
+        const { error: __bErr } = await db.from('branch_list').update({ 'Simple Company': __newSimple, ...metaFields }).eq('bu', __buVal);
+        if (__bErr) throw __bErr;
+        setBranches(prev => prev.map(b => String(b['bu'] || '').trim() === __buVal ? { ...b, 'Simple Company': __newSimple } : b));
+        try { broadcastWs('branch_list_updated', { bu: __buVal }); } catch (e) { console.error('[broadcast branch_list_updated]', e); }
+      }
     } else {
       const { data: inserted, error } = await db.from('company_list').insert([data]).select().single();
       if (error) throw error;
@@ -1365,15 +1560,19 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     setBranchImporting(false);
   };
 
+  const infoBaseOptions = Array.from(new Set(['CRC Base','RBS Base','CDG Base','CHR Base', ...infoItems.map(i => String(i['base'] || '').trim()).filter(Boolean)]));
   const filteredInfo = infoItems
+    .filter(i => !infoBaseFilter || String(i['base'] || '').trim() === infoBaseFilter) // MARKER_BUSINESSUNIT_BASE_FILTER_V1
     .filter(i => i['bu']?.toLowerCase().includes(infoSearch.toLowerCase()) || i['THAI COMPANY NAME']?.toLowerCase().includes(infoSearch.toLowerCase()) || i['ENGLISH COMPANY NAME']?.toLowerCase().includes(infoSearch.toLowerCase()) || i['TAX ID']?.includes(infoSearch) || i['BOOK']?.toLowerCase().includes(infoSearch.toLowerCase()))
     .sort((a,b) => { const ca=a[infoSortField]||'',cb=b[infoSortField]||''; return infoSortDir==='asc'?ca.localeCompare(cb):cb.localeCompare(ca); });
 
+  const branchBuOptions = Array.from(new Set(branches.map(b => String(b['bu'] || '').trim()).filter(Boolean))).sort();
   const filteredBranch = branches
     .filter(b => {
       const matchTax = branchTaxFilter ? b['BU-TaxID'] === branchTaxFilter : true;
       const matchSearch = branchSearch ? (b['Branch Code']?.toLowerCase().includes(branchSearch.toLowerCase()) || b['Company for Show in Report Display']?.toLowerCase().includes(branchSearch.toLowerCase()) || b['Simple Company']?.toLowerCase().includes(branchSearch.toLowerCase()) || b['bu']?.toLowerCase().includes(branchSearch.toLowerCase()) || b['BU-TaxID']?.includes(branchSearch) || b['Branch Direct']?.toLowerCase().includes(branchSearch.toLowerCase()) || b['Branch Address']?.toLowerCase().includes(branchSearch.toLowerCase())) : true;
-      return matchTax && matchSearch;
+      const matchBu = branchBuFilter.length ? branchBuFilter.includes(String(b['bu'] || '').trim()) : true; // MARKER_BUSINESSUNIT_BRANCH_BU_FILTER_V1
+      return matchTax && matchSearch && matchBu;
     })
     .sort((a,b) => { const ca=a[branchSortField]||'',cb=b[branchSortField]||''; return branchSortDir==='asc'?ca.localeCompare(cb):cb.localeCompare(ca); });
 
@@ -1415,14 +1614,27 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const minInfoW = 36 + INFO_COLUMNS.reduce((s,c) => s+c.w, 0) + infoActionW;
   const infoTotalW = containerW > 0 ? Math.max(minInfoW, containerW) : minInfoW;
 
+  // MARKER_BUSINESSUNIT_COLORED_HEAD_V1 -- สีหัวคอลัมน์แยกตามกลุ่มข้อมูล
+  const _HG = { id:['#dbe6f5','#1a3a5c'], name:['#e0ecfc','#3b82f6'], tax:['#efe7fb','#8b5cf6'], rate:['#e3f4e8','#2f9e44'], book:['#fdeee0','#f08a24'], misc:['#e6f6f2','#2fb58a'], stat:['#fde8ea','#d1495b'] };
+  const _HMAP = { 'bu':'id','Branch Code':'id','Branch Direct':'id','Branch Allocate':'id','THAI COMPANY NAME':'name','ENGLISH COMPANY NAME':'name','Company for Show in Report Display':'name','TAX ID':'tax','COMPANY CODE':'tax','BU-TaxID':'tax','BU-Branch':'tax','VAT %':'rate','Last Rate (%)':'rate','%':'rate','DB(%)':'rate','cpc':'rate','BOOK':'book','SEGMENT3':'book','Group-P':'book','status':'stat','Inactive Date':'stat' };
+
+  // MARKER_HEAD_ICON_V1 -- ไอคอนหน้าชื่อหัวคอลัมน์ (แบบ A อีโมจิ)
+  const __HEAD_ICONS = {"bu": "🏢", "thai company name": "📛", "english company name": "🔤", "tax id": "🧾", "tax id bu": "🧾", "bu tax id": "🧾", "company code": "#️⃣", "company name": "🏛️", "vat %": "％", "last rate (%)": "📈", "book": "📒", "segment3": "🏷️", "branch code": "🏬", "branch direct": "🧭", "branch allocate": "🧮", "bu branch": "🌿", "%": "％", "db(%)": "％", "cpc": "🏦", "group-p": "👥", "status": "🚦", "inactive date": "📅", "code": "🔑", "supplier name": "🏭", "supplier no.": "🔢", "site": "📍", "tax-type": "🧾", "notice": "🔔", "sub acc": "📂", "no.": "🔢", "due": "⏰", "digit": "🔢", "email": "✉️", "sm-code": "🔖", "branch": "🌿", "debit account": "➖", "credit account": "➕", "at-match": "🔗", "rule1": "📏", "rule2": "📏", "rule3": "📏", "rule4": "📏", "rule5": "📏", "sy-running": "🔄", "ie-code": "💸", "ประเภท": "🗂️", "type": "🧩", "sub type": "🧩", "description": "📝", "account": "📚", "sub": "📂", "dis-g": "🎁", "i&g": "💹", "value": "💲", "oth": "➕", "spi-1": "⭐", "spec-tx": "🧾"};
+  const headIcon = (label) => { const e = __HEAD_ICONS[String(label || '').trim().toLowerCase()]; return e ? e + ' ' : ''; };
+  const headTint = (k) => ({}); // สีหัวคอลัมน์ใช้สีเดิม (Navy)
+  const _meLow = String(userName || '').trim().toLowerCase(); // MARKER_BUSINESSUNIT_BUTTON_ACCESS_CONFIG_V1
+  const _canBtn = (k, dflt) => (isOwner ? true : (btnAccess && Array.isArray(btnAccess[k]) ? btnAccess[k].map(x => String(x).toLowerCase()).includes(_meLow) : dflt));
+  const canTI = _canBtn('ti', isAdmin);
+  const canRB = _canBtn('rb', isAdmin);
+  const canNW = _canBtn('nw', isAdmin);
   const S = {
-    container: { padding:isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth: 0, overflow: 'hidden' },
+    container: { padding:isMobile?'12px':'20px', background:'#ffffff', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth: 0, overflow: 'hidden' },
     topbar: { display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0', flexShrink:0, flexWrap:isMobile?'wrap':'nowrap', gap:'8px' },
     btn: { padding:isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize:isMobile?'12px':'13px', marginLeft:isMobile?'4px':'8px' },
-    tabBar: { display:'flex', alignItems:'flex-end', padding:'10px 0 0', flexShrink:0, borderBottom:'2px solid #e8e8e8' },
-    tab: (active) => ({ padding:isMobile?'6px 12px':'8px 20px', fontSize:isMobile?'12px':'13px', cursor:'pointer', color:active?'#1a3a5c':'#888', borderBottom:active?'2px solid #1a3a5c':'2px solid transparent', marginBottom:'-2px', borderRadius:'6px 6px 0 0', background:active?'white':'transparent', fontWeight:active?'500':'400', display:'flex', alignItems:'center', gap:'4px' }),
-    tabBadge: (active) => ({ background:active?'#1a3a5c':'#e8e8e8', color:active?'white':'#888', fontSize:'10px', padding:'1px 5px', borderRadius:'20px' }),
-    outer: { background:'white', borderRadius:'8px', border:'0.5px solid #e8e8e8', overflow:'hidden', display:'flex', flexDirection:'column', flex:1, minWidth: 0 },
+    tabBar: { display:'flex', alignItems:'flex-end', gap:isMobile?'16px':'26px', padding:'10px 0 0', flexShrink:0, borderBottom:'1px solid #e6e4dc' }, // MARKER_BUSINESSUNIT_TAB_STYLE_B_V1
+    tab: (active) => ({ position:'relative', padding:isMobile?'6px 2px 10px':'8px 2px 11px', fontSize:isMobile?'13px':'14px', cursor:'pointer', color:active?'#1a3a5c':'#7b8794', borderBottom:active?'3px solid #2fb58a':'3px solid transparent', marginBottom:'-1px', borderRadius:'0', background:'transparent', fontWeight:'600', display:'flex', alignItems:'center', gap:'8px' }),
+    tabBadge: (active) => ({ background:active?'#1a3a5c':'#eef0f4', color:active?'white':'#6b7480', fontSize:'11px', fontWeight:700, minWidth:'24px', textAlign:'center', padding:'2px 8px', borderRadius:'99px' }),
+    outer: { background:'white', borderRadius:'12px', border:'1px solid #e6e4dc', overflow:'hidden', display:'flex', flexDirection:'column', flex:1, minWidth: 0 },
     theadWrap: { overflowX:'auto', flexShrink:0, scrollbarWidth:'none' },
     tbodyWrap: { overflowY:'auto', overflowX:'auto', flex:1, minWidth: 0 },
     table: { borderCollapse:'collapse', fontSize:'11px', tableLayout:'fixed' },
@@ -1430,7 +1642,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     thSort: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'left', fontSize:'11px', fontWeight:'500', whiteSpace:'nowrap', cursor:'pointer', userSelect:'none', overflow:'hidden', textOverflow:'ellipsis' },
     thCheck: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', width:'36px' },
     thAction: { background:'#1a3a5c', color:'white', padding:'10px', textAlign:'center', fontSize:'11px', fontWeight:'500' },
-    td: { padding:'7px 10px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'0' },
+    td: { padding:'8px 10px', fontSize:'12px', borderBottom:'1px solid #f0eee8', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:'0' },
     tdCenter: { padding:'6px 8px', fontSize:'11px', borderBottom:'0.5px solid #f0f0f0', textAlign:'center' },
     input: { padding:'5px 8px', borderRadius:'5px', border:'0.5px solid #d0d0d0', fontSize:'12px', width:'100%', marginBottom:'0', boxSizing:'border-box', height:'30px', background:'white', color:'#222' },
     inputDisabled: { padding:'5px 8px', borderRadius:'5px', border:'0.5px solid #e8e8e8', fontSize:'12px', width:'100%', marginBottom:'0', boxSizing:'border-box', background:'#f5f5f5', color:'#999', height:'30px' },
@@ -1445,10 +1657,10 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   };
 
   const renderInfoText = () => {
-    if(tab==='info'){if(isMobile)return`${filteredInfo.length} รายการ`;return`ทั้งหมด ${infoItems.length} รายการ${infoSearch?` | ผลการค้นหา ${filteredInfo.length} รายการ`:''}${infoSelected.length>0?` | เลือกอยู่ ${infoSelected.length} รายการ`:''}` }
+    if(tab==='info'){if(isMobile)return`${filteredInfo.length} รายการ`;return`ทั้งหมด ${infoItems.length} รายการ${(infoSearch||infoBaseFilter)?` | ผลการค้นหา ${filteredInfo.length} รายการ`:''}${infoSelected.length>0?` | เลือกอยู่ ${infoSelected.length} รายการ`:''}` }
     if(isMobile)return`${filteredBranch.length} รายการ`;
     if(isTablet)return`${branches.length} รายการ${branchTaxFilter?' | Filter Tax ID':''}`;
-    return`ทั้งหมด ${branches.length} รายการ${branchTaxFilter?` | Filter Tax ID: ${branchTaxFilter} (${filteredBranch.length} รายการ)`:branchSearch?` | ผลการค้นหา ${filteredBranch.length} รายการ`:''}${branchSelected.length>0?` | เลือกอยู่ ${branchSelected.length} รายการ`:''}`;
+    return`ทั้งหมด ${branches.length} รายการ${branchTaxFilter?` | Filter Tax ID: ${branchTaxFilter} (${filteredBranch.length} รายการ)`:(branchSearch||branchBuFilter.length>0)?` | ผลการค้นหา ${filteredBranch.length} รายการ`:''}${branchSelected.length>0?` | เลือกอยู่ ${branchSelected.length} รายการ`:''}`;
   };
 
   // ✅ Branch form — compact 4-col layout, one page no scroll
@@ -1620,6 +1832,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     [['COMPANY CODE','Company Code'],['BOOK','Book']],
     [['THAI COMPANY NAME','Thai Company Name']],
     [['ENGLISH COMPANY NAME','English Company Name']],
+    [['Simple Company','Simple Company']], // MARKER_BU_SIMPLE_COMPANY_FIELD_V1
     // MARKER_BUSINESSUNIT_ADD_BASE_FIELD_V20
     [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)']], // MARKER_BUSINESSUNIT_INFO_ROW_SWAP_V1
     [['bu_code_name','BU Code Name'],['system_bank','System Bank']],
@@ -1627,7 +1840,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   ] : [
     [['bu','BU'],['TAX ID','Tax ID'],['COMPANY CODE','Company Code'],['BOOK','Book']],
     [['THAI COMPANY NAME','Thai Company Name']],
-    [['ENGLISH COMPANY NAME','English Company Name']],
+    [['ENGLISH COMPANY NAME','English Company Name'],['Simple Company','Simple Company']], // MARKER_BU_SIMPLE_COMPANY_FIELD_V1 -- แบ่งครึ่งแถว English
     [['VAT %','VAT %'],['Last Rate (%)','Last Rate (%)'],['SEGMENT3','Segment3'],['base','Base']], // MARKER_BUSINESSUNIT_INFO_ROW_SWAP_V1
     [['bu_code_name','BU Code Name'],['system_bank','System Bank']],
   ];
@@ -1674,7 +1887,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     const renderRowBox = (fields) => (
       <div style={{ ...boxWrap, display:'grid', gridTemplateColumns:`repeat(${fields.length}, 1fr)` }}>
         {fields.map(([key,label], i) => <div key={key+'_h'} style={headCell(i===fields.length-1)}>{label}{INFO_REQUIRED_KEYS.includes(key) && <span style={{ color:'#e24b4a' }}> *</span>}</div>)}
-        {fields.map(([key,label], i) => <div key={key+'_i'} style={{ ...inputCell(i===fields.length-1), ...(key==='bu_code_name' ? { background:'#DCEAF1' } : INFO_REQUIRED_KEYS.includes(key) ? { background:'#FCF3D5' } : {}) }}>{renderFieldInput(key,label)}</div>)}
+        {fields.map(([key,label], i) => <div key={key+'_i'} style={{ ...inputCell(i===fields.length-1), ...(key==='bu_code_name' ? { background:'#DCEAF1' } : (INFO_REQUIRED_KEYS.includes(key) || key==='Simple Company') ? { background:'#FCF3D5' } : {}) }}>{renderFieldInput(key,label)}</div>)}
       </div>
     );
 
@@ -1901,34 +2114,40 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
     <div style={S.container}>
       <div style={S.topbar}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap' }}>
-          <h2 style={{ fontSize:isMobile?'14px':'16px', fontWeight:'600', margin:0 }}>🏢 Business Unit</h2>
+          <div style={{ borderLeft:'4px solid #2fb58a', paddingLeft:'14px' }}> {/* MARKER_BUSINESSUNIT_HEADER_V2 -- Header สไตล์ I-Expense */}
+            <div style={{ fontSize:'11px', letterSpacing:'0.14em', fontWeight:700, color:'#2fb58a' }}>MASTER DATA</div>
+            <div style={{ fontSize:isMobile?'20px':'26px', lineHeight:1.15, fontWeight:800, color:'#1a3a5c', margin:'2px 0' }}>Business <span style={{ color:'#2fb58a' }}>Unit</span></div>
+            {!isMobile && <div style={{ fontSize:'12px', color:'#7b8794' }}>ข้อมูลบริษัท (Info) และสาขา (Branch) ของทุก BU</div>}
+          </div>
           {isAdmin&&tab==='info'&&infoSelected.length>0&&<button style={{...S.btn,background:'#c0392b',color:'white',marginLeft:0}} onClick={handleInfoBulkDelete}>🗑️{!isMobile&&` ลบ ${infoSelected.length}`}</button>}
           {isAdmin&&tab==='branch'&&branchSelected.length>0&&<button style={{...S.btn,background:'#c0392b',color:'white',marginLeft:0}} onClick={handleBranchBulkDelete}>🗑️{!isMobile&&` ลบ ${branchSelected.length}`}</button>}
           {tab==='info'&&infoSelected.length>0&&<ExportDropdown onExportSelected={handleInfoExportSelected} onExportAll={handleInfoExportAll} selectedCount={infoSelected.length} isMobile={isMobile}/>}
           {tab==='branch'&&branchSelected.length>0&&<ExportDropdown onExportSelected={handleBranchExportSelected} onExportAll={handleBranchExportAll} selectedCount={branchSelected.length} isMobile={isMobile}/>}
         </div>
-        {isEditor && (
+        {(canTI || canRB || canNW || isOwner) && (
           <div style={{ display:'flex', alignItems:'center', gap: isMobile?'4px':'0' }}>
-            {isAdmin && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile && ' Recycle Bin'}</button>}
+            {canRB && <button style={{...S.btn, background:'#f5f5f5', color:'#555', border:'0.5px solid #ddd'}} onClick={handleOpenRecycleBin}>🗑️{!isMobile && ' Recycle Bin'}</button>}
             {tab === 'info' ? <>
-              <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleInfoDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
-              <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => infoFileRef.current.click()}>📂{!isMobile && ' Import'}</button>
+              {canTI && <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleInfoDownloadTemplate}>⬇{!isMobile && ' Template'}</button>}
+              {canTI && <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => infoFileRef.current.click()}>📂{!isMobile && ' Import'}</button>}
               <input ref={infoFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleInfoFileChange} />
-              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowInfoForm(true); setInfoEditId(null); setInfoForm(emptyInfoForm()); setInfoFormTab('info'); }}>+ New</button>
+              {canNW && <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowInfoForm(true); setInfoEditId(null); setInfoForm(emptyInfoForm()); setInfoFormTab('info'); }}>+ New</button>}
             </> : <>
-              <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleBranchDownloadTemplate}>⬇{!isMobile && ' Template'}</button>
-              <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => branchFileRef.current.click()}>📂{!isMobile && ' Import'}</button>
+              {canTI && <button style={{...S.btn, background:'#0F6E56', color:'white'}} onClick={handleBranchDownloadTemplate}>⬇{!isMobile && ' Template'}</button>}
+              {canTI && <button style={{...S.btn, background:'#5DCAA5', color:'#1a3a5c'}} onClick={() => branchFileRef.current.click()}>📂{!isMobile && ' Import'}</button>}
               <input ref={branchFileRef} type="file" accept=".xlsx,.xls" style={{ display:'none' }} onChange={handleBranchFileChange} />
               {branchDragOver && (
                 <div style={{ position:'fixed', inset:0, zIndex:9999, background:'rgba(15,110,86,0.15)', border:'4px dashed #0F6E56', display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none' }}>
                   <div style={{ background:'#0F6E56', color:'#fff', padding:'18px 32px', borderRadius:'12px', fontSize:'18px', fontWeight:700, boxShadow:'0 8px 30px rgba(0,0,0,.25)' }}>📂 วางไฟล์ Excel ที่นี่เพื่อ Import สาขา</div>
                 </div>
               )}
-              <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowBranchNew(true); setBranchNewForm(Object.fromEntries(BRANCH_EDIT.map(([k]) => [k, k === 'status' ? 'Active' : '']))); setBranchNewError(''); /* MARKER_BRANCH_STATUS_DEFAULT_ACTIVE_V1 */ }}>+ New</button>
+              {canNW && <button style={{...S.btn, background:'#1a3a5c', color:'white'}} onClick={() => { setShowBranchNew(true); setBranchNewForm(Object.fromEntries(BRANCH_EDIT.map(([k]) => [k, k === 'status' ? 'Active' : '']))); setBranchNewError(''); /* MARKER_BRANCH_STATUS_DEFAULT_ACTIVE_V1 */ }}>+ New</button>}
             </>}
+            {isOwner && <button title="Config สิทธิ์ปุ่ม (เห็นเฉพาะ Owner)" aria-label="Config สิทธิ์ปุ่ม" onClick={() => setShowAccessCfg(true)} style={{...S.btn, background:'#fff', color:'#1a3a5c', border:'1px solid #1a3a5c', width:'34px', height:'32px', padding:0, fontSize:'16px'}}>⚙</button>}
           </div>
         )}
       </div>
+      {showAccessCfg && <BuAccessConfigModal current={btnAccess} me={userName || currentUser?.email || ''} onClose={() => setShowAccessCfg(false)} onSaved={(v) => { setBtnAccess(v); setShowAccessCfg(false); }} />} {/* MARKER_BUSINESSUNIT_BUTTON_ACCESS_CONFIG_V1 */}
 
       <div style={S.tabBar}>
         <div style={S.tab(tab==='info')} onClick={()=>handleTabChange('info')}>📋 Info <span style={S.tabBadge(tab==='info')}>{infoItems.length}</span></div>
@@ -1938,10 +2157,19 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 0', margin:'4px 0', flexShrink:0, flexWrap:isMobile?'wrap':'nowrap', gap:isMobile?'6px':'0' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'8px', flex:isMobile?'1 1 100%':'1', minWidth:0 }}>
           {tab==='info'?(
-            <input placeholder='Search...' value={infoSearch} onChange={e=>setInfoSearch(e.target.value)} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
+            <>
+            <input placeholder='Search...' value={infoSearch} onChange={e=>setInfoSearch(e.target.value)} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', height:'30px', boxSizing:'border-box', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
+            <select value={infoBaseFilter} onChange={e=>setInfoBaseFilter(e.target.value)} title="กรองตาม Base" style={{ padding:'0 8px', height:'30px', boxSizing:'border-box', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', background:infoBaseFilter?'#e3f4e8':'#fff', color:'#1f2933', cursor:'pointer' }}>
+              <option value="">Base: ทั้งหมด</option>
+              {infoBaseOptions.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+            {infoBaseFilter && <button type="button" onClick={() => setInfoBaseFilter('')} title="Reset Base กลับเป็นทั้งหมด" style={{ border:'0.5px solid #ddd', background:'#fff', borderRadius:'6px', height:'30px', boxSizing:'border-box', padding:'0 8px', fontSize:'12px', cursor:'pointer', color:'#1a3a5c', whiteSpace:'nowrap' }}>↺ Reset</button>} {/* MARKER_BUSINESSUNIT_BASE_FILTER_V1 */}
+            </>
           ):(
             <>
-              <input placeholder='Search...' value={branchSearch} onChange={e=>{setBranchSearch(e.target.value);setBranchTaxFilter('');}} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
+              <input placeholder='Search...' value={branchSearch} onChange={e=>{setBranchSearch(e.target.value);setBranchTaxFilter('');}} style={{ padding:'5px 10px', borderRadius:'6px', border:'0.5px solid #ddd', fontSize:'12px', height:'30px', boxSizing:'border-box', width:isMobile?'100%':isTablet?'180px':'240px' }}/>
+              {!isMobile && <div style={{ width:'150px', flex:'none' }} title="กรอง BU (Checkbox เลือกได้หลายตัว)"><BuMultiFilter options={branchBuOptions} selected={branchBuFilter} onChange={setBranchBuFilter} /></div>}
+              {!isMobile && branchBuFilter.length>0 && <button type="button" onClick={() => setBranchBuFilter([])} title="Reset BU กลับเป็นทั้งหมด" style={{ border:'0.5px solid #ddd', background:'#fff', borderRadius:'6px', height:'30px', padding:'0 8px', fontSize:'12px', cursor:'pointer', color:'#1a3a5c', whiteSpace:'nowrap' }}>↺ Reset</button>} {/* MARKER_BUSINESSUNIT_BRANCH_BU_FILTER_V1 */}
               {branchTaxFilter&&!isMobile&&(<span style={{ fontSize:'11px', background:'#e8f0fb', color:'#1a3a5c', padding:'3px 10px', borderRadius:'20px', display:'flex', alignItems:'center', gap:'4px', whiteSpace:'nowrap' }}>Tax ID: {isTablet?'...':branchTaxFilter}<span style={{ cursor:'pointer', fontWeight:'bold' }} onClick={()=>setBranchTaxFilter('')}>×</span></span>)}
             </>
           )}
@@ -1971,7 +2199,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               {renderColGroup(INFO_COLUMNS, true, infoActionW)}
               <thead><tr>
                 <th style={S.thCheck}><input type="checkbox" checked={filteredInfo.length>0&&infoSelected.length===filteredInfo.length} onChange={()=>setInfoSelected(infoSelected.length===filteredInfo.length?[]:filteredInfo.map(i=>i.id))}/></th>
-                {INFO_COLUMNS.map(c=>(<th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>{if(infoSortField===c.key)setInfoSortDir(d=>d==='asc'?'desc':'asc');else{setInfoSortField(c.key);setInfoSortDir('asc');}}:undefined}>{c.label}{c.sortable?(infoSortField===c.key?(infoSortDir==='asc'?' ▲':' ▼'):' ↕'):''}</th>))}
+                {INFO_COLUMNS.map(c=>(<th key={c.key} style={{...(c.sortable?S.thSort:S.th), ...headTint(c.key)}} onClick={c.sortable?()=>{if(infoSortField===c.key)setInfoSortDir(d=>d==='asc'?'desc':'asc');else{setInfoSortField(c.key);setInfoSortDir('asc');}}:undefined}>{headIcon(c.label)}{c.label}{c.sortable?(infoSortField===c.key?(infoSortDir==='asc'?' ▲':' ▼'):' ↕'):''}</th>))}
                 <th style={S.thAction}>Action</th>
               </tr></thead>
             </table>
@@ -1983,10 +2211,11 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
                 {filteredInfo.map(item=>(
                   <tr key={item.id} style={{ background:infoSelected.includes(item.id)?'#f0f7ff':'white' }}>
                     <td style={S.tdCenter}><input type="checkbox" checked={infoSelected.includes(item.id)} onChange={()=>setInfoSelected(prev=>prev.includes(item.id)?prev.filter(s=>s!==item.id):[...prev,item.id])}/></td>
-                    {INFO_COLUMNS.map(c=><td key={c.key} style={S.td} title={item[c.key]||''}>{item[c.key]||'-'}</td>)}
+                    {INFO_COLUMNS.map(c=><td key={c.key} style={S.td} title={item[c.key]||''}>{item[c.key] ? (c.key==='bu' ? <span style={{ display:'inline-block', background:'#eaf1fb', color:'#1a3a5c', fontWeight:700, borderRadius:'8px', padding:'1px 9px' }}>{item[c.key]}</span> : c.key==='VAT %' ? <span style={{ display:'inline-block', background:'#e3f4e8', color:'#1f6b33', fontWeight:700, borderRadius:'99px', padding:'1px 9px', fontSize:'11px' }}>{item[c.key]}</span> : c.key==='BOOK' ? <span style={{ display:'inline-block', background:'#fdeee0', color:'#9a5a12', fontWeight:700, borderRadius:'99px', padding:'1px 9px', fontSize:'11px' }}>{item[c.key]}</span> : item[c.key]) : '-'}</td>)} {/* MARKER_BUSINESSUNIT_TABLE_BADGES_V1 */}
                     <td style={S.tdCenter}>
                       <div style={{ display:'inline-flex', alignItems:'center', gap:'4px' }}>
-                        {branchTaxIds.has(item['TAX ID'])&&<button onClick={()=>handleFilterByTaxId(item['TAX ID'])} title="Filter Branch" style={S.iconBtn('#1a3a5c')}>🔍</button>}
+                        {/* MARKER_BU_INFO_SEARCH_ALWAYS_SHOW_V1 -- แสดง 🔍 ทุกแถว ถ้าไม่มี Branch ของ Tax ID นี้ -> Disable */}
+                        {(()=>{ const hasBr = branchTaxIds.has(item['TAX ID']); return <button onClick={()=>{ if(hasBr) handleFilterByTaxId(item['TAX ID']); }} disabled={!hasBr} title={hasBr?'Filter Branch':'ไม่มี Branch'} style={{ ...S.iconBtn('#1a3a5c'), ...(hasBr?{}:{ opacity:0.35, cursor:'not-allowed' }) }}>🔍</button>; })()}
                         {isEditor&&<button onClick={()=>handleInfoEdit(item)} style={S.iconBtn('#555','#f5f5f5','#ddd')}>✏️</button>}
                         {isAdmin&&<button onClick={()=>handleInfoDelete(item.id)} style={S.iconBtn('#791F1F','#FCEBEB','#f7c1c1')}>🗑️</button>}
                       </div>
@@ -2004,7 +2233,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               {renderColGroup(BRANCH_COLUMNS, true, branchActionW)}
               <thead><tr>
                 <th style={S.thCheck}><input type="checkbox" checked={pagedBranch.length>0&&pagedBranch.every(i=>branchSelected.includes(i.id))} onChange={()=>{const ids=pagedBranch.map(i=>i.id);const all=ids.every(id=>branchSelected.includes(id));setBranchSelected(all?branchSelected.filter(id=>!ids.includes(id)):[...new Set([...branchSelected,...ids])]);}} /></th>
-                {BRANCH_COLUMNS.map(c=>(<th key={c.key} style={c.sortable?S.thSort:S.th} onClick={c.sortable?()=>{if(branchSortField===c.key)setBranchSortDir(d=>d==='asc'?'desc':'asc');else{setBranchSortField(c.key);setBranchSortDir('asc');}}:undefined}>{c.label}{c.sortable?(branchSortField===c.key?(branchSortDir==='asc'?' ▲':' ▼'):' ↕'):''}</th>))}
+                {BRANCH_COLUMNS.map(c=>(<th key={c.key} style={{...(c.sortable?S.thSort:S.th), ...headTint(c.key)}} onClick={c.sortable?()=>{if(branchSortField===c.key)setBranchSortDir(d=>d==='asc'?'desc':'asc');else{setBranchSortField(c.key);setBranchSortDir('asc');}}:undefined}>{headIcon(c.label)}{c.label}{c.sortable?(branchSortField===c.key?(branchSortDir==='asc'?' ▲':' ▼'):' ↕'):''}</th>))}
                 <th style={S.thAction}>Action</th>
               </tr></thead>
             </table>

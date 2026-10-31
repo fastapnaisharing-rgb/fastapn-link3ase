@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup Config สิทธิ์ 2 ด้าน</title>
+<style>
+  :root{--bg:#f3f2ee;--ink:#1f2933;--mute:#7b8794;--line:#e6e4dc;--navy:#1a3a5c;--green:#2fb58a;--red:#d1495b}
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px 16px 48px;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI","Noto Sans Thai",system-ui,sans-serif}
+  .cap{font-size:12px;color:var(--mute);margin:0 0 10px;font-weight:600}
+  .ov{background:rgba(20,30,50,.45);border-radius:14px;padding:24px;display:flex;justify-content:center;max-width:860px}
+  .md{background:#fff;border-radius:16px;width:100%;box-shadow:0 18px 50px rgba(20,30,50,.28);overflow:hidden}
+  .mh{padding:16px 22px;background:linear-gradient(180deg,#f7f9fc,#fff);border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+  .mh .ic{width:38px;height:38px;border-radius:11px;background:#eaf1fb;display:grid;place-items:center;font-size:19px}
+  .mh h2{margin:0;font-size:16px;color:var(--navy)}.mh .s{font-size:12px;color:var(--mute)}
+  .tabs{display:flex;gap:24px;padding:0 22px;border-bottom:1px solid var(--line);margin-top:6px}
+  .tabs a{position:relative;display:inline-flex;align-items:center;gap:8px;padding:12px 2px;font-size:13.5px;font-weight:600;color:#7b8794;cursor:pointer}
+  .tabs a .cnt{min-width:24px;height:20px;border-radius:99px;display:inline-grid;place-items:center;font-size:11px;font-weight:700;padding:0 7px;background:#eef0f4;color:#6b7480}
+  .tabs a.on{color:var(--navy)}.tabs a.on .cnt{background:var(--navy);color:#fff}
+  .tabs a.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:3px;border-radius:3px 3px 0 0;background:var(--green)}
+  .info{margin:14px 22px 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--mute)}
+  .info .btns span{font-size:11px;font-weight:700;border-radius:6px;padding:2px 8px;background:#eaf1fb;color:var(--navy);margin-right:4px}
+  .tools{margin:10px 22px 0;display:flex;gap:8px;align-items:center}
+  .tools input{height:34px;width:240px;border:1px solid #d5dbe3;border-radius:9px;padding:0 12px;font-size:13px;background:#fafbfc}
+  .tools button{height:34px;border-radius:9px;border:1px solid #d5dbe3;background:#fff;color:#4a5568;font-weight:700;font-size:12px;padding:0 12px;cursor:pointer}
+  .cols{margin:12px 22px 0;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .col{border-radius:12px;overflow:hidden;border:1px solid var(--line);display:flex;flex-direction:column;min-height:260px}
+  .ch{display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:13px;font-weight:700}
+  .ch .cnt{margin-left:auto;font-size:11px;border-radius:99px;padding:2px 10px;color:#fff}
+  .col.ok .ch{background:#e9f7ee;color:#1f6b33}.col.ok .cnt{background:#2f9e44}
+  .col.no .ch{background:#fdeeee;color:#a33a46}.col.no .cnt{background:var(--red)}
+  .col.ok{border-color:#c9ecd4}.col.no{border-color:#f5cfd3;background:#fffafa}
+  .body{padding:10px;display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto}
+  .u{display:flex;align-items:center;gap:10px;border:1px solid #e3e6eb;background:#fff;border-radius:10px;padding:6px 10px;font-size:13px;cursor:pointer;transition:.15s}
+  .u:hover{border-color:var(--navy);box-shadow:0 2px 8px rgba(20,30,50,.08)}
+  .u i{width:26px;height:26px;border-radius:50%;background:var(--navy);color:#fff;display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:700;flex:none}
+  .u small{font-size:10px;font-weight:700;color:#6b7480;background:#eef0f4;border-radius:99px;padding:0 8px}
+  .u .mv{margin-left:auto;font-size:12px;font-weight:700;color:var(--mute)}
+  .col.ok .u .mv::before{content:"ไม่อนุญาต ›"}
+  .col.no .u .mv::before{content:"‹ อนุญาต"}
+  .col.no .u{opacity:.85}
+  .u.lock{cursor:not-allowed;background:#f2fbf7;border-color:#cfe6dc}
+  .u.lock .mv::before{content:"🔒 ล็อก" !important}
+  .empty{color:#a0a8b3;font-size:12px;text-align:center;padding:30px 0}
+  .mf{display:flex;gap:10px;align-items:center;padding:16px 22px 18px}
+  .mf .sum{font-size:12px;color:var(--mute);margin-right:auto}
+  .btn2{height:38px;border-radius:10px;padding:0 22px;font-size:13px;font-weight:700;border:1px solid #d5dbe3;background:#fff;color:#4a5568;cursor:pointer}
+  .btn2.pri{background:var(--navy);border-color:var(--navy);color:#fff}
+</style>
+</head>
+<body>
+<p class="cap">Mockup · Config สิทธิ์ปุ่ม Business Unit — 3 Tab × 2 ด้าน (อนุญาต / ไม่อนุญาต) · ลองกดที่ชื่อผู้ใช้เพื่อย้ายฝั่ง และกดสลับ Tab ได้เลย</p>
+<div class="ov"><div class="md">
+  <div class="mh"><div class="ic">🔐</div><div><h2>Config สิทธิ์ใช้งานปุ่ม · Business Unit</h2><div class="s">กดที่ชื่อผู้ใช้เพื่อย้ายระหว่าง "อนุญาต" และ "ไม่อนุญาต"</div></div></div>
+  <div class="tabs" id="tabs">
+    <a class="on" data-t="ti">⬇ Template + Import<span class="cnt">0</span></a>
+    <a data-t="rb">🗑 Recycle Bin<span class="cnt">0</span></a>
+    <a data-t="nw">＋ New<span class="cnt">0</span></a>
+  </div>
+  <div class="info" id="info"></div>
+  <div class="tools"><input id="q" placeholder="ค้นหาผู้ใช้..."><button id="allow">อนุญาตทั้งหมด</button><button id="deny">ไม่อนุญาตทั้งหมด</button></div>
+  <div class="cols">
+    <div class="col ok"><div class="ch">✅ อนุญาต<span class="cnt" id="cok">0</span></div><div class="body" id="ok"></div></div>
+    <div class="col no"><div class="ch">⛔ ไม่อนุญาต<span class="cnt" id="cno">0</span></div><div class="body" id="no"></div></div>
+  </div>
+  <div class="mf"><span class="sum">Owner เข้าถึงได้เสมอ (ย้ายไม่ได้)</span><button class="btn2">ยกเลิก</button><button class="btn2 pri">บันทึก</button></div>
+</div></div>
+<script>
+const USERS=[["karn","Owner"],["srtangmo","Admin"],["pimchanok","Editor"],["nattapong","Editor"],["somchai","Editor"],["malee","Viewer"],["wichai","Viewer"],["anan","Viewer"]];
+const INFO={ti:['⬇ Template','📂 Import'],rb:['🗑 Recycle Bin'],nw:['+ New']};
+const DEF={ti:['Owner','Admin','Editor'],rb:['Owner','Admin'],nw:['Owner','Admin','Editor']};
+const state={};Object.keys(DEF).forEach(k=>state[k]=new Set(USERS.filter(u=>DEF[k].includes(u[1])).map(u=>u[0])));
+let tab='ti';
+function row(u,lock){return `<div class="u ${lock?'lock':''}" data-u="${u[0]}"><i>${u[0][0].toUpperCase()}</i>${u[0]}<small>${u[1]}</small><span class="mv"></span></div>`}
+function render(){
+  const q=document.getElementById('q').value.toLowerCase();
+  const ok=USERS.filter(u=>state[tab].has(u[0])&&u[0].includes(q)),no=USERS.filter(u=>!state[tab].has(u[0])&&u[0].includes(q));
+  document.getElementById('ok').innerHTML=ok.map(u=>row(u,u[1]==='Owner')).join('')||'<div class="empty">ไม่มีผู้ใช้</div>';
+  document.getElementById('no').innerHTML=no.map(u=>row(u,false)).join('')||'<div class="empty">ไม่มีผู้ใช้</div>';
+  document.getElementById('cok').textContent=state[tab].size;document.getElementById('cno').textContent=USERS.length-state[tab].size;
+  document.querySelectorAll('#tabs a').forEach(a=>{a.classList.toggle('on',a.dataset.t===tab);a.querySelector('.cnt').textContent=state[a.dataset.t].size});
+  document.getElementById('info').innerHTML='ควบคุมปุ่ม: <span class="btns">'+INFO[tab].map(x=>'<span>'+x+'</span>').join('')+'</span> · ค่าเริ่มต้น: '+DEF[tab].join(' / ');
+  document.querySelectorAll('.u:not(.lock)').forEach(e=>e.onclick=()=>{const n=e.dataset.u;state[tab].has(n)?state[tab].delete(n):state[tab].add(n);render()});
+}
+document.querySelectorAll('#tabs a').forEach(a=>a.onclick=()=>{tab=a.dataset.t;render()});
+document.getElementById('q').oninput=render;
+document.getElementById('allow').onclick=()=>{USERS.forEach(u=>state[tab].add(u[0]));render()};
+document.getElementById('deny').onclick=()=>{USERS.forEach(u=>{if(u[1]!=='Owner')state[tab].delete(u[0])});render()};
+render();
+</script>
+</body></html>

@@ -265,6 +265,10 @@ export async function generateSimpleAdiWorkbook(simpleTemplatePath, groupedRows,
 
     group.rows.forEach((r, i) => {
       const rowIdx = i + 16;
+      // MARKER_VATEXPORTGEN_SIMPLE_LIABILITY_ABC_V1 -- Liability CC / Account / Sub Account (Special) ของแถว (เช่น จาก Config BU ของ Temp. T36) -> คอลัมน์ A-C ; เขียนเฉพาะเมื่อมีค่า (ไม่ทับสูตร/ค่าว่างใน Template)
+      if (r.liability_cost_center_special) ws.getCell(`A${rowIdx}`).value = r.liability_cost_center_special;
+      if (r.liability_account_special) ws.getCell(`B${rowIdx}`).value = r.liability_account_special;
+      if (r.liability_sub_account_special) ws.getCell(`C${rowIdx}`).value = r.liability_sub_account_special;
       ws.getCell(`D${rowIdx}`).value = r.supplier_code || "";
       ws.getCell(`E${rowIdx}`).value = r.supplier_name || "";
       ws.getCell(`F${rowIdx}`).value = toExcelDate(r.receive_date);
@@ -371,6 +375,10 @@ export async function generateSimpleBySheetWorkbooks(simpleTemplatePath, grouped
 
     group.rows.forEach((r, i) => {
       const rowIdx = i + 16;
+      // MARKER_VATEXPORTGEN_SIMPLE_LIABILITY_ABC_V1 -- Liability CC / Account / Sub Account (Special) ของแถว (เช่น จาก Config BU ของ Temp. T36) -> คอลัมน์ A-C ; เขียนเฉพาะเมื่อมีค่า (ไม่ทับสูตร/ค่าว่างใน Template)
+      if (r.liability_cost_center_special) ws.getCell(`A${rowIdx}`).value = r.liability_cost_center_special;
+      if (r.liability_account_special) ws.getCell(`B${rowIdx}`).value = r.liability_account_special;
+      if (r.liability_sub_account_special) ws.getCell(`C${rowIdx}`).value = r.liability_sub_account_special;
       ws.getCell(`D${rowIdx}`).value = r.supplier_code || "";
       ws.getCell(`E${rowIdx}`).value = r.supplier_name || "";
       ws.getCell(`F${rowIdx}`).value = toExcelDate(r.receive_date);

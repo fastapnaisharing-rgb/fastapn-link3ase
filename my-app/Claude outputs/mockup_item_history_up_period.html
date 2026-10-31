@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup History Description + Up Period</title>
+<style>
+body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#e9ecf1;margin:0;padding:24px;color:#222}
+h3{margin:0 0 8px;font-size:14px;color:#1a3a5c}.note{font-size:12px;color:#666;line-height:1.7;margin:0 0 14px;max-width:900px}
+.stage{position:relative;max-width:980px;height:430px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.15)}
+.hd{padding:12px 18px;border-bottom:1px solid #eee;font-size:14px;font-weight:600;color:#1a3a5c}
+.th,.tr{display:grid;grid-template-columns:150px 120px 1fr 90px;gap:8px;padding:8px 18px;font-size:11px;align-items:center}
+.th{background:#f6f8fa;color:#888;border-bottom:1px solid #eee}
+.in{border:1px solid #dde;border-radius:6px;padding:6px 8px;background:#fff;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.desc{display:flex;gap:6px;align-items:center}.desc .in{flex:1}
+.hbtn{width:30px;height:28px;border:1px solid #c5d8f0;border-radius:6px;background:#eef4fb;color:#1a3a5c;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;position:relative}
+.hbtn.on{background:#1a3a5c;color:#fff}
+.pop{position:absolute;left:290px;top:112px;width:620px;background:#fff;border-radius:10px;box-shadow:0 12px 40px rgba(26,58,92,.28);border:1px solid #e3e8f0;overflow:hidden}
+.pop .t{padding:10px 14px;border-bottom:1px solid #f0f0f0;font-size:12px;font-weight:600;color:#1a3a5c}
+.pop .t small{font-weight:400;color:#999;margin-left:6px}
+.it{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid #f4f5f7;font-size:12px}
+.it:hover{background:#eef3fb}
+.it .n{width:18px;color:#aaa;font-size:11px}.it .d{flex:1}
+.up{border:1px solid #e67e22;background:#FFF3E0;color:#a35a00;border-radius:7px;padding:3px 10px;font-size:11px;font-weight:600;white-space:nowrap}
+.ft{padding:8px 14px;font-size:11px;color:#999;background:#fafbfc}
+mark{background:#fff1d6;color:#b26a00;border-radius:3px;padding:0 2px}
+</style></head><body>
+<h3>Mockup — ปุ่ม History (Description) + ปุ่ม Up Period ในบรรทัด Item</h3>
+<p class="note">ปุ่ม History อยู่ท้ายช่อง Description ของแต่ละบรรทัด กดแล้วโชว์ 5 รายการ Description ล่าสุดที่เคยคีย์ด้วย Item Code เดียวกัน (C0000703) แสดงเฉพาะ Description ไม่แสดงอย่างอื่น<br>
+คลิกแถว = นำ Description นั้นมาใส่ช่อง · ปุ่ม <b>Up Period</b> = นำมาใส่พร้อมขยับเดือน/ปีในข้อความขึ้น 1 งวด (ตัวอย่าง ต.ค. 2569 → พ.ย. 2569) (ข้อความตัวอย่างสมมติ ไม่ใช่ข้อมูลจริง)</p>
+<div class="stage">
+  <div class="hd">Invoice Detail · Supplier LKS-T0051</div>
+  <div class="th"><div>Item Code</div><div>Amount</div><div>Description</div><div>Tax Code</div></div>
+  <div class="tr"><div class="in">C0000703</div><div class="in">&nbsp;</div>
+    <div class="desc"><div class="in">5898AB-IB (N) ค่าเช่าพื้นที่ (บริษัทนอกเครือ) สาขา BBQ-Taweekit Buriram</div><div class="hbtn on" title="History">⟲</div></div><div class="in">&nbsp;</div></div>
+  <div class="pop">
+    <div class="t">History · Item Code C0000703 <small>5 รายการล่าสุด</small></div>
+    <div class="it"><span class="n">1</span><span class="d">5898AB-IB (N) ค่าเช่าพื้นที่ ประจำเดือน <mark>ต.ค. 2569</mark> สาขา BBQ-Taweekit Buriram</span><span class="up">Up Period → พ.ย. 2569</span></div>
+    <div class="it"><span class="n">2</span><span class="d">5898AB-IB (N) ค่าเช่าพื้นที่ ประจำเดือน <mark>ก.ย. 2569</mark> สาขา BBQ-Taweekit Buriram</span><span class="up">Up Period → ต.ค. 2569</span></div>
+    <div class="it"><span class="n">3</span><span class="d">58981X-IB (N) ค่าเช่าพื้นที่ ประจำเดือน <mark>ต.ค. 2569</mark> สาขา SUKI-Taweekit Buriram</span><span class="up">Up Period → พ.ย. 2569</span></div>
+    <div class="it"><span class="n">4</span><span class="d">5898AB-IB (N) ค่าเช่าพื้นที่ ประจำเดือน <mark>ส.ค. 2569</mark> สาขา BBQ-Taweekit Buriram</span><span class="up">Up Period → ก.ย. 2569</span></div>
+    <div class="it"><span class="n">5</span><span class="d">58981X-IB (N) ค่าเช่าพื้นที่ ประจำเดือน <mark>ก.ย. 2569</mark> สาขา SUKI-Taweekit Buriram</span><span class="up">Up Period → ต.ค. 2569</span></div>
+    <div class="ft">คลิกแถว = ใช้ Description เดิม · Up Period = ใช้พร้อมขยับงวดขึ้น 1 เดือน</div>
+  </div>
+</div>
+</body></html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Next Period ในเมนูคลิกขวา</title>
+<style>
+body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#e9ecf1;margin:0;padding:24px;color:#222}
+h3{margin:0 0 8px;font-size:14px;color:#1a3a5c}.note{font-size:12px;color:#666;line-height:1.7;margin:0 0 14px;max-width:980px}
+.stage{position:relative;max-width:1000px;height:430px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.15);margin-bottom:22px}
+.hd{padding:12px 18px;border-bottom:1px solid #eee;font-size:14px;font-weight:600;color:#1a3a5c}
+.th,.tr{display:grid;grid-template-columns:110px 90px 1fr 80px 120px;gap:8px;padding:8px 18px;font-size:11px;align-items:center}
+.th{background:#f6f8fa;color:#888;border-bottom:1px solid #eee}
+.in{border:1px solid #dde;border-radius:6px;padding:6px 8px;background:#fff;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tr.sel .in{border-color:#9db8d8;background:#f3f8fe}
+.menu{position:absolute;left:430px;top:108px;width:250px;background:#fff;border:.5px solid #e8eaf0;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.14);padding:4px 0;font-size:12px}
+.menu div{padding:7px 14px}
+.menu .np{color:#a35a00;background:#FFF3E0;font-weight:600}
+.menu .off{color:#bbb}
+.tip{position:absolute;left:690px;top:132px;width:290px;background:#1f2937;color:#fff;border-radius:8px;padding:10px 12px;font-size:11px;line-height:1.7;box-shadow:0 6px 20px rgba(0,0,0,.3)}
+.tip b{color:#ffd9a0}
+mark{background:#fff1d6;color:#b26a00;border-radius:3px;padding:0 2px}
+.cap{font-size:12px;color:#444;margin:0 0 6px}
+</style></head><body>
+<h3>Mockup — เมนูคลิกขวาที่ Line Item: Next Period อยู่ใต้ Interbranch</h3>
+<p class="note">คลิกขวาที่บรรทัด Item ที่เป็น CT จะเห็นเมนู 🔀 Interbranch ตามเดิม และมี ⏭ Next Period เพิ่มอยู่ถัดลงมา ชี้เมาส์ดู Tooltip (งวดที่คำนวณ + Description ที่จำลอง + สัญญา) แล้วค่อยกดเลือกใช้ · ข้อมูลในภาพเป็นตัวอย่างสมมติ</p>
+
+<p class="cap">① กรณีคำนวณงวดถัดไปได้</p>
+<div class="stage">
+  <div class="hd">Invoice Detail · Supplier LKS-T0051</div>
+  <div class="th"><div>Item Code</div><div>Amount</div><div>Description</div><div>Tax Code</div><div>Account</div></div>
+  <div class="tr sel"><div class="in">C0000703 (CT)</div><div class="in">&nbsp;</div><div class="in">5898AB-IB ค่าเช่าพื้นที่ <mark>15/09/2026 - 14/10/2026</mark> สาขา BBQ-Taweekit</div><div class="in">&nbsp;</div><div class="in">28100-…</div></div>
+  <div class="menu">
+    <div>🔀 Interbranch</div>
+    <div class="np">⏭ Next Period → 15/10/2026 - 14/11/2026</div>
+  </div>
+  <div class="tip">
+    <b>คำนวณจากงวดล่าสุดใน 5 รายการย้อนหลัง</b> (15/09/2026 - 14/10/2026)<br>
+    <b>Next Period:</b> 15/10/2026 - 14/11/2026<br>
+    <b>Description:</b> 5898AB-IB ค่าเช่าพื้นที่ 15/10/2026 - 14/11/2026 สาขา BBQ-Taweekit<br>
+    <b>สัญญา:</b> RB-ม005 | D1
+  </div>
+</div>
+
+<p class="cap">② กรณีไม่มีประวัติที่คำนวณได้ (เมนูเป็นสีเทา กดไม่ได้)</p>
+<div class="stage" style="height:230px">
+  <div class="th"><div>Item Code</div><div>Amount</div><div>Description</div><div>Tax Code</div><div>Account</div></div>
+  <div class="tr sel"><div class="in">C0000703 (CT)</div><div class="in">&nbsp;</div><div class="in">&nbsp;</div><div class="in">&nbsp;</div><div class="in">&nbsp;</div></div>
+  <div class="menu" style="top:70px">
+    <div>🔀 Interbranch</div>
+    <div class="off">⏭ Next Period</div>
+  </div>
+</div>
+</body></html>

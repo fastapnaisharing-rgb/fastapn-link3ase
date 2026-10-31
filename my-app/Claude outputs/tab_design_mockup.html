@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup Tab Business Unit</title>
+<style>
+  :root{--bg:#f3f2ee;--ink:#1f2933;--mute:#7b8794;--line:#e6e4dc;--navy:#1a3a5c;--green:#2fb58a}
+  *{box-sizing:border-box}
+  body{margin:0;padding:20px 16px 48px;background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI","Noto Sans Thai",system-ui,sans-serif}
+  h1{font-size:17px;margin:0 0 4px}p.s{margin:0 0 6px;color:var(--mute);font-size:13px}
+  .cap{font-size:12px;color:var(--mute);margin:22px 0 8px;font-weight:600}
+  .box{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 22px;max-width:900px}
+  .cnt{min-width:24px;height:20px;border-radius:99px;display:inline-grid;place-items:center;font-size:11px;font-weight:700;padding:0 7px}
+  .ic{font-size:15px}
+
+  /* A: segmented control */
+  .segA{display:inline-flex;background:#eef1f5;border-radius:12px;padding:4px;gap:2px}
+  .segA a{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:9px;font-size:13px;font-weight:600;color:#5b6572;cursor:pointer}
+  .segA a .cnt{background:#dfe4ea;color:#5b6572}
+  .segA a.on{background:#fff;color:var(--navy);box-shadow:0 1px 4px rgba(20,30,50,.15)}
+  .segA a.on .cnt{background:var(--green);color:#fff}
+
+  /* B: underline with icon */
+  .segB{display:flex;gap:26px;border-bottom:1px solid var(--line)}
+  .segB a{display:inline-flex;align-items:center;gap:8px;padding:8px 2px 11px;font-size:14px;font-weight:600;color:#7b8794;cursor:pointer;position:relative}
+  .segB a .cnt{background:#eef0f4;color:#6b7480}
+  .segB a.on{color:var(--navy)}
+  .segB a.on .cnt{background:var(--navy);color:#fff}
+  .segB a.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:3px;border-radius:3px 3px 0 0;background:var(--green)}
+
+  /* C: card tabs with caption */
+  .segC{display:flex;gap:12px;flex-wrap:wrap}
+  .segC a{display:flex;align-items:center;gap:12px;min-width:200px;border:1px solid #dfe3e9;border-radius:12px;padding:10px 16px;background:#fff;cursor:pointer}
+  .segC .ib{width:38px;height:38px;border-radius:10px;background:#eef1f5;display:grid;place-items:center;font-size:18px}
+  .segC b{display:block;font-size:20px;line-height:1.1;color:var(--ink)}
+  .segC small{color:var(--mute);font-size:12px}
+  .segC a.on{border-color:var(--green);background:linear-gradient(180deg,#f2fbf7,#fff);box-shadow:0 0 0 3px rgba(47,181,138,.12)}
+  .segC a.on .ib{background:var(--green)}
+  .segC a.on b{color:var(--navy)}
+
+  /* D: slim pills compact (กินที่น้อยสุด) */
+  .segD{display:flex;gap:8px}
+  .segD a{display:inline-flex;align-items:center;gap:8px;border-radius:8px;padding:6px 12px;font-size:13px;font-weight:600;color:#5b6572;background:#f3f5f8;cursor:pointer;border:1px solid transparent}
+  .segD a .cnt{background:#e2e6ec;color:#5b6572;height:18px}
+  .segD a.on{background:#fff;border-color:var(--navy);color:var(--navy)}
+  .segD a.on .cnt{background:var(--navy);color:#fff}
+</style>
+</head>
+<body>
+<h1>Mockup Tab · Business Unit (Info / Branch)</h1>
+<p class="s">4 แบบ เปลี่ยนเฉพาะหน้าตาของแท็บ ตำแหน่งเดิม (ใต้ Header เหนือช่องค้นหา) และใช้กับแท็บอื่นๆ ในระบบได้ เลือกแบบที่ชอบได้เลย</p>
+
+<p class="cap">แบบ A · Segmented (สวิตช์) — สะอาด ดูเป็นตัวเลือกสลับ (แนะนำ)</p>
+<div class="box"><div class="segA"><a class="on"><span class="ic">📋</span>Info<span class="cnt">152</span></a><a><span class="ic">🏢</span>Branch<span class="cnt">7592</span></a></div></div>
+
+<p class="cap">แบบ B · ขีดเส้นใต้เขียว — เรียบ เหมาะกับหน้าตารางยาวๆ</p>
+<div class="box"><div class="segB"><a class="on"><span class="ic">📋</span>Info<span class="cnt">152</span></a><a><span class="ic">🏢</span>Branch<span class="cnt">7592</span></a></div></div>
+
+<p class="cap">แบบ C · การ์ดแท็บ — ตัวเลขใหญ่ อ่านภาพรวมได้เลย</p>
+<div class="box"><div class="segC">
+  <a class="on"><span class="ib">📋</span><span><b>152</b><small>Info · ข้อมูลบริษัท</small></span></a>
+  <a><span class="ib">🏢</span><span><b>7,592</b><small>Branch · สาขา</small></span></a>
+</div></div>
+
+<p class="cap">แบบ D · ปุ่มเล็กกะทัดรัด — กินพื้นที่น้อยสุด</p>
+<div class="box"><div class="segD"><a class="on">📋 Info<span class="cnt">152</span></a><a>🏢 Branch<span class="cnt">7592</span></a></div></div>
+</body>
+</html>

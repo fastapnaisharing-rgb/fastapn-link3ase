@@ -356,6 +356,11 @@ function groupJobs(list) {
   });
   return out;
 }
+// MARKER_RECONCILEZONE_CONFIRMED_EXP_V1 -- วันหมดอายุ dd-mmm-yy
+const fmtDmyExp = (iso) => {
+  const d = new Date(iso); if (isNaN(d.getTime())) return '';
+  return `${String(d.getDate()).padStart(2, '0')}-${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+};
 const XL_ICON = (
   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M9 12l5 6M14 12l-5 6" />
@@ -607,8 +612,8 @@ export default function ReconcileZoneLayout({
   onJobWatchChanged, // MARKER_APRECONCILE_JOB_WATCH_V1 -- เลือก BU ที่อยากเห็นใน My Job เสร็จ -> ให้หน้าแม่โหลดรายการไฟล์ใหม่
 }) {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const { currentUser: staleUser } = useAuth(); // MARKER_APRECONCILE_STALE_AP_UI_V1
-  const isStaleOwner = String(staleUser?.appRole || '').toLowerCase() === 'owner';
+  const { currentUser: staleUser, userRole: staleRole } = useAuth(); // MARKER_APRECONCILE_STALE_AP_UI_V1
+  const isStaleOwner = String(staleRole || staleUser?.appRole || '').toLowerCase() === 'owner'; // MARKER_APRECONCILE_STALE_OWNER_FIX_V1 -- currentUser ไม่มี appRole (AuthContext เก็บ role ไว้ที่ userRole) เดิมจึงไม่มีใครเห็นปุ่ม ข้อมูลค้าง
   const [ccBusinessUnit, setCcBusinessUnit] = useState('');
   const [ccAccountSelection, setCcAccountSelection] = useState('');
   const [showPreview, setShowPreview] = useState(false);
@@ -620,6 +625,19 @@ export default function ReconcileZoneLayout({
   const [exportMsg, setExportMsg] = useState(null);
   const [previewFileJob, setPreviewFileJob] = useState(null); // Preview จากแถวไฟล์ใน File Storage Zone (คนละอันกับ Preview ของ Control Zone)
 
+  // MARKER_RECONCILEZONE_CONFIRMED_EXP_V1 -- แผนที่ BU|Account -> วันหมดอายุ (เร็วสุด) ของไฟล์ที่ Confirm แล้วใน Period ที่เลือก
+  const confirmedExpMap = useMemo(() => {
+    const m = {};
+    (fileJobs || []).forEach((job) => {
+      if (!job || !job.confirmed_at || !job.expire_at) return;
+      const pf = parseJobFile(job.fileName || job.file_name || '');
+      if (!pf) return;
+      if (period && String(period).toUpperCase() !== pf.per) return;
+      const key = `${String(pf.bu).toUpperCase()}|${pf.acct}`;
+      if (!m[key] || job.expire_at < m[key]) m[key] = job.expire_at;
+    });
+    return m;
+  }, [fileJobs, period]);
   const flatAccounts = useMemo(() => accountGroups.flatMap(g => g.accounts.map(a => ({ ...a, groupKey: g.key }))), [accountGroups]);
   // MARKER_CONTROLZONE_BU_ALL_LIST_V1 -- รายการ BU ใน Dropdown = BU ทั้งหมดจาก company_list (รวม BU ที่ยังไม่มีข้อมูลใน Dashboard)
   const [allBuNames, setAllBuNames] = useState([]);
@@ -1236,8 +1254,17 @@ export default function ReconcileZoneLayout({
                             const isColSelected = selectedAccountCodes.has(a.code);
                             const cell = r.cells?.[a.code];
                             const hasAp = cell?.count != null;
+                            const expAt = confirmedExpMap[`${String(r.bu).toUpperCase()}|${a.code}`] || null; // MARKER_RECONCILEZONE_CONFIRMED_EXP_V1
                             const cellBg = isColSelected ? '#f0f6ff' : undefined;
                             const borderLeft = (ai === 0 && gi > 0) ? `2px solid ${BORDER}` : `1px solid #e1e4e8`; // MARKER_RECONCILEZONE_ACCOUNT_DIVIDER_V1
+                            // MARKER_RECONCILEZONE_WAIT_CLEAR_V1 -- Confirm แล้ว (มีวันหมดอายุ) แต่ข้อมูล AP ยังไม่ถูกล้าง = Badge ฟ้า "Wait Clear" แทนจุดเขียว (ล้างอัตโนมัติเมื่อครบกำหนด -> กลับเป็น No Data)
+                            if (expAt && hasAp) {
+                              return (
+                                <td key={a.code} colSpan={2} onClick={() => setCcAccountSelection(`acc:${a.code}`)} onDoubleClick={() => openDotPreview(r.bu, a.code)} onContextMenu={(e) => openApMenu(e, r.bu, a.code)} title={`Confirm แล้ว · AP ${Number(cell.count).toLocaleString()} บรรทัด รอล้างข้อมูล (หมดอายุ ${fmtDmyExp(expAt)}) · ดับเบิลคลิกเพื่อ Preview`} style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, borderLeft, verticalAlign: 'middle' }}>
+                                  <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 10.5, fontWeight: 700, background: '#ddf4ff', color: '#0969da', border: '1px solid #54aeff', whiteSpace: 'nowrap' }}>Wait Clear</span>
+                                </td>
+                              );
+                            }
                             // MARKER_RECONCILEZONE_NODATA_BADGE_V1 -- Account ที่ไม่มีทั้ง TB และ AP = Badge แดง "No Data" ช่องเดียวคร่อม 2 คอลัมน์
                             if (!cell?.tbActive && !hasAp) {
                               return (
@@ -1259,10 +1286,13 @@ export default function ReconcileZoneLayout({
                             return (
                               <React.Fragment key={a.code}>
                                 {/* MARKER_RECONCILEZONE_CELL_ZONE_V1 -- ทั้ง Zone (TB+AP ของ Account นี้) = ปุ่มเดียว: ดับเบิลคลิกตรงไหนก็เปิด Preview | คลิกขวา = ล้างข้อมูล AP */}
-                                <td onClick={() => setCcAccountSelection(`acc:${a.code}`)} onDoubleClick={() => openDotPreview(r.bu, a.code)} onContextMenu={(e) => openApMenu(e, r.bu, a.code)} title="ดับเบิลคลิกเพื่อ Preview · คลิกขวาเพื่อล้างข้อมูล AP" style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, borderLeft, verticalAlign: 'middle', cursor: 'pointer', userSelect: 'none' }}>
+                                <td onClick={() => setCcAccountSelection(`acc:${a.code}`)} onDoubleClick={() => openDotPreview(r.bu, a.code)} onContextMenu={(e) => openApMenu(e, r.bu, a.code)} title="ดับเบิลคลิกเพื่อ Preview · คลิกขวาเพื่อล้างข้อมูล AP" style={{ padding: expAt ? '8px 4px 18px' : '8px 4px', textAlign: 'center', background: cellBg, borderLeft, verticalAlign: 'middle', cursor: 'pointer', userSelect: 'none' }}>
                                   <DashDot active={!!cell?.tbActive} title={cell?.tbActive ? `TB ${cell.tbCount != null ? Number(cell.tbCount).toLocaleString() + ' บรรทัด' : 'Ready'} (ดับเบิลคลิกเพื่อ Preview)` : 'TB No Data'} onOpen={() => openDotPreview(r.bu, a.code)} onTip={(e) => showDotTip(e, r.bu, a.code, 'TB', !!cell?.tbActive, cell?.tbActive ? `TB ${cell.tbCount != null ? Number(cell.tbCount).toLocaleString() + ' บรรทัด' : 'พบ TB แล้ว'} · ดับเบิลคลิก = Preview` : 'ไม่มี TB (No Data)')} />
+                                  {expAt && (<div style={{ position: 'relative', height: 0, zIndex: 1 }}>{/* MARKER_RECONCILEZONE_CONFIRMED_EXP_V1 */}
+                                    <span title={`Confirm แล้ว · หมดอายุ ${fmtDmyExp(expAt)}`} style={{ position: 'absolute', top: 1, left: 'calc(100% + 4px)', transform: 'translateX(-50%)', whiteSpace: 'nowrap', fontSize: 9.5, fontWeight: 700, lineHeight: '13px', padding: '0 7px', borderRadius: 8, background: '#E6F4EC', color: '#0F6E56', border: '1px solid #bfe3cf', pointerEvents: 'none' }}>{fmtDmyExp(expAt)}</span>
+                                  </div>)}
                                 </td>
-                                <td onClick={() => setCcAccountSelection(`acc:${a.code}`)} onDoubleClick={() => openDotPreview(r.bu, a.code)} onContextMenu={(e) => openApMenu(e, r.bu, a.code)} title="ดับเบิลคลิกเพื่อ Preview · คลิกขวาเพื่อล้างข้อมูล AP" style={{ padding: '8px 4px', textAlign: 'center', background: cellBg, verticalAlign: 'middle', cursor: 'pointer', userSelect: 'none' }}>
+                                <td onClick={() => setCcAccountSelection(`acc:${a.code}`)} onDoubleClick={() => openDotPreview(r.bu, a.code)} onContextMenu={(e) => openApMenu(e, r.bu, a.code)} title="ดับเบิลคลิกเพื่อ Preview · คลิกขวาเพื่อล้างข้อมูล AP" style={{ padding: expAt ? '8px 4px 18px' : '8px 4px', textAlign: 'center', background: cellBg, verticalAlign: 'middle', cursor: 'pointer', userSelect: 'none' }}>
                                   <DashDot active={hasAp} badge={cell?.jvCount > 0} title={hasAp ? `AP ${cell.count.toLocaleString()} บรรทัด${cell?.jvCount > 0 ? ` · Detail ${Number(cell.jvCount).toLocaleString()} บรรทัด` : ''} (ดับเบิลคลิกเพื่อ Preview)` : 'AP No Data'} onOpen={() => openDotPreview(r.bu, a.code)} onMenu={(e) => openApMenu(e, r.bu, a.code)} onTip={(e) => showDotTip(e, r.bu, a.code, 'AP', hasAp, hasAp ? `AP ${cell.count.toLocaleString()} บรรทัด · ดับเบิลคลิก = Preview` : 'ไม่มีข้อมูล (No Data)')} />
                                 </td>
                               </React.Fragment>

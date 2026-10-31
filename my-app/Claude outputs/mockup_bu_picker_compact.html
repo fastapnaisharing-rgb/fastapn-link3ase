@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup แบบกะทัดรัด</title>
+<style>
+:root{--navy:#1a3a5c;--navy2:#2e5a86;--amber:#f59e0b;--line:#c5d8f0;--bg:#f4f6f9;--ink:#1a3a5c}
+@media (prefers-color-scheme:dark){:root{--bg:#14181f;--ink:#e6edf5;--line:#33506f}.card{background:#1d2430!important}.note{color:#9fb0c3!important}}
+body{margin:0;padding:18px 16px;background:var(--bg);font-family:system-ui,'Segoe UI',Tahoma,sans-serif;color:var(--ink)}
+h1{font-size:16px;margin:0 0 14px}
+.card{background:#fff;border-radius:14px;padding:14px 16px;border:1px solid var(--line);margin-bottom:14px;max-width:340px}
+.cap{font-size:12px;font-weight:700;margin-bottom:10px;opacity:.85}
+.btn{position:relative;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:22px;background:var(--navy);color:#fff;font-size:13px;font-weight:500}
+.chip{position:relative;background:var(--navy2);border-radius:12px;padding:4px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.grow{flex:1;min-width:0}
+.cnt{background:var(--amber);color:#fff;border-radius:10px;min-width:18px;padding:1px 6px;font-size:11px;font-weight:700;text-align:center}
+.dot{position:absolute;top:-4px;right:-4px;background:var(--amber);color:#fff;border-radius:9px;min-width:16px;height:16px;line-height:16px;font-size:10px;font-weight:700;text-align:center;padding:0 3px;box-shadow:0 0 0 2px var(--navy)}
+.list{margin:6px 0 0 4px;width:170px;max-height:175px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 24px rgba(26,58,92,.25)}
+.item{height:35px;box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;padding:0 10px;font-size:13px;color:var(--ink);border-bottom:.5px solid #eef2f7}
+.item.sel{background:#eaf2fb;font-weight:700}
+.note{font-size:11.5px;color:#556;margin-top:8px;line-height:1.5}
+</style></head><body>
+<h1>ตัวบอก Pre-draft ค้าง — แบบกะทัดรัด</h1>
+
+<div class="card"><div class="cap">แบบ A — ตัวเลขวงกลมเล็ก (ขวาของปุ่ม)</div>
+<div class="btn"><span class="chip">CNG (0563) ▾</span><span class="grow">Draft Monitor</span><span class="cnt">4</span></div>
+<div class="note">กินที่เท่าตัวเลข 1–2 หลัก · วางเมาส์ขึ้น Tooltip "Pre-draft ค้าง 4 ใบ"</div></div>
+
+<div class="card"><div class="cap">แบบ B — จุดตัวเลขซ้อนมุมบนของชิป BU (ไม่กินที่เลย)</div>
+<div class="btn"><span class="chip">CNG (0563) ▾<span class="dot">4</span></span><span class="grow">Draft Monitor</span></div>
+<div class="note">ซ้อนทับที่มุมชิป ไม่เพิ่มความกว้างของปุ่ม</div></div>
+
+<div class="card"><div class="cap">Dropdown (ใช้ร่วมได้ทั้งสองแบบ) — เลข 1 วงเดียว ไม่มีป้าย Over</div>
+<div class="btn"><span class="chip">CNG (0563) ▾<span class="dot">4</span></span><span class="grow">Draft Monitor</span></div>
+<div class="list">
+<div class="item"><span>เลือก BU</span></div>
+<div class="item"><span>B2S (0509)</span><span class="cnt">2</span></div>
+<div class="item"><span>BTM (3218)</span></div>
+<div class="item"><span>CDS (0101)</span><span class="cnt">12</span></div>
+<div class="item"><span>CFW (0402)</span></div>
+<div class="item sel"><span>CNG (0563)</span><span class="cnt">4</span></div>
+</div>
+<div class="note">แคบลง (170px) · ตัดป้ายเทา Over ออก ให้ดู Over ใน Tooltip แทน</div></div>
+</body></html>

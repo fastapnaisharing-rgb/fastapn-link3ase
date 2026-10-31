@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockup T36 PDF ซ้าย-ขวา</title>
+<style>
+  :root{--navy:#1a3a5c;--line:#e3e8ef;--mute:#6b7280;--ok:#2e7d32;--warn:#b26a00;--bad:#e5484d}
+  *{box-sizing:border-box}
+  body{margin:0;padding:14px;background:#fff;color:#1f2933;font:13px/1.45 "Segoe UI","Noto Sans Thai",system-ui,sans-serif}
+  .top{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .top b{font-size:15px;color:var(--navy)}
+  .chip{padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600}
+  .c-ok{background:#e3f4e8;color:var(--ok)}.c-warn{background:#fff3d6;color:var(--warn)}
+  .sp{flex:1}
+  button{height:30px;border-radius:8px;border:1px solid #cfd6e0;background:#fff;padding:0 14px;font:inherit;cursor:pointer}
+  .primary{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:600}
+  .split{display:grid;grid-template-columns:minmax(300px,42%) 1fr;gap:12px;height:520px}
+  .pane{border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
+  .ph{padding:8px 12px;background:#f6f8fb;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-weight:600;color:var(--navy)}
+  .ph small{font-weight:400;color:var(--mute)}
+  .pv{flex:1;overflow:auto;background:#eef1f5;padding:12px;display:flex;flex-direction:column;gap:10px;align-items:center}
+  .page{width:100%;max-width:380px;background:#fff;border:1px solid #cdd5df;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:12px;font-size:10.5px;position:relative}
+  .page h4{margin:0 0 6px;text-align:center;font-size:12px}
+  .page .ln{display:flex;justify-content:space-between;border-bottom:1px dotted #bbb;padding:2px 0}
+  .hl{background:#fff2a8;outline:2px solid #f5c400;border-radius:2px;padding:0 3px;font-weight:700}
+  .tag{position:absolute;top:6px;right:8px;font-size:10px;background:var(--navy);color:#fff;border-radius:6px;padding:1px 7px}
+  .tw{flex:1;overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{background:var(--navy);color:#fff;font-weight:500;font-size:11px;padding:8px;text-align:left;white-space:nowrap;position:sticky;top:0}
+  td{padding:6px 8px;border-bottom:1px solid #f0eee8;white-space:nowrap}
+  td.n{text-align:right;font-variant-numeric:tabular-nums}
+  tr.sel td{background:#eaf1fb}
+  tr.wn td{background:#fff8e6}
+  td input{width:100%;border:1px solid transparent;background:transparent;font:inherit;padding:2px 4px;border-radius:4px}
+  td input:hover,td input:focus{border-color:#9db4d3;background:#fff}
+  .st-ok{color:var(--ok);font-weight:700}.st-wn{color:var(--warn);font-weight:700}
+  .foot{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);background:#fafbfc;color:var(--mute);font-size:12px}
+  .note{margin-top:10px;color:var(--mute);font-size:12px}
+</style>
+</head>
+<body>
+<div class="top">
+  <b>Temp. T36 · โยนไฟล์ PDF</b>
+  <span class="chip c-ok">📄 ภพ.36_ODP_09.2026.pdf · 25 ฟอร์ม</span>
+  <span class="chip c-ok">✓ ตรงใบเสร็จ 24</span>
+  <span class="chip c-warn">⚠ ไม่ตรง 1</span>
+  <span class="sp"></span>
+  <span class="chip c-ok" title="อ่านจากหัวฟอร์ม">ผู้นำส่ง: บริษัท ออฟฟิศเมท (ไทย) จำกัด · Tax ID 0105537143215 · สาขา 00000</span>
+  <span class="chip c-ok">🔎 Lookup Branch List → 056001</span>
+  <button>ล้าง</button>
+  <span class="chip c-ok">Confirm แล้ว 3 / 25</span>
+  <button class="primary">ส่งเข้า T36 (3 ชุด)</button>
+</div>
+
+<div class="split">
+  <!-- ซ้าย = รูปจากไฟล์ -->
+  <div class="pane">
+    <div class="ph">ต้นฉบับ PDF <small>คลิกแถวด้านขวา → เลื่อนมาหน้าที่ตรงกัน และไฮไลต์ช่องที่ดึงตัวเลข</small></div>
+    <div class="pv">
+      <div style="width:100%;max-width:380px;background:#fff;border:2px solid var(--navy);border-radius:10px;padding:8px">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:12px;color:var(--navy)">ชุดที่ 4 · TIKTOK PTE. LTD. ✓ ตรงใบเสร็จ<span style="flex:1"></span><button class="primary" style="height:26px;padding:0 12px">✓ Confirm ชุดนี้</button><button style="height:26px;padding:0 10px">ข้าม</button></div>
+        <div class="page" style="margin-top:6px"><span class="tag">ฟอร์ม ภ.พ.36 · หน้า 7</span>
+          <h4>แบบนำส่งภาษีมูลค่าเพิ่ม ภ.พ.36</h4>
+          <div class="ln"><span>ชื่อผู้รับเงิน</span><span class="hl">TIKTOK PTE. LTD.</span></div>
+          <div class="ln"><span>1. จำนวนเงินที่จ่าย</span><span class="hl">30,000.00</span></div>
+          <div class="ln"><span>2. ภาษีที่ต้องนำส่ง</span><span class="hl">2,100.00</span></div>
+          <div class="ln"><span>3. เงินเพิ่ม</span><span>31.50</span></div>
+          <div class="ln"><span>5. รวม</span><span>2,131.50</span></div>
+          <div class="ln"><span>เลขที่ใบเสร็จ / วันที่</span><span class="hl">70104307892 · 15/10/2569</span></div>
+        </div>
+        <div class="page" style="margin-top:6px"><span class="tag">ใบเสร็จรับเงิน · หน้า 8</span>
+          <h4>ใบเสร็จรับเงิน กรมสรรพากร</h4>
+          <div class="ln"><span>วันชำระเงิน</span><span class="hl">15/10/2569</span></div>
+          <div class="ln"><span>เลขที่ใบเสร็จรับเงิน</span><span class="hl">70104307892</span></div>
+          <div class="ln"><span>จำนวนเงิน (บาท)</span><span class="hl">2,131.50</span></div>
+        </div>
+      </div>
+      <div style="width:100%;max-width:380px;background:#fff;border:2px solid transparent;border-radius:10px;padding:8px;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+        <div style="font-weight:700;font-size:12px;color:var(--navy)">ชุดที่ 5 · 3CX Software FZCO ✓</div>
+        <div style="color:var(--mute);font-size:11px;padding:6px 0">(ฟอร์ม หน้า 9 + ใบเสร็จ หน้า 10) เลื่อนลงเพื่อดูชุดถัดไป</div>
+      </div>
+    </div>
+    <div class="foot"><button>◀</button> ชุด 4 / 25 · ไม่ได้ตัดไฟล์จริง แค่แบ่งแสดง <button>▶</button><span class="sp"></span>ซูม − 100% +</div>
+  </div>
+
+  <!-- ขวา = ข้อมูลที่ดึงมา -->
+  <div class="pane">
+    <div class="ph">ข้อมูลที่ดึงมา <small>แก้ไขได้ · คอลัมน์ตรงกับตาราง T36 / Excel</small></div>
+    <div class="tw">
+      <table>
+        <thead><tr><th>ลำดับ</th><th>ชื่อบริษัทที่โอนต่างประเทศ</th><th>มูลค่าฐานภาษี</th><th>ภ.พ.36</th><th>วัน/เดือน/ปี ใบเสร็จ</th><th>เลขที่ใบเสร็จรับเงิน</th><th>สาขา Oracle <span style="font-weight:400;opacity:.8">(Lookup Branch List)</span></th><th>เทียบใบเสร็จ</th><th>สถานะ</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Meta Platforms Ireland Limited</td><td class="n">462,235.35</td><td class="n">32,356.47</td><td>15/10/2569</td><td>70104306843</td><td>056001</td><td class="st-ok">✓ ตรง</td><td><span class="chip c-ok">Confirm แล้ว</span></td></tr>
+          <tr><td>2</td><td>RTB House Pte.Ltd.</td><td class="n">115,728.78</td><td class="n">8,101.01</td><td>15/10/2569</td><td>70104306844</td><td>056001</td><td class="st-ok">✓ ตรง</td><td><span class="chip c-ok">Confirm แล้ว</span></td></tr>
+          <tr><td>3</td><td>Google Asia Pacific Pte. Ltd.</td><td class="n">2,222,847.36</td><td class="n">155,599.32</td><td>15/10/2569</td><td>70104306846</td><td>056001</td><td class="st-ok">✓ ตรง</td><td><span class="chip c-ok">Confirm แล้ว</span></td></tr>
+          <tr class="sel"><td>4</td><td>TIKTOK PTE. LTD.</td><td class="n">30,000.00</td><td class="n">2,100.00</td><td>15/10/2569</td><td>70104307892</td><td>056001</td><td class="st-ok">✓ ตรง (รวมเงินเพิ่ม 31.50)</td><td><button class="primary" style="height:24px;padding:0 10px">Confirm</button></td></tr>
+          <tr><td>5</td><td>3CX Software FZCO</td><td class="n">38,568.04</td><td class="n">2,699.76</td><td>15/10/2569</td><td>70104307893</td><td>056001</td><td class="st-ok">✓ ตรง (รวมเงินเพิ่ม)</td><td style="color:var(--mute)">รอตรวจ</td></tr>
+          <tr class="wn"><td>6</td><td>Network Solutions, LLC</td><td class="n">1,723.61</td><td class="n">120.65</td><td>15/10/2569</td><td>70104307894</td><td>056001</td><td class="st-wn">⚠ ฟอร์ม 120.65 / ใบเสร็จ 122.46</td><td style="color:var(--warn)">รอตรวจ (ตรวจยอดก่อน)</td></tr>
+          <tr><td>7</td><td>Anthropic, PBC</td><td class="n">715.34</td><td class="n">50.07</td><td>15/10/2569</td><td>70104307897</td><td>056001</td><td class="st-ok">✓ ตรง</td><td style="color:var(--mute)">รอตรวจ</td></tr>
+          <tr><td colspan="9" style="color:var(--mute);text-align:center">… อีก 18 แถว</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="foot">ตรวจทีละชุด → Confirm ชุดนั้น (แถวจะล็อกเป็น "Confirm แล้ว") · ส่งเข้า T36 เฉพาะชุดที่ Confirm แล้ว · ชุดที่ยังรอตรวจเก็บไว้ทำต่อได้</div>
+  </div>
+</div>
+<p class="note">Mockup เพื่อดูหน้าตาเท่านั้น (ข้อมูลตัวอย่างจากไฟล์ที่ส่งมา) — ยังไม่ได้ใส่ในระบบ</p>
+</body>
+</html>

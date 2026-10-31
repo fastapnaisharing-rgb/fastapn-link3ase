@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup Select Branch - สาขาที่ใช้บ่อย</title>
+<style>
+body{font-family:system-ui,"Noto Sans Thai",sans-serif;background:#e9ecf1;margin:0;padding:24px;color:#222}
+h3{margin:0 0 10px;font-size:14px;color:#1a3a5c}
+.note{font-size:12px;color:#666;margin:8px 0 18px;line-height:1.6}
+.modal{background:#fff;border-radius:14px;max-width:860px;box-shadow:0 10px 40px rgba(0,0,0,.2);overflow:hidden;margin-bottom:26px}
+.hd{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid #eee}
+.hd .t{font-weight:600;color:#1a3a5c;font-size:15px}.hd .s{font-size:12px;color:#888}
+.sup{margin:12px 20px 0;padding:8px 12px;background:#f3f7fc;border-radius:8px;font-size:12px;color:#1a3a5c}
+.sup b{font-weight:600}
+.bar{display:flex;gap:10px;padding:12px 20px}
+.bar .in{flex:1;border:1px solid #ddd;border-radius:10px;padding:9px 12px;font-size:13px;color:#999}
+.bar .add{background:#1a3a5c;color:#fff;border-radius:10px;padding:9px 18px;font-size:13px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#1a3a5c;color:#fff;text-align:left;padding:9px 12px;font-size:11px;letter-spacing:.04em}
+td{padding:9px 12px;border-bottom:1px solid #f0f0f0}
+.code{background:#eef3f9;border-radius:12px;padding:2px 9px;font-weight:600;font-size:12px}
+.hot td{background:#fffaf0}
+.hot .code{background:#fde9c4;color:#8a5a00}
+.cnt{display:inline-block;background:#fff1d6;color:#b26a00;border-radius:10px;padding:1px 9px;font-size:11px;font-weight:600;margin-left:6px}
+.cnt.last{background:#e6f4ea;color:#2e7d32}
+.sec td{background:#f6f8fa;color:#888;font-size:11px;padding:5px 12px;letter-spacing:.04em}
+.act span{display:inline-block;border:1px solid #cfd8e3;border-radius:7px;padding:3px 9px;font-size:11px;margin-right:4px;background:#f4f8fc;color:#1a3a5c}
+.st{background:#e6f4ea;color:#2e7d32;border-radius:9px;padding:1px 8px;font-size:11px}
+.ft{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;font-size:12px;color:#999}
+.btn{border:1px solid #ccc;border-radius:8px;padding:6px 18px;color:#333;background:#fff}
+</style></head><body>
+
+<h3>Mockup — Popup Select Branch เมื่อเลือก Supplier Code แล้ว (สาขาที่ใช้บ่อยขึ้นบนสุด + ป้ายจำนวนครั้ง)</h3>
+<div class="note">
+  ที่มาของข้อมูล: นับจาก <b>Branch IB</b> ของใบแจ้งหนี้ใน Invoice History ของ Supplier Code นั้น (ตัวเลขในป้ายเป็นตัวอย่างสมมติ ไม่ใช่ข้อมูลจริง)<br>
+  สาขาที่เคยใช้จะเรียงจากมากไปน้อยอยู่บนสุด ส่วนที่เหลือเรียงตามลำดับเดิม
+</div>
+
+<div class="modal">
+  <div class="hd"><div><div class="t">Select Branch</div><div class="s">BU: LKS · 72 สาขา</div></div></div>
+  <div class="sup">Supplier: <b>5000123</b> · เรียงตามที่เคยใช้ใน Invoice History (Branch IB) · พบการใช้ 4 สาขา</div>
+  <div class="bar"><div class="in">Branch code, ชื่อสาขา...</div><div class="add">+ Add</div></div>
+  <table>
+    <tr><th>BRANCH CODE</th><th>DIRECT</th><th>COMPANY NAME</th><th>BU BRANCH</th><th>STATUS</th><th>ACTION</th></tr>
+    <tr class="sec"><td colspan="6">★ ใช้บ่อยกับ Supplier นี้</td></tr>
+    <tr class="hot"><td><span class="code">589812</span></td><td>LKS-00003</td><td>SUKI-Tops Sathupradit <span class="cnt">ใช้ 12 ครั้ง</span></td><td>00003</td><td><span class="st">Active</span></td><td class="act"><span>IB</span><span>Edit</span></td></tr>
+    <tr class="hot"><td><span class="code">589810</span></td><td>LKS-00001</td><td>SUKI-People Park Onnut <span class="cnt">ใช้ 7 ครั้ง</span></td><td>00001</td><td><span class="st">Active</span></td><td class="act"><span>IB</span><span>Edit</span></td></tr>
+    <tr class="hot"><td><span class="code">589819</span></td><td>LKS-00010/2</td><td>SUKI-Lotus Bang Yai <span class="cnt">ใช้ 3 ครั้ง</span></td><td>00010</td><td><span class="st">Active</span></td><td class="act"><span>IB</span><span>Edit</span></td></tr>
+    <tr class="hot"><td><span class="code">589811</span></td><td>LKS-00002</td><td>SUKI-Lotus Bangna <span class="cnt last">ใช้ 1 ครั้ง</span></td><td>00002</td><td><span class="st">Active</span></td><td class="act"><span>IB</span><span>Edit</span></td></tr>
+    <tr class="sec"><td colspan="6">สาขาอื่น ๆ (เรียงตามเดิม)</td></tr>
+    <tr><td><span class="code">589813</span></td><td>LKS-00004</td><td>SUKI-Lotus Khlong Luang</td><td>00004</td><td><span class="st">Active</span></td><td class="act"><span>IB</span><span>Edit</span></td></tr>
+    <tr><td><span class="code">589814</span></td><td>LKS-00005</td><td>SUKI-The Forest</td><td>00005</td><td><span class="st">Active</span></td><td class="act"><span>IB</span><span>Edit</span></td></tr>
+    <tr><td><span class="code">589815</span></td><td>LKS-00006</td><td>SUKI-Lotus Bangkapi</td><td>00006</td><td><span class="st">Active</span></td><td class="act"><span>IB</span><span>Edit</span></td></tr>
+    <tr><td><span class="code">589816</span></td><td>LKS-00007</td><td>SUKI-Paradise Park</td><td>00007</td><td><span class="st">Active</span></td><td class="act"><span>IB</span><span>Edit</span></td></tr>
+  </table>
+  <div class="ft"><span>72 / 72 สาขา</span><span class="btn">Cancel</span></div>
+</div>
+
+<h3>กรณีที่ยังไม่เคยมีประวัติ</h3>
+<div class="note">ถ้า Supplier นี้ไม่มีใบแจ้งหนี้ที่ใช้ Branch IB ใน Invoice History จะไม่มีหัวข้อ "ใช้บ่อย" และแสดงรายการเรียงตามเดิมเหมือนปัจจุบันทุกอย่าง</div>
+</body></html>

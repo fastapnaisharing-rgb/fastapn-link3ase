@@ -122,6 +122,43 @@ try {
   Copy-Item $vbsSrc -Destination $vbsDst -Force
   $cmd = 'wscript.exe //B //Nologo "' + $vbsDst + '" "' + (Join-Path $base 'fastapn-sp.ps1') + '" "%1"'
   Set-ItemProperty -Path "$key\shell\open\command" -Name '(default)' -Value $cmd
+  # MARKER_SP_SETUP_BROWSER_ALLOW_V1 -- ตั้ง Policy เบราว์เซอร์ (HKCU) ให้เปิด fastapn:// / fastapn-sp:// จากเว็บ FastAPN ได้โดยไม่ถาม (กล่อง Script Host ไม่เด้ง) | มีผลหลังเปิดเบราว์เซอร์ใหม่
+function Ensure-BrowserAllow {
+  # MARKER_HANDLER_BROWSER_ALLOW_V1 -- ตั้ง Policy ให้ Edge/Chrome เปิด fastapn:// และ fastapn-sp:// จากเว็บ FastAPN ได้โดยไม่ถาม (เขียน HKCU ไม่ต้อง Admin | ทำซ้ำได้ | รักษาค่าเดิมของ Policy นี้ที่ IT อาจตั้งไว้) | มีผลหลังเปิดเบราว์เซอร์ใหม่
+  $origins = @('http://10.101.87.126:8081'); $protos = @('fastapn','fastapn-sp')
+  foreach ($k in @('HKCU:\Software\Policies\Microsoft\Edge','HKCU:\Software\Policies\Google\Chrome')) {
+    try {
+      $cur = @()
+      try { $raw = [string](Get-ItemProperty -LiteralPath $k -Name 'AutoLaunchProtocolsFromOrigins' -ErrorAction Stop).AutoLaunchProtocolsFromOrigins; if ($raw) { $cur = @($raw | ConvertFrom-Json) } } catch {}
+      $changed = $false
+      foreach ($p in $protos) { foreach ($o in $origins) {
+        $hit = $false
+        foreach ($e in $cur) { if ([string]$e.protocol -eq $p -and (@($e.allowed_origins) -contains $o)) { $hit = $true } }
+        if (-not $hit) { $cur += [pscustomobject]@{ allowed_origins = @($o); protocol = $p }; $changed = $true }
+      } }
+      if ($changed) {
+        if (-not (Test-Path -LiteralPath $k)) { New-Item -Path $k -Force | Out-Null }
+        $json = ConvertTo-Json -InputObject @($cur) -Depth 5 -Compress
+        Set-ItemProperty -LiteralPath $k -Name 'AutoLaunchProtocolsFromOrigins' -Value $json -Type String
+      }
+    } catch {}
+  }
+}
+  try { Ensure-BrowserAllow; Write-Host '      ตั้งค่าเบราว์เซอร์ให้เปิด Handler ได้โดยไม่ถาม (ปิดเปิดเบราว์เซอร์ใหม่หนึ่งครั้ง)' -ForegroundColor Green } catch {}
+  # MARKER_SP_SETUP_LISTENER_V1 -- ติดตั้ง Listener (ตัวกลางบนเครื่อง 127.0.0.1:47831) ให้หน้าเว็บสั่ง Handler โดยไม่เด้งกล่อง "Open Windows Script Host" และให้ปุ่ม Update ทำงานอัตโนมัติ | ไม่ต้อง Admin (ใช้โฟลเดอร์ Startup ของผู้ใช้) | รันซ้ำได้
+  try {
+    $lsSrc = Join-Path $srcDir 'fastapn-sp-listener.ps1'
+    if (Test-Path -LiteralPath $lsSrc) {
+      try { Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:47831/quit' -Headers @{ Origin = 'http://10.101.87.126:8081' } -TimeoutSec 3 | Out-Null; Start-Sleep -Seconds 2 } catch {}
+      $lsDst = Join-Path $base 'fastapn-sp-listener.ps1'
+      Copy-Item -LiteralPath $lsSrc -Destination $lsDst -Force
+      $stVbs = Join-Path ([Environment]::GetFolderPath('Startup')) 'FastAPN-SP-Listener.vbs'
+      $vbsText = 'CreateObject("WScript.Shell").Run "wscript.exe //B //Nologo ""' + $vbsDst + '"" ""' + $lsDst + '""", 0, False'
+      [IO.File]::WriteAllText($stVbs, $vbsText, [Text.Encoding]::ASCII)
+      Start-Process -FilePath 'wscript.exe' -ArgumentList ('//B //Nologo "' + $stVbs + '"')
+      Write-Host '      ติดตั้ง Listener เรียบร้อย (เปิดอัตโนมัติทุกครั้งที่เปิดเครื่อง | ไม่เด้งกล่อง Open | ปุ่ม Update อัตโนมัติ)' -ForegroundColor Green
+    }
+  } catch { Write-Host ('      ข้ามการติดตั้ง Listener: ' + $_.Exception.Message) -ForegroundColor DarkYellow }
   Write-Host '[3/3] ลงทะเบียน fastapn-sp:// (HKCU) เรียบร้อย' -ForegroundColor Green
   Write-Host ''
   Write-Host ("=== สำเร็จ! (v$newVer) กลับไป Link3ase แล้วใช้งานได้เลย ===") -ForegroundColor Cyan

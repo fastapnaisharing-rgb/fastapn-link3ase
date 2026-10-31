@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mockup - VAT Swap Finder: โหมดสลับระหว่างกัน</title>
+<style>
+:root{--navy:#14532d;--g:#1e8e4a;--gd:#0f6b34;--gl:#e8f5ec;--line:#e3e8ee;--soft:#f5f8f6;--text:#1f2933;--ok:#1e7a3c;--bad:#b3261e;--warn:#a65f00;--mute:#6b7785;--bg:#fff}
+*{box-sizing:border-box}
+body{margin:0;background:#f3f6f4;color:var(--text);font-family:"Segoe UI",Tahoma,"Noto Sans Thai",sans-serif;font-size:13.5px}
+.wrap{max-width:1280px;margin:0 auto;padding:16px}
+.note{background:#fff8e6;border:1px solid #f0d58a;color:#7a5a00;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12.5px}
+.head{background:#fff;border:1px solid var(--line);border-left:4px solid var(--g);border-radius:10px;padding:12px 16px;margin-bottom:12px}
+.head small{letter-spacing:.08em;color:var(--navy);font-weight:700;font-size:11px}
+.head h1{margin:2px 0;font-size:24px;color:var(--navy)}
+.grid{display:grid;grid-template-columns:380px 1fr;gap:12px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h3{margin:0 0 10px;font-size:13px;color:var(--navy)}
+label{display:block;font-size:11.5px;color:var(--mute);margin:8px 0 3px}
+input[type=text],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;font-size:13px;background:#fff}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
+.chip{background:var(--gl);color:var(--gd);border-radius:999px;padding:3px 10px;font-size:11.5px;font-weight:600}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+button{border:1px solid var(--line);background:#fff;border-radius:7px;padding:8px 14px;font-size:13px;cursor:pointer}
+button.pri{background:var(--g);color:#fff;border-color:var(--g)}
+.seg{display:flex;gap:0;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg div{flex:1;text-align:center;padding:7px;cursor:pointer;background:#fff;font-weight:600;color:var(--mute)}
+.seg div.on{background:var(--g);color:#fff}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:1100px){.panels{grid-template-columns:1fr}}
+.ph{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:6px}
+.ph b{color:var(--navy)}
+.range{font-size:11.5px;color:var(--mute)}
+.rule{font-size:11.5px;background:var(--soft);border-radius:6px;padding:6px 8px;margin:6px 0;color:var(--mute)}
+table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
+th{background:var(--navy);color:#fff;text-align:left;padding:6px 8px;font-weight:600}
+td{padding:6px 8px;border-bottom:1px solid var(--line)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+tr.dis td{color:#9aa5b1;background:#fafbfa}
+tr.dis .why{display:block;font-size:11px;color:var(--bad)}
+tr.sel td{background:#f0faf3}
+.sum{margin-top:12px;display:grid;grid-template-columns:1fr 1fr 1fr 1.2fr;gap:8px}
+@media(max-width:900px){.sum{grid-template-columns:1fr 1fr}}
+.box{background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.box small{color:var(--mute);display:block;font-size:11px}
+.box b{font-size:16px;font-variant-numeric:tabular-nums}
+.state{font-weight:700}
+.state.ok{color:var(--ok)}.state.bad{color:var(--bad)}
+.hidden{display:none}
+.placeholder{border:2px dashed var(--g);background:var(--gl);border-radius:10px;min-height:180px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--gd);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="note"><b>Mockup (ข้อมูลตัวอย่างทั้งหมด)</b> &nbsp;สมมติฐานที่ใช้ในภาพนี้ ยังรอคุณยืนยัน: (1) ติ๊กเองทั้งสองฝั่ง (2) โหมดนี้ไม่ต้องกรอกยอด VAT ใช้ยอดที่ติ๊กเทียบกัน (3) เลือกเดือนคู่สลับได้อิสระ</div>
+
+  <div class="head">
+    <small>VAT CONTROLLER</small>
+    <h1>VAT Swap Finder</h1>
+    <span style="color:var(--mute);font-size:12px">Toolbox | Period: 2026-10</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h3>ตั้งเงื่อนไข</h3>
+      <label>โหมด</label>
+      <div class="seg" id="seg">
+        <div data-m="normal">Normal Swap</div>
+        <div data-m="between" class="on">สลับระหว่างกัน</div>
+      </div>
+
+      <div id="normalFields" class="hidden">
+        <label>ยอด VAT</label><input type="text" placeholder="เช่น 500">
+        <div class="row2"><div><label>Rate เดิม %</label><input type="text" value="100"></div><div><label>Rate ใหม่ %</label><input type="text" value="100"></div></div>
+        <div class="rule">Normal Swap: ไล่สลับเป็นลูกโซ่ทีละเดือนจนถึงเดือนปัจจุบัน (ของเดิม)</div>
+      </div>
+
+      <div id="betweenFields">
+        <div class="row2">
+          <div><label>สลับเข้าที่เดือน</label><select id="mTo"><option>08.2026</option><option>09.2026</option></select></div>
+          <div><label>ดึงจากเดือน</label><select id="mFrom"><option>10.2026</option><option>09.2026</option></select></div>
+        </div>
+        <div class="row2">
+          <div><label>Rate เดิม %</label><input type="text" id="rOld" value="100"></div>
+          <div><label>Rate ใหม่ %</label><input type="text" id="rNew" value="100"></div>
+        </div>
+      </div>
+      <div class="row2">
+        <div><label>สาขา</label><select><option>ทุกสาขา</option></select></div>
+        <div><label>ต่าง ±</label><input type="text" id="tol" value="0.05"></div>
+      </div>
+      <div class="chips"><span class="chip">BU 5000</span><span class="chip">Type N.B</span><span class="chip">ไม่สลับข้าม Type</span></div>
+      <div class="btns">
+        <button class="pri">บันทึก</button><button>Export</button><button>บันทึกเป็นไฟล์</button><button>เปิดงานจากไฟล์</button><button>เริ่มใหม่</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="betweenView">
+        <div class="panels">
+          <div>
+            <div class="ph"><div><b>A · ใบที่ดึงเข้า 08.2026</b><div class="range">มาจากรายการเดือน 10.2026</div></div><span class="chip">ลงวันที่ 02.2026 ถึง 08.2026</span></div>
+            <input type="text" placeholder="ค้นหา เลขที่ใบกำกับ / ผู้ค้า / สาขา" data-s="A">
+            <div class="rule">ห้ามมีใบที่วันที่ใบกำกับสูงกว่า 08.2026 และไม่เก่ากว่า 6 เดือนของ 08.2026</div>
+            <table id="tA"></table>
+          </div>
+          <div>
+            <div class="ph"><div><b>B · ใบที่ย้ายออกจาก 08.2026 ไป 10.2026</b><div class="range">มาจากรายการเดือน 08.2026</div></div><span class="chip">ลงวันที่ 04.2026 ถึง 10.2026</span></div>
+            <input type="text" placeholder="ค้นหา เลขที่ใบกำกับ / ผู้ค้า / สาขา" data-s="B">
+            <div class="rule">ใบที่ลงวันที่เก่ากว่า 04.2026 หมดอายุใน 10.2026 ติ๊กไม่ได้</div>
+            <table id="tB"></table>
+          </div>
+        </div>
+        <div class="sum">
+          <div class="box"><small>Σ A ที่ติ๊ก (× Rate เดิม)</small><b id="sA">0.00</b></div>
+          <div class="box"><small>Σ B ที่ติ๊ก (× Rate ใหม่)</small><b id="sB">0.00</b></div>
+          <div class="box"><small>ส่วนต่าง A − B</small><b id="sD">0.00</b></div>
+          <div class="box"><small>สถานะ</small><span class="state" id="st">-</span></div>
+        </div>
+        <div class="btns"><button class="pri" id="ok">ยืนยันการสลับ</button><button id="clr">ล้างที่ติ๊ก</button></div>
+      </div>
+      <div id="normalView" class="hidden">
+        <div class="placeholder">ลากไฟล์รายงานภาษีซื้อมาวางที่นี่<br>หรือคลิกเพื่อเลือกไฟล์</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ข้อมูลตัวอย่างเท่านั้น (ไม่ใช่ข้อมูลจริง)
+var A=[
+ {id:'IV2608-001',d:'2026-06-12',v:'บจก. ตัวอย่าง เอ',b:'501001',t:1070.00},
+ {id:'IV2608-002',d:'2026-07-03',v:'บจก. ตัวอย่าง บี',b:'502001',t:3500.00},
+ {id:'SI2607-114',d:'2026-07-21',v:'บจก. ตัวอย่าง ซี',b:'501001',t:2430.00},
+ {id:'TR2602-031',d:'2026-02-14',v:'บจก. ตัวอย่าง ดี',b:'503001',t:640.00},
+ {id:'IV2609-050',d:'2026-09-05',v:'บจก. ตัวอย่าง อี',b:'501001',t:1750.00,bad:'วันที่ 09.2026 สูงกว่าเดือนที่เข้าสลับ (08.2026)'},
+ {id:'IV2610-007',d:'2026-10-02',v:'บจก. ตัวอย่าง เอฟ',b:'502001',t:900.00,bad:'วันที่ 10.2026 สูงกว่าเดือนที่เข้าสลับ (08.2026)'},
+ {id:'TR2601-020',d:'2026-01-20',v:'บจก. ตัวอย่าง จี',b:'503001',t:500.00,bad:'หมดอายุ 6 เดือนของ 08.2026'}
+];
+var B=[
+ {id:'IV2606-310',d:'2026-06-18',v:'บจก. ตัวอย่าง เอช',b:'501001',t:4570.00},
+ {id:'SI2607-220',d:'2026-07-09',v:'บจก. ตัวอย่าง ไอ',b:'502001',t:2430.00},
+ {id:'IV2608-415',d:'2026-08-11',v:'บจก. ตัวอย่าง เจ',b:'501001',t:1200.00},
+ {id:'IV2604-120',d:'2026-04-07',v:'บจก. ตัวอย่าง เค',b:'503001',t:640.00},
+ {id:'TR2603-044',d:'2026-03-25',v:'บจก. ตัวอย่าง แอล',b:'501001',t:800.00,bad:'หมดอายุ 6 เดือนของ 10.2026'}
+];
+var sel={A:{},B:{}};
+sel.A['IV2608-001']=1;sel.A['IV2608-002']=1;sel.B['IV2606-310']=1;
+var q={A:'',B:''};
+function fmt(n){return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function thDate(s){var p=s.split('-');return p[2]+'/'+p[1]+'/'+p[0]}
+function render(k,data){
+  var t=document.getElementById('t'+k);
+  var h='<tr><th></th><th>เลขที่ใบกำกับ</th><th>วันที่ใบกำกับ</th><th>ผู้ค้า</th><th>สาขา</th><th class="n">เงินภาษี</th></tr>';
+  data.filter(function(x){var s=(x.id+x.v+x.b).toLowerCase();return s.indexOf(q[k].toLowerCase())>=0}).forEach(function(x){
+    var dis=!!x.bad, on=!!sel[k][x.id];
+    h+='<tr class="'+(dis?'dis':on?'sel':'')+'"><td><input type="checkbox" data-k="'+k+'" data-id="'+x.id+'" '+(on?'checked ':'')+(dis?'disabled':'')+'></td>'
+      +'<td>'+x.id+(dis?'<span class="why">'+x.bad+'</span>':'')+'</td><td>'+thDate(x.d)+'</td><td>'+x.v+'</td><td>'+x.b+'</td><td class="n">'+fmt(x.t)+'</td></tr>';
+  });
+  t.innerHTML=h;
+}
+function sumOf(k,data){return data.reduce(function(a,x){return a+(sel[k][x.id]?x.t:0)},0)}
+function update(){
+  var ro=parseFloat(document.getElementById('rOld').value)||100, rn=parseFloat(document.getElementById('rNew').value)||100, tol=parseFloat(document.getElementById('tol').value)||0;
+  var a=sumOf('A',A)*ro/100, b=sumOf('B',B)*rn/100, d=Math.round((a-b)*100)/100;
+  document.getElementById('sA').textContent=fmt(a);document.getElementById('sB').textContent=fmt(b);document.getElementById('sD').textContent=fmt(d);
+  var st=document.getElementById('st'), any=(a>0||b>0), ok=any&&Math.abs(d)<=tol+1e-9;
+  st.textContent=!any?'ยังไม่ได้ติ๊ก':ok?'ยอดตรงกัน (ในช่วง ±'+tol+')':'ยอดยังไม่ตรง';
+  st.className='state '+(!any?'':ok?'ok':'bad');
+  document.getElementById('ok').disabled=!ok;
+}
+function all(){render('A',A);render('B',B);update()}
+document.addEventListener('change',function(e){
+  var c=e.target; if(c.type==='checkbox'&&c.dataset.k){ if(c.checked)sel[c.dataset.k][c.dataset.id]=1; else delete sel[c.dataset.k][c.dataset.id]; all(); }
+  if(c.id==='rOld'||c.id==='rNew'||c.id==='tol')update();
+});
+document.addEventListener('input',function(e){var s=e.target.dataset&&e.target.dataset.s;if(s){q[s]=e.target.value;all();}});
+document.getElementById('clr').onclick=function(){sel={A:{},B:{}};all()};
+document.getElementById('seg').onclick=function(e){
+  var m=e.target.dataset.m; if(!m)return;
+  [].forEach.call(this.children,function(c){c.classList.toggle('on',c.dataset.m===m)});
+  var b=m==='between';
+  document.getElementById('normalFields').classList.toggle('hidden',b);
+  document.getElementById('betweenFields').classList.toggle('hidden',!b);
+  document.getElementById('betweenView').classList.toggle('hidden',!b);
+  document.getElementById('normalView').classList.toggle('hidden',b);
+};
+all();
+</script>
+</body>
+</html>

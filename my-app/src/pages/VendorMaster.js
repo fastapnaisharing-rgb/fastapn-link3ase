@@ -10,6 +10,15 @@
   import { broadcastWs } from '../wsManager'; // MARKER_VENDORRULE_REALTIME_SYNC_V1 -- Vendor Rule (รวม Notice) ไม่เคยต่อเข้า Realtime Broadcast มาก่อน
   import { useRealtimeRefresh } from '../useRealtimeRefresh';
 
+// MARKER_HEAD_TINT_V1 -- สีหัวคอลัมน์แยกตามชื่อ (คงที่ต่อชื่อคอลัมน์) + แถบสีหนาด้านล่าง
+const __HEAD_PAL = [['#dbe6f5','#1a3a5c'],['#e0ecfc','#3b82f6'],['#efe7fb','#8b5cf6'],['#e3f4e8','#2f9e44'],['#fdeee0','#f08a24'],['#e6f6f2','#2fb58a'],['#fde8ea','#d1495b'],['#fff6d6','#d4a017']];
+const headTint = (k) => ({}); // สีหัวคอลัมน์ใช้สีเดิม (Navy)
+
+// MARKER_HEAD_ICON_V1 -- ไอคอนหน้าชื่อหัวคอลัมน์ (แบบ A อีโมจิ)
+const __HEAD_ICONS = {"bu": "🏢", "thai company name": "📛", "english company name": "🔤", "tax id": "🧾", "tax id bu": "🧾", "bu tax id": "🧾", "company code": "#️⃣", "company name": "🏛️", "vat %": "％", "last rate (%)": "📈", "book": "📒", "segment3": "🏷️", "branch code": "🏬", "branch direct": "🧭", "branch allocate": "🧮", "bu branch": "🌿", "%": "％", "db(%)": "％", "cpc": "🏦", "group-p": "👥", "status": "🚦", "inactive date": "📅", "code": "🔑", "supplier name": "🏭", "supplier no.": "🔢", "site": "📍", "tax-type": "🧾", "notice": "🔔", "sub acc": "📂", "no.": "🔢", "due": "⏰", "digit": "🔢", "email": "✉️", "sm-code": "🔖", "branch": "🌿", "debit account": "➖", "credit account": "➕", "at-match": "🔗", "rule1": "📏", "rule2": "📏", "rule3": "📏", "rule4": "📏", "rule5": "📏", "sy-running": "🔄", "ie-code": "💸", "ประเภท": "🗂️", "type": "🧩", "sub type": "🧩", "description": "📝", "account": "📚", "sub": "📂", "dis-g": "🎁", "i&g": "💹", "value": "💲", "oth": "➕", "spi-1": "⭐", "spec-tx": "🧾"};
+const headIcon = (label) => { const e = __HEAD_ICONS[String(label || '').trim().toLowerCase()]; return e ? e + ' ' : ''; };
+
+
 
   function useWindowWidth() {
     const [width, setWidth] = useState(window.innerWidth);
@@ -470,9 +479,9 @@ const computeNextSyRunning = async () => {
     },
     category: {
       label: 'Category', icon: '🗂️', table: 'vendor_category', key: 'Code',
-      fields: ['Code','Supplier Name','TAX ID','No.','BU','TYPE','SUB TYPE','REMARK','username','last_update'],
+      fields: ['Code','Supplier Name','TAX ID','No.','BU','TYPE','SUB TYPE','Matching Logic','Date Basis','REMARK','username','last_update'], // MARKER_VENDORCAT_MATCHING_LOGIC_V1
       combo: ['BU','TYPE','SUB TYPE'],
-      edit: [['Code','Code'],['Supplier Name','Supplier Name'],['TAX ID','TAX ID'],['No.','No.'],['BU','BU'],['TYPE','TYPE'],['SUB TYPE','SUB TYPE'],['REMARK','REMARK']],
+      edit: [['Code','Code'],['Supplier Name','Supplier Name'],['TAX ID','TAX ID'],['No.','No.'],['BU','BU'],['TYPE','TYPE'],['SUB TYPE','SUB TYPE'],['Matching Logic','Matching Logic'],['Date Basis','Date Basis'],['REMARK','REMARK']],
       columns: [
         { key: 'Code',          label: 'Code',          sortable: true, w: 130 },
         { key: 'Supplier Name', label: 'Supplier Name', w: 520 },
@@ -482,6 +491,7 @@ const computeNextSyRunning = async () => {
         { key: 'BU',            label: 'BU', sortable: true, w: 80 },
         { key: 'TYPE',          label: 'TYPE',          w: 100 },
         { key: 'SUB TYPE',      label: 'SUB TYPE',      w: 100 },
+        // MARKER_VENDORCAT_HIDE_MATCHING_COLS_V1 -- ซ่อน Matching Logic / Date Basis จากตาราง (ยังอยู่ในฟอร์มแก้ไขและระบบ Matching ยังใช้ค่า)
       ],
     },
   };
@@ -1111,6 +1121,15 @@ const computeNextSyRunning = async () => {
         confirmDialog.alert('กรอกข้อมูลให้ครบก่อนบันทึก', { variant: 'danger' });
         return;
       }
+      // MARKER_APCODE_DUP_SUPPLIERNO_SITE_V1 -- Add AP-Code ใหม่: เช็กซ้ำคู่ Supplier No. + Site พร้อมกัน (ต้องตรงทั้ง 2 ช่อง ถึงนับว่าซ้ำ) ไม่สนตัวพิมพ์เล็ก/ใหญ่และช่องว่างหัวท้าย
+      if (!editId) {
+        const nz = (v) => String(v == null ? '' : v).trim().toLowerCase();
+        const dupAp = (dataMap['apcode'] || []).find((i) => nz(i['Supplier Number']) === nz(form['Supplier Number']) && nz(i['Supplier Site']) === nz(form['Supplier Site']));
+        if (dupAp) {
+          confirmDialog.alert(`ไม่สามารถบันทึกได้: Supplier No. "${String(form['Supplier Number']).trim()}" + Site "${String(form['Supplier Site']).trim()}" มีอยู่แล้วใน AP-Code\n\nCode: ${dupAp['Code'] || '-'} · BU: ${dupAp['BU Code'] || '-'} · ${dupAp['Supplier Name'] || '-'}`, { variant: 'danger', title: 'ข้อมูลซ้ำ' });
+          return;
+        }
+      }
     }
     if (tab === 'iecode') {
       const missing = ['IE-Code','Supplier Name','Supplier Number','Supplier Site','BU Code'].filter(k => !form[k]?.trim());
@@ -1516,7 +1535,7 @@ const computeNextSyRunning = async () => {
     const COLUMNS_SCALED = cfg ? cfg.columns : [];
 
     const S = {
-      container: { padding: isMobile?'12px':'20px', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth:0, overflow:'hidden' },
+      container: { padding: isMobile?'12px':'20px', background:'#ffffff', display:'flex', flexDirection:'column', height:'100vh', boxSizing:'border-box', minWidth:0, overflow:'hidden' },
       topbar: { display:'flex', justifyContent:'space-between', alignItems:'center', flexShrink:0, flexWrap: isMobile?'wrap':'nowrap', gap:'8px' },
       btn: { padding: isMobile?'6px 10px':'7px 14px', borderRadius:'6px', border:'none', cursor:'pointer', fontSize: isMobile?'12px':'13px', marginLeft: isMobile?'4px':'8px' },
       tabBar: { display:'flex', alignItems:'flex-end', padding:'10px 0 0', flexShrink:0, borderBottom:'2px solid #e8e8e8' },
@@ -2156,7 +2175,11 @@ if (tab === 'apcode' || tab === 'iecode') {
       <div style={S.container}>
         <div style={S.topbar}>
           <div style={{ display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap' }}>
-            <h2 style={{ fontSize: isMobile?'14px':'16px', fontWeight:'600', margin:0 }}>👥 Vendor Master</h2>
+            <div style={{ borderLeft:'4px solid #2fb58a', paddingLeft:'14px' }}> {/* MARKER_MASTER_HEADER_V2 */}
+            <div style={{ fontSize:'11px', letterSpacing:'0.14em', fontWeight:700, color:'#2fb58a' }}>MASTER DATA</div>
+            <div style={{ fontSize:isMobile?'20px':'26px', lineHeight:1.15, fontWeight:800, color:'#1a3a5c', margin:'2px 0' }}>Vendor <span style={{ color:'#2fb58a' }}>Master</span></div>
+            {!isMobile && <div style={{ fontSize:'12px', color:'#7b8794' }}>รหัส AP / SM / IE / Category และ Vendor Rule</div>}
+          </div>
             {isOwner && selected.length > 0 && <button style={{...S.btn, background:'#c0392b', color:'white', marginLeft:0}} onClick={handleBulkDelete}>🗑️{!isMobile&&` ลบ ${selected.length}`}</button>}
             {selected.length > 0 && <ExportDropdown onExportSelected={handleExportSelected} onExportAll={handleExportAll} selectedCount={selected.length} isMobile={isMobile} />}
             {tab === 'iecode' && nextSyRunning && !isMobile && (
@@ -2254,9 +2277,9 @@ if (tab === 'apcode' || tab === 'iecode') {
                 <tr>
                   <th style={S.thCheck}><input type="checkbox" checked={filtered.length>0 && selected.length===filtered.length} onChange={()=>setSelectedMap(prev=>({...prev,[tab]: prev[tab].length===filtered.length?[]:filtered.map(i=>i.id)}))} /></th>
                   {COLUMNS_SCALED.map(c => (
-                    <th key={c.key} style={{ ...(c.sortable ? S.thSort : S.th), ...(c.center ? { textAlign:'center' } : {}) }}
+                    <th key={c.key} style={{ ...(c.sortable ? S.thSort : S.th), ...headTint(c.key), ...(c.center ? { textAlign:'center' } : {}) }}
                       onClick={c.sortable ? () => setSortMap(prev => ({ ...prev, [tab]: { field: c.key, dir: prev[tab].field===c.key && prev[tab].dir==='asc' ? 'desc' : 'asc' } })) : undefined}>
-                      {c.label}{c.sortable ? (sort.field===c.key ? (sort.dir==='asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
+                      {headIcon(c.label)}{c.label}{c.sortable ? (sort.field===c.key ? (sort.dir==='asc' ? ' ▲' : ' ▼') : ' ↕') : ''}
                     </th>
                   ))}
                   <th style={S.thAction}>Action</th>
