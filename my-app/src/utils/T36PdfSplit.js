@@ -40,7 +40,7 @@ function PageCanvas({ doc, pageNo, tokens, title, zoom }) { // MARKER_T36_PDF_CS
   );
 }
 
-export default function T36PdfSplit({ file, lookupBranch, existing, onAddRow, onRemoveRow, onClose }) {
+export default function T36PdfSplit({ file, lookupBranch, existing, holdLoad, onAddRow, onRemoveRow, onClose }) {
   const [res, setRes] = React.useState(null); const [err, setErr] = React.useState(''); const [rows, setRows] = React.useState([]); const [sel, setSel] = React.useState(0); const [tab, setTab] = React.useState('preview'); // MARKER_T36_PDF_TABS_V1 -- Preview | Confirm List
   const [brPick, setBrPick] = React.useState(''); const ZDEF = 0.8; const [zoom, setZoom] = React.useState(ZDEF); // MARKER_T36_PDF_ZOOM_V1
   const existingRef = React.useRef(existing || []); existingRef.current = existing || []; const addedRef = React.useRef({}); const skipKey = file ? `t36pdf_skip_${file.name}_${file.size}_${file.lastModified}` : '';
@@ -48,10 +48,12 @@ export default function T36PdfSplit({ file, lookupBranch, existing, onAddRow, on
   const cardRef = React.useRef({}); const rowRef = React.useRef({}); const docRef = React.useRef(null);
   React.useEffect(() => {
     let dead = false;
-    readPp36Pdf(file, true).then((r) => {
+    readPp36Pdf(file, true).then(async (r) => {
       if (dead) { try { r.doc && r.doc.destroy(); } catch (e) { /* ignore */ } return; }
       docRef.current = r.doc;
       if (!r.rows.length) { setErr(`ไม่พบแบบฟอร์ม ภ.พ.36 ใน ${file.name} (${r.pages} หน้า) — ถ้าเป็นไฟล์สแกนรูปภาพ อ่านไม่ได้`); return; }
+      let hold = []; try { hold = holdLoad ? ((await holdLoad()) || []) : []; } catch (e) { hold = []; } // MARKER_T36_PDF_HOLD_RESTORE_V1 -- อ่าน Draft Hold จาก DB (ทุก User) ก่อนตั้งสถานะชุดที่ Confirm แล้ว
+      if (dead) { try { r.doc && r.doc.destroy(); } catch (e) { /* ignore */ } return; }
       const br = r.items.map((it) => (lookupBranch ? lookupBranch(it.ptax, it.pbr) : { code: '', note: '' }));
       let pre = ''; const c0 = (br[0] && br[0].cands) || [];
       if (c0.length > 1) { try { const sv = window.localStorage.getItem(`t36pdf_br_${r.items[0].ptax}_${r.items[0].pbr}`); if (sv && c0.includes(sv)) pre = sv; } catch (e) { /* ignore */ } if (!pre && br[0].code) pre = br[0].code; }
@@ -59,7 +61,7 @@ export default function T36PdfSplit({ file, lookupBranch, existing, onAddRow, on
       setRows(r.rows.map((x, i) => { const q = x.slice(); q[6] = ((br[i].cands && br[i].cands.length > 1) ? (pre || br[i].code) : br[i].code) || ''; return q; })); setRes({ ...r, br });
       // MARKER_T36_PDF_RESTORE_V1 -- เปิดไฟล์เดิมซ้ำ : ชุดที่อยู่ในตาราง T36 แล้ว (เลขที่ใบเสร็จ + ชื่อตรงกัน) = Confirm แล้ว ; ชุดที่ข้ามไว้จำจาก localStorage
       const dn = {}; let sk = []; try { sk = JSON.parse(window.localStorage.getItem(skipKey) || '[]'); } catch (e) { sk = []; }
-      r.rows.forEach((x, i) => { const hit = (existingRef.current || []).find((e) => e && String(e[5]).trim() === String(x[5]).trim() && String(e[1]).trim() === String(x[1]).trim()); if (hit) { dn[i] = 'ok'; addedRef.current[i] = hit.slice(); } else if (sk.includes(i)) dn[i] = 'skip'; });
+      r.rows.forEach((x, i) => { const hit = (existingRef.current || []).find((e) => e && String(e[5]).trim() === String(x[5]).trim() && String(e[1]).trim() === String(x[1]).trim()) || ((hold.find((h) => h && h.row && String(h.row[5]).trim() === String(x[5]).trim() && String(h.row[1]).trim() === String(x[1]).trim()) || {}).row); if (hit) { dn[i] = 'ok'; addedRef.current[i] = hit.slice(); } else if (sk.includes(i)) dn[i] = 'skip'; });
       setDone(dn); const first = r.rows.findIndex((x, i) => !dn[i]); if (first > 0) setSel(first);
     }).catch((e) => !dead && setErr('อ่าน PDF ไม่สำเร็จ: ' + (e && e.message ? e.message : e)));
     return () => { dead = true; try { docRef.current && docRef.current.destroy(); } catch (e) { /* ignore */ } };
@@ -77,12 +79,16 @@ export default function T36PdfSplit({ file, lookupBranch, existing, onAddRow, on
   const nDone = Object.values(done).filter((v) => v === 'ok').length;
   const nextUndone = (i) => { for (let k = i + 1; k < rows.length; k++) if (rows[k] && !done[k]) return k; return -1; };
   React.useEffect(() => { if (!skipKey || !res) return; try { window.localStorage.setItem(skipKey, JSON.stringify(Object.keys(done).filter((k) => done[k] === 'skip').map(Number))); } catch (e) { /* ignore */ } }, [done]); // eslint-disable-line react-hooks/exhaustive-deps
-  const undoOne = (i) => { // MARKER_T36_PDF_UNDO_V1 -- ดึงออก : เอาแถวที่ Confirm แล้วออกจากตาราง T36 และกลับมาแก้/ตรวจใหม่ได้
-    if (done[i] === 'ok' && addedRef.current[i] && onRemoveRow) onRemoveRow(addedRef.current[i].slice());
+  const [busy, setBusy] = React.useState(false); const [saveErr, setSaveErr] = React.useState(''); // MARKER_T36_PDF_HOLD_SAVE_V1
+  const undoOne = async (i) => { // MARKER_T36_PDF_UNDO_V1 -- ดึงออก : ลบชุดออกจาก Draft (DB) และตาราง T36 แล้วกลับมาแก้/ตรวจใหม่ได้
+    if (busy) return; setSaveErr('');
+    if (done[i] === 'ok' && addedRef.current[i] && onRemoveRow) { setBusy(true); let ok = true; try { ok = (await onRemoveRow(addedRef.current[i].slice())) !== false; } catch (e) { ok = false; } setBusy(false); if (!ok) { setSaveErr('ดึงออกไม่สำเร็จ (ลบ Draft ใน DB ไม่ได้) — ลองใหม่อีกครั้ง'); return; } }
     delete addedRef.current[i]; setDone((d) => { const q = { ...d }; delete q[i]; return q; }); pick(i, 'right');
   };
-  const confirmOne = (i) => { // MARKER_T36_PDF_CONFIRM_ONE_V1 -- Confirm ทีละชุด : ใส่แถวนั้นเข้าตาราง T36 ทันที แล้วล็อกแถว
-    if (!rows[i] || done[i]) return; const snap = rows[i].slice(); addedRef.current[i] = snap; onAddRow(snap.slice()); setDone((d) => ({ ...d, [i]: 'ok' }));
+  const confirmOne = async (i) => { // MARKER_T36_PDF_CONFIRM_ONE_V1 -- Confirm ทีละชุด : บันทึกลง Draft (DB ทุกเครื่องเห็น) + ใส่แถวเข้าตาราง T36 แล้วล็อกแถว ; บันทึกไม่สำเร็จ = ไม่ล็อก
+    if (!rows[i] || done[i] || busy) return; setSaveErr(''); const snap = rows[i].slice(); setBusy(true); let ok = true; try { ok = (await onAddRow(snap.slice(), file && file.name)) !== false; } catch (e) { ok = false; } setBusy(false);
+    if (!ok) { setSaveErr('บันทึก Draft ไม่สำเร็จ — ชุดนี้ยังไม่ถูก Confirm ลองใหม่อีกครั้ง'); return; }
+    addedRef.current[i] = snap; setDone((d) => ({ ...d, [i]: 'ok' }));
     const n = nextUndone(i); if (n >= 0) setTimeout(() => pick(n, 'right'), 50);
   };
   const skipOne = (i) => { if (done[i]) return; setDone((d) => ({ ...d, [i]: 'skip' })); const n = nextUndone(i); if (n >= 0) setTimeout(() => pick(n, 'right'), 50); };
@@ -173,22 +179,22 @@ export default function T36PdfSplit({ file, lookupBranch, existing, onAddRow, on
                         {it.ok ? `✓ ตรงใบเสร็จ (ยอดใบเสร็จ ${fmtAmt(it.recAmount)})` : `⚠ ${it.issues.join(' ; ')}`}
                         {it.extra && parseFloat(it.extra) > 0 && <div style={{ fontWeight: 400, marginTop: 2 }}>มีเงินเพิ่ม {fmtAmt(it.extra)} — ไม่รวมในช่อง ภ.พ.36</div>}
                       </div>
-                      {lock ? <div style={{ padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, color: done[i] === 'ok' ? '#2e7d32' : '#6b7280', fontWeight: 700 }}><span>{done[i] === 'ok' ? '✓ Confirm แล้ว — ใส่ในตารางแล้ว' : 'ข้ามแล้ว'}</span><button type="button" onClick={() => undoOne(i)} style={{ height: 30, borderRadius: 8, border: '1px solid #cfd6e0', background: '#fff', padding: '0 12px', cursor: 'pointer', fontWeight: 600 }}>{done[i] === 'ok' ? '↩ ดึงออก' : '↩ เอากลับมาตรวจ'}</button></div> : (
+                      {lock ? <div style={{ padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, color: done[i] === 'ok' ? '#2e7d32' : '#6b7280', fontWeight: 700 }}><span>{done[i] === 'ok' ? '✓ Confirm แล้ว — เก็บเป็น Draft แล้ว' : 'ข้ามแล้ว'}</span><button type="button" onClick={() => undoOne(i)} style={{ height: 30, borderRadius: 8, border: '1px solid #cfd6e0', background: '#fff', padding: '0 12px', cursor: 'pointer', fontWeight: 600 }}>{done[i] === 'ok' ? '↩ ดึงออก' : '↩ เอากลับมาตรวจ'}</button></div> : (
                         <div style={{ display: 'flex', gap: 8 }}>
-                          <button type="button" onClick={() => confirmOne(i)} style={{ flex: 1, height: 42, borderRadius: 10, border: `1px solid ${NAVY}`, background: NAVY, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>✓ Confirm ชุดนี้</button>
+                          <button type="button" onClick={() => confirmOne(i)} disabled={busy} style={{ opacity: busy ? 0.6 : 1, flex: 1, height: 42, borderRadius: 10, border: `1px solid ${NAVY}`, background: NAVY, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : '✓ Confirm ชุดนี้'}</button>
                           <button type="button" onClick={() => skipOne(i)} style={{ height: 42, borderRadius: 10, border: '1px solid #cfd6e0', background: '#fff', padding: '0 16px', cursor: 'pointer' }}>ข้าม</button>
                         </div>)}
                     </div>
                   );
                 })()}
               </div>
-              <div style={{ padding: '8px 12px', borderTop: '1px solid #e3e8ef', background: '#fafbfc', color: '#6b7280', fontSize: 12 }}>Confirm ชุดนี้ = ใส่แถวเข้าตาราง T36 ทันที แล้วไปชุดถัดไป · การตรวจซ้ำ/ไม่ผ่านใช้กติกา T36 เดิมในตาราง</div>
+              <div style={{ padding: '8px 12px', borderTop: '1px solid #e3e8ef', background: '#fafbfc', color: '#6b7280', fontSize: 12 }}>{saveErr ? <span style={{ color: '#e5484d', fontWeight: 600 }}>{saveErr}</span> : 'Confirm ชุดนี้ = เก็บเป็น Draft ใน DB (ทุกคน/ทุกเครื่องเห็น) + ใส่ตาราง T36 แล้วไปชุดถัดไป · พอ Confirm เข้า Draft จริงค่อยลบ Draft ให้ · การตรวจซ้ำ/ไม่ผ่านใช้กติกา T36 เดิมในตาราง'}</div>
             </div>
           </div>
         )}
         {res && tab === 'list' && (
           <div style={{ flex: 1, overflow: 'auto', padding: 14, scrollbarWidth: 'thin', scrollbarColor: '#b6c0cc transparent' }}>
-            <div style={{ fontWeight: 600, color: NAVY, marginBottom: 8 }}>Confirm List <span style={{ fontWeight: 400, color: '#6b7280', fontSize: 12 }}>ชุดที่ Confirm แล้ว (ใส่ในตาราง T36 แล้ว) · {nDone} ชุด · ข้าม {Object.values(done).filter((v) => v === 'skip').length} ชุด · รอตรวจ {rows.filter((r, i) => r && !done[i]).length} ชุด</span></div>
+            <div style={{ fontWeight: 600, color: NAVY, marginBottom: 8 }}>Confirm List <span style={{ fontWeight: 400, color: '#6b7280', fontSize: 12 }}>ชุดที่ Confirm แล้ว (เก็บเป็น Draft แล้ว) · {nDone} ชุด · ข้าม {Object.values(done).filter((v) => v === 'skip').length} ชุด · รอตรวจ {rows.filter((r, i) => r && !done[i]).length} ชุด</span></div>
             {nDone === 0 ? <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>ยังไม่มีชุดที่ Confirm — ไปที่แท็บ Preview แล้วกด Confirm ทีละชุด</div> : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead><tr>{['ชุดที่', 'ชื่อบริษัทที่โอนต่างประเทศ', 'มูลค่าฐานภาษี', 'ภ.พ.36', 'วัน/เดือน/ปี ใบเสร็จ', 'เลขที่ใบเสร็จรับเงิน', 'สาขา Oracle', 'เทียบใบเสร็จ', ''].map((h, k) => <th key={k} style={{ background: NAVY, color: '#fff', fontWeight: 500, fontSize: 12, padding: '8px 10px', textAlign: k === 2 || k === 3 ? 'right' : 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>{h}</th>)}</tr></thead>
