@@ -589,7 +589,7 @@ function PeriodPanel({ period, bare }) {
     </div>
   );
 }
-function Lobby({ bus, tab, closed, filter, onView, onToggleScope, period, toolbar }) {
+function Lobby({ bus, tab, closed, filter, onView, onToggleScope, period, toolbar, retInfo }) {
   const shown = bus.map((u, i) => ({ u, i })).filter(({ u }) => tab === "all" || u.mine);
   const inScope = shown.filter(({ u }) => u.inScope);
   const prog = bus.map(buProgress);
@@ -634,7 +634,10 @@ function Lobby({ bus, tab, closed, filter, onView, onToggleScope, period, toolba
         </colgroup>
         <thead>
           <tr>
-            <th style={{ ...th, top: TOP, height: GH, boxShadow: "0 -6px 0 #F4F3EF, 0 5px 0 #F4F3EF" }} colSpan={2} />
+            <th style={{ ...th, top: TOP, height: GH, boxShadow: "0 -6px 0 #F4F3EF, 0 5px 0 #F4F3EF", textAlign: "left", padding: "0 6px 0 0" }} colSpan={2}>
+              {/* MARKER_TIMELINE_LOBBY_RETURN_BTN_V1 -- ปุ่มกลับต้นทาง (มาจาก Bucket ของ Upload file) อยู่ในเซลล์ว่างซ้ายบนของหัวตาราง */}
+              {retInfo ? <button type="button" title={"กลับไป " + (retInfo.label || "หน้าเดิม")} onClick={retInfo.go} style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, fontSize: 13, color: C.navy, borderColor: C.navy, background: "#fff", fontWeight: 700, whiteSpace: "nowrap" }}>{"↩ กลับ " + (retInfo.short || retInfo.label || "หน้าเดิม")}</button> : null}
+            </th>
             <th style={gh()} colSpan={LOBBY_S1.length + 1}>Prepare to Transfer</th>
             <th style={gh()} colSpan={LOBBY_TC.length}>Input</th>
             <th style={gh()} colSpan={LOBBY_TC.length}>Incomplete</th>
@@ -747,7 +750,42 @@ function ZoneHeader({ badge, title, state, children }) {
   );
 }
 
-function BuPage({ retBtn, u, closed, onBack, onTick, onTickAll, onStage, onNoData, onStepClear, onMode, onItemEnable, onVatEnable, onVatId, onVatCommit, onVatStatus, onReqId, onReqToggle, onVatPick, onReqCommit, onReqPick, onRptSet, onRptNote, onRptNoteDel, onBuClose, onReset, onDefaultsSet, userName, prepBy, reconPeriod, onGoRecon, onRidDone }) {
+// MARKER_TIMELINE_BACK_SPLIT_V1 -- ปุ่มกลับแบบ Split: ปุ่มหลัก = ต้นทางที่เข้ามา, ▾ = เลือกปลายทางเอง (ถ้ามาจากหน้าอื่น) / มาจาก Lobby = ปุ่มเดียว
+function BackSplit({ onLobby, ret }) {
+  const [open, setOpen] = React.useState(false);
+  const boxRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); setOpen(false); } };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey, true);
+    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey, true); };
+  }, [open]);
+  const base = { ...btn, height: 34, padding: "0 14px", borderRadius: 8, fontSize: 13 };
+  if (!ret) return <button type="button" style={base} onClick={onLobby}>← กลับ Lobby</button>;
+  const lbl = ret.short || ret.label || "หน้าเดิม";
+  const main = { ...base, color: C.navy, borderColor: C.navy, background: "#fff", fontWeight: 700 };
+  const item = (txt, fn, on) => (
+    <button type="button" role="menuitem" onClick={() => { setOpen(false); fn(); }} style={{ ...btn, display: "flex", width: "100%", alignItems: "center", gap: 6, height: 32, padding: "0 10px", border: "none", borderRadius: 6, fontSize: 13, textAlign: "left", background: "transparent", color: "#1F2933", whiteSpace: "nowrap" }}>
+      <span style={{ width: 14, color: C.navy, fontWeight: 700 }}>{on ? "✓" : ""}</span>{txt}
+    </button>
+  );
+  return (
+    <span ref={boxRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button type="button" title={"กลับไป " + (ret.label || lbl)} style={{ ...main, borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" }} onClick={ret.go}>{"↩ กลับ " + lbl}</button>
+      <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label="เลือกปลายทางอื่น" title="เลือกที่จะกลับ" style={{ ...main, borderTopLeftRadius: 0, borderBottomLeftRadius: 0, padding: "0 10px" }} onClick={() => setOpen((v) => !v)}>▾</button>
+      {open && (
+        <div role="menu" style={{ position: "absolute", top: 38, left: 0, zIndex: 50, minWidth: 210, background: "#fff", border: "1px solid #E3E5EA", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,.18)", padding: 4 }}>
+          {item("↩ กลับ " + lbl, ret.go, true)}
+          {item("← กลับ Lobby", onLobby, false)}
+        </div>
+      )}
+    </span>
+  );
+}
+
+function BuPage({ retInfo, u, closed, onBack, onTick, onTickAll, onStage, onNoData, onStepClear, onMode, onItemEnable, onVatEnable, onVatId, onVatCommit, onVatStatus, onReqId, onReqToggle, onVatPick, onReqCommit, onReqPick, onRptSet, onRptNote, onRptNoteDel, onBuClose, onReset, onDefaultsSet, userName, prepBy, reconPeriod, onGoRecon, onRidDone }) {
   // หน้า BU ทำทีละ Zone: ตอนนี้มีเฉพาะ Zone "เตรียมข้อมูล" (ซ้าย PP36/CPN/AP01-5/Pop M/Deposit Clearing, ขวา 46119)
   const LEFT = ["PP36", "CPN", "AP01-5", "Pop M", "Deposit Clearing"];
   const pg = buProgress(u);
@@ -1182,11 +1220,12 @@ function BuPage({ retBtn, u, closed, onBack, onTick, onTickAll, onStage, onNoDat
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 32 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button type="button" style={{ ...btn, height: 34, padding: "0 14px", borderRadius: 8, fontSize: 13 }} onClick={onBack}>← กลับ Lobby</button>
-            {retBtn}
+            <BackSplit onLobby={onBack} ret={retInfo || null} />
           </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontSize: 36, fontWeight: 600, color: C.navy }}>{u.bu}</span>
+            {/* MARKER_TIMELINE_RATE_BADGE_V1 -- Rate ใช้สิทธิ์ เป็น Badge ต่อท้ายชื่อ BU (แทนวงกลม) */}
+            <span title="Rate ใช้สิทธิ์ (VAT %) ของ BU นี้" style={{ display: "inline-flex", alignItems: "center", height: 24, padding: "0 10px", borderRadius: 999, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", background: (typeof u.vatRate === "number") ? "#E8EEF5" : "#EEE", color: (typeof u.vatRate === "number") ? C.navy : "#7b8794", border: "1px solid " + ((typeof u.vatRate === "number") ? "#CBD6E4" : "#DDD") }}>{"สิทธิ์ " + ((typeof u.vatRate === "number") ? u.vatRate + "%" : "-")}</span>
           </div>
           <span style={{ fontSize: 14, color: ink }}>{u.name}</span>
           {u.nameEn ? <span style={{ fontSize: 12, color: "#616e7c", marginTop: -4 }}>{u.nameEn}</span> : null}
@@ -1199,14 +1238,6 @@ function BuPage({ retBtn, u, closed, onBack, onTick, onTickAll, onStage, onNoDat
             </span>
           </div>
         </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }} title="Rate ใช้สิทธิ์ (VAT %) ของ BU นี้">
-            <div style={{ width: 116, height: 116, borderRadius: "50%", background: `conic-gradient(#1F3A5F ${((typeof u.vatRate === "number") ? Math.max(0, Math.min(100, u.vatRate)) : 0) * 3.6}deg, #D9D6CB 0deg)`, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-              <div style={{ width: 92, height: 92, borderRadius: "50%", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <b style={{ fontSize: 24, fontWeight: 700, color: C.navy }}>{(typeof u.vatRate === "number") ? `${u.vatRate}%` : "-"}</b>
-              </div>
-            </div>
-            <span style={{ fontSize: 12, color: "#616e7c" }}>Rate ใช้สิทธิ์</span>
-          </div>
         </div>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 24 }}>
           {/* Reset + Confirm อยู่ด้านซ้ายของวงกลม % — Confirm ใช้เปลี่ยน Status ใน Lobby จาก Pending เป็น Confirm (ไม่เกี่ยวกับ Period) */}
@@ -2304,6 +2335,7 @@ export default function TimelinePage({ onNavigate }) {
     return () => { el.style.overflowY = old; };
   }, [cur]);
   const [hist, setHist] = React.useState([]);
+  const retInfo = retTab ? { label: retTab.label, short: retTab.tab === "vat-upload-file" ? "Upload file" : (retTab.label || "หน้าเดิม"), go: () => { try { sessionStorage.removeItem("timeline_return"); } catch (e) {} const t = retTab.tab; setRetTab(null); if (typeof onNavigate === "function") onNavigate(t); else if (typeof window.__vatGoSubTab === "function") window.__vatGoSubTab(t); } } : null; // MARKER_TIMELINE_RETINFO_V1 -- ต้นทางที่เข้ามา ใช้ร่วมกันระหว่าง Lobby และหน้า BU
   const who = userName || "คุณ";
 
   const mutate = (i, fn) => setBus((prev) => { const next = clone(prev); fn(next[i]); return next; });
@@ -2582,7 +2614,6 @@ export default function TimelinePage({ onNavigate }) {
 
   // MARKER_TIMELINE_HEADER_CLEANUP_V1 (หัวข้อ "Timeline ปิดภาษี" ถูกลบแล้ว)
   // แถบฟิลเตอร์: My Job / All Job ชิดซ้าย · สถานะ + Config ชิดขวา (อยู่ในการ์ดเดียวกับ Timeline)
-  const retBtn = retTab ? (<button type="button" title={"กลับไป " + (retTab.label || "หน้าเดิม")} onClick={() => { try { sessionStorage.removeItem("timeline_return"); } catch (e) {} const t = retTab.tab; setRetTab(null); if (typeof onNavigate === "function") onNavigate(t); else if (typeof window.__vatGoSubTab === "function") window.__vatGoSubTab(t); }} style={{ ...btn, height: 34, padding: "0 14px", borderRadius: 8, fontSize: 13, color: C.navy, borderColor: "#D5DBE3", background: "#fff", fontWeight: 700, cursor: "pointer" }}>{"↩ กลับไป " + (retTab.label || "หน้าเดิม")}</button>) : null; // MARKER_TIMELINE_RETURN_BTN_IN_BUPAGE_V1
   const tlToolbar = (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#999" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2681,11 +2712,7 @@ export default function TimelinePage({ onNavigate }) {
 
   return (
     <div ref={rootRef} className="tl-hide-scroll" style={{ padding: "12px 16px", height: "100vh", display: cur < 0 ? "flex" : "block", flexDirection: "column", overflowY: cur < 0 ? "hidden" : "auto", overscrollBehavior: "contain", boxSizing: "border-box", background: "#F4F3EF" }}>
-      {retTab && cur < 0 && (/* MARKER_TIMELINE_RETURN_TO_ORIGIN_V1 -- มาจาก Icon Timeline ใน Bucket -> กดกลับหน้าเดิมได้ */
-        <div style={{ flex: "none", marginBottom: 8 }}>
-          <button type="button" onClick={() => { try { sessionStorage.removeItem("timeline_return"); } catch (e) {} const t = retTab.tab; setRetTab(null); if (typeof onNavigate === "function") onNavigate(t); else if (typeof window.__vatGoSubTab === "function") window.__vatGoSubTab(t); }} style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: C.navy, borderColor: "#D5DBE3", background: "#fff", fontWeight: 700, cursor: "pointer" }}>{"↩ กลับไป " + (retTab.label || "หน้าเดิม")}</button>
-        </div>
-      )}
+      {/* MARKER_TIMELINE_RETURN_TO_ORIGIN_V1 -- ปุ่มกลับต้นทางอยู่ในเซลล์ว่างหัวตาราง Lobby และใน BackSplit ของหน้า BU */}
       {saveMsg && <div style={{ flex: "none", marginBottom: 8, padding: "6px 12px", borderRadius: 8, background: "#FCEBEB", color: "#791F1F", fontSize: 12 }}>{saveMsg}</div>}
       {showInc && <IncludeModal opts={userOpts} sel={inc || []} onSave={saveInc} onClose={() => setShowInc(false)} />}
       {showBucket && <BucketReportModal tab={tabEff} onClose={() => { setShowBucket(false); loadBucketCount(); }} onLoaded={(r) => setBucketCount(r.filter((f) => !f.sp_sent_at).length)} />}
@@ -2699,11 +2726,11 @@ export default function TimelinePage({ onNavigate }) {
               {src.error ? `ดึงข้อมูล BU ไม่สำเร็จ: ${src.error}` : src.bound ? `ยังไม่มี BU ที่ Prepare By = "${src.bound}" และยังไม่ได้ติ๊กดู Progress BU ใด กด ⚙ Config BU เพื่อเลือก BU` : "ยังไม่ได้ผูกชื่อที่ใช้ตอนทำ VAT กับบัญชีนี้ กด ⚙ Config BU เพื่อผูกชื่อและเลือก BU"}
             </div>
           )}
-          <Lobby bus={bus} tab={tabEff} closed={closed} filter={filter} onView={setCur} onToggleScope={onToggleScope} period={period} toolbar={tlToolbar} />
+          <Lobby bus={bus} tab={tabEff} closed={closed} filter={filter} onView={setCur} onToggleScope={onToggleScope} period={period} toolbar={tlToolbar} retInfo={retInfo} />
         </>
       ) : (
         <BuPage
-          retBtn={retBtn}
+          retInfo={retInfo}
           u={bus[cur]}
           closed={closed || bus[cur].buClosed}
           history={hist.filter((h) => h.i === cur).slice(-5).reverse()}

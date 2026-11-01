@@ -15,11 +15,37 @@
  * ไม่กระทบ vat_backup_tax_invoice ของ source_type อื่น (เช่น amagno)
  *
  * ต้องรัน schema/ar_collection_backup_retention_v1.sql ก่อน (เพิ่ม Column expired_date + system_settings key)
+ *
+ * MARKER_AP0105_BACKUP_RETENTION_V1 -- หน้า VAT Reconcile AP01-AP05 เก็บแถว Amagno ลง vat_backup_tax_invoice ด้วย source_type='ap01_05'
+ *   (Column period 'YYYY-MM' = งวดของไฟล์, ap_set = AP01..AP05, tax_type = N/M/A/T/F)
+ *   ปิด Period -> Stamp expired_date ให้ทุกแถว ap01_05 ที่ period <= vat_period_month (เดือนที่เพิ่งปิด) -> ครบ 45 วัน (ปรับได้ที่
+ *   system_settings 'ap01_05_backup_retention_days') Cron ลบถาวร งวดที่ยังเปิดอยู่ไม่ถูก Stamp จึงไม่ถูกลบ
  */
 
 import { pool } from "../db.js";
 
 const DEFAULT_RETENTION_DAYS = 30;
+const DEFAULT_AP0105_RETENTION_DAYS = 45; // MARKER_AP0105_BACKUP_RETENTION_V1
+
+// MARKER_AP0105_BACKUP_RETENTION_V1 -- Column ที่หน้า VAT Reconcile AP01-AP05 ใช้ (สร้างอัตโนมัติตอน Start Backend)
+pool.query(`ALTER TABLE vat_backup_tax_invoice
+  ADD COLUMN IF NOT EXISTS period text,
+  ADD COLUMN IF NOT EXISTS ap_set text,
+  ADD COLUMN IF NOT EXISTS tax_type text,
+  ADD COLUMN IF NOT EXISTS expired_date timestamptz`).catch((e) => console.error("[migrate vat_backup_tax_invoice ap01_05 columns]", e.message));
+pool.query(`CREATE INDEX IF NOT EXISTS idx_vbti_ap0105_period ON vat_backup_tax_invoice (source_type, period, bu)`).catch(() => {});
+
+export async function getAp0105BackupRetentionDays(db) {
+  try {
+    const { rows } = await (db || pool).query(
+      `SELECT value FROM system_settings WHERE key = 'ap01_05_backup_retention_days'`
+    );
+    const n = parseInt(rows[0]?.value, 10);
+    return Number.isInteger(n) && n >= 1 && n <= 365 ? n : DEFAULT_AP0105_RETENTION_DAYS;
+  } catch (err) {
+    return DEFAULT_AP0105_RETENTION_DAYS;
+  }
+}
 
 // ── อ่านจำนวนวันเก็บจาก system_settings (fallback 30 ถ้าไม่มี/ค่าผิด) ──
 export async function getArCollectionBackupRetentionDays(db) {

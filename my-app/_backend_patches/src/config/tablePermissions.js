@@ -266,6 +266,16 @@ export const tablePermissions = {
     read: { publicRead: true },
     write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
   },
+  // MARKER_TABLEPERMISSIONS_VAT_AMAGNO_AP0105_V1 -- ข้อมูล AP01-AP05 (Amagno) แยกจาก Tax Invoice
+  vat_amagno_ap0105: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
+  // MARKER_TABLEPERMISSIONS_VAT_INPUT_VAT_RECON_V1 -- รายงาน Input VAT Reconciliation (ชั่วคราว) แยกจาก vat_reconcile_input_summary
+  vat_input_vat_recon: {
+    read: { publicRead: true },
+    write: { roles: ["Owner", "Admin", "Editor", "owner", "admin", "editor"] },
+  },
   // MARKER_TABLEPERMISSIONS_VAT_BACKUP_TAX_INVOICE_V1
   vat_backup_tax_invoice: {
     read: { publicRead: true },

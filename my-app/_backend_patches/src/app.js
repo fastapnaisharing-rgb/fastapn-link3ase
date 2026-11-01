@@ -14,6 +14,9 @@ import { pool, getUsernameByEmail } from "./db.js";
 import apPeriodRouter, { checkAutoCloseRequest, checkAndSyncPeriodStatus } from "./routes/apPeriod.js";
 import vatPeriodRouter from "./routes/vatPeriodRoute.js";
 import { purgeExpiredTaxClosePeriods } from "./routes/taxClosePeriod.js"; // MARKER_TAXCLOSE_LIFECYCLE_V1
+import { autoFinishDownloadedBatches } from "./routes/vatExport.js"; // MARKER_VATEXPORT_AUTO_FINISH_MIDNIGHT_V1
+import amagnoAp0105Router, { purgeAp0105Retention } from "./routes/amagnoAp0105.js"; // MARKER_AMAGNO_AP0105_ROUTE_V1
+import vatInputVatReconRouter, { purgeInputVatReconRetention } from "./routes/vatInputVatRecon.js"; // MARKER_VAT_INPUT_VAT_RECON_ROUTE_V1
 import { purgeExpiredArCollectionBackup } from "./routes/arCollectionBackupRetention.js"; // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1
 import { purgeExpiredApReconcileLines } from "./routes/apReconcileExpire.js"; // MARKER_APRECONCILE_EXPIRE_V1
 import iePeriodRouter, { checkAutoCloseIERequest, checkAndSyncIEPeriodStatus } from "./routes/iePeriod.js";
@@ -1442,6 +1445,10 @@ app.use("/api/vat-mail-export", vatMailExportRouter); // MARKER_APP_MOUNT_VAT_MA
 app.use("/api/vat_watchlist_notes", createTableRouter("vat_watchlist_notes")); // MARKER_APP_MOUNT_VAT_WATCHLIST_NOTES_V1
 app.use("/api/vat_incomplete_export_templates", createTableRouter("vat_incomplete_export_templates")); // MARKER_APP_MOUNT_VAT_INCOMPLETE_EXPORT_TEMPLATES_V1
 app.use("/api/vat_upload_popvatdraft", createTableRouter("vat_upload_popvatdraft")); // MARKER_APP_MOUNT_VAT_UPLOAD_POPVATDRAFT_V1
+app.use("/api/vat_amagno_ap0105", amagnoAp0105Router); // MARKER_AMAGNO_AP0105_ROUTE_V1 -- summary/periods/purge ต้องอยู่ก่อน Generic Mount
+app.use("/api/vat_amagno_ap0105", createTableRouter("vat_amagno_ap0105")); // MARKER_AMAGNO_AP0105_ROUTE_V1
+app.use("/api/vat_input_vat_recon", vatInputVatReconRouter); // MARKER_VAT_INPUT_VAT_RECON_ROUTE_V1 -- summary/periods/retention ต้องอยู่ก่อน Generic Mount
+app.use("/api/vat_input_vat_recon", createTableRouter("vat_input_vat_recon")); // MARKER_VAT_INPUT_VAT_RECON_ROUTE_V1
 app.use("/api/vat_backup_tax_invoice", createTableRouter("vat_backup_tax_invoice")); // MARKER_APP_MOUNT_VAT_BACKUP_TAX_INVOICE_V1
 app.use("/api/vat_simpleinputdraft", createTableRouter("vat_simpleinputdraft")); // MARKER_APP_MOUNT_VAT_SIMPLEINPUT_ADI_DRAFT_V1
 app.use("/api/ie_simplevatdraft", createTableRouter("ie_simplevatdraft")); // MARKER_APP_MOUNT_IE_SIMPLEVATDRAFT_V1 -- IE Invoice Detail > Tab "Simple" (Sub-row Real Vendor Add -> Simple)
@@ -2012,6 +2019,112 @@ app.use("/api/account_cpc_rules",   createTableRouter("account_cpc_rules")); // 
 app.use("/api/notice_list",         createTableRouter("notice_list"));
 app.use("/api/sub_acc_list",        createTableRouter("sub_acc_list"));
 app.use("/api/contract_list",       createTableRouter("contract_list"));
+// MARKER_APP_VENDOR_CATEGORY_SYNC_V1
+// -- แก้ Vendor Category (Tax ID / Supplier Name) แล้ว Sync ตามไปที่ข้อมูลที่เอาค่าไปใช้ --
+// --   (1) sm_code_list: "Supplier Code" = Category."Code" -> "Tax ID", "Company Name"
+// --   (2) vat_simpleinputdraft: category_code = Category."Code" และยังไม่ Export (batch_id IS NULL + status pre-draft/draft/ovp-draft/fu-draft) -> supplier_name, tax_id (และแทนชื่อเดิมในช่อง description ที่ฝังชื่อ Supplier ไว้)
+// -- แถวที่ Export แล้วไม่แก้ (ไฟล์ออกไปแล้ว) -- ดู GET /api/vendor_category/:id/exported-impact เพื่อแจ้งเตือน Batch ที่ใช้ค่าเก่า --
+// -- ค่าว่างใน Category ไม่เขียนทับค่าเดิมของปลายทาง | ทำหลังตอบ Response แล้ว (res finish) พังก็ไม่กระทบการบันทึก Category --
+const VCAT_SYNC_STATUSES = ["pre-draft", "draft", "ovp-draft", "fu-draft"];
+// -- กันจับมั่ว: Code ที่เป็นขีด/ตัวแทน (เช่น "-") หรือซ้ำกันหลายแถวใน Category ไม่ใช่รหัส Supplier จริง -> ไม่ Sync เลย --
+const VCAT_PLACEHOLDER_RE = /^[\s\-_.\/\\]*$/;
+async function vcatCodeIsUnique(code) {
+  if (!code || VCAT_PLACEHOLDER_RE.test(code)) return false;
+  const q = await pool.query(`SELECT COUNT(*)::int AS n FROM vendor_category WHERE TRIM("Code") = $1 AND deleted IS NOT TRUE`, [code]);
+  return !!q.rows[0] && q.rows[0].n === 1;
+}
+async function syncVendorCategoryDependents(id, oldCode) {
+  const r = await pool.query(`SELECT "Code", "Supplier Name", "TAX ID", deleted FROM vendor_category WHERE id = $1`, [id]);
+  const v = r.rows[0];
+  if (!v || v.deleted) return;
+  const code = String(v["Code"] || "").trim();
+  if (!code) return;
+  if (!(await vcatCodeIsUnique(code))) { console.log(`vendor_category sync [${code}]: ข้าม (Code เป็นขีด/ตัวแทน หรือซ้ำหลายแถว ไม่ใช่รหัสจริงที่จับได้ชัด)`); return; }
+  const tax = String(v["TAX ID"] == null ? "" : v["TAX ID"]).trim();
+  const name = String(v["Supplier Name"] == null ? "" : v["Supplier Name"]).trim();
+  const client = await pool.connect();
+  let smCount = 0;
+  let simpleBus = [];
+  try {
+    await client.query("BEGIN");
+    if (oldCode && oldCode !== code && !VCAT_PLACEHOLDER_RE.test(oldCode)) {
+      await client.query(`UPDATE vat_simpleinputdraft SET category_code = $1 WHERE category_code = $2`, [code, oldCode]);
+    }
+    const sm = await client.query(
+      `UPDATE sm_code_list
+          SET "Tax ID" = COALESCE(NULLIF($2, ''), "Tax ID"),
+              "Company Name" = COALESCE(NULLIF($3, ''), "Company Name")
+        WHERE TRIM("Supplier Code") = $1
+          AND ("Tax ID" IS DISTINCT FROM COALESCE(NULLIF($2, ''), "Tax ID")
+               OR "Company Name" IS DISTINCT FROM COALESCE(NULLIF($3, ''), "Company Name"))`,
+      [code, tax, name]
+    );
+    smCount = sm.rowCount || 0;
+    const sp = await client.query(
+      `UPDATE vat_simpleinputdraft
+          SET supplier_name = COALESCE(NULLIF($3::text, ''), supplier_name),
+              tax_id = COALESCE(NULLIF($2::text, ''), tax_id),
+              description = CASE WHEN description IS NOT NULL AND COALESCE(supplier_name, '') <> '' AND NULLIF($3::text, '') IS NOT NULL
+                                 THEN REPLACE(description, supplier_name, $3::text) ELSE description END
+        WHERE category_code = $1
+          AND batch_id IS NULL
+          AND status = ANY($4::text[])
+          AND (supplier_name IS DISTINCT FROM COALESCE(NULLIF($3, ''), supplier_name)
+               OR tax_id IS DISTINCT FROM COALESCE(NULLIF($2, ''), tax_id))
+        RETURNING bu`,
+      [code, tax, name, VCAT_SYNC_STATUSES]
+    );
+    simpleBus = [...new Set(sp.rows.map((x) => x.bu).filter(Boolean))];
+    await client.query("COMMIT");
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+  try {
+    if (smCount > 0) wsBroadcast("sm_code_list_updated", { vendorCategory: code });
+    simpleBus.forEach((b) => wsBroadcast("vat_simpleinputdraft_updated", { bu: b }));
+  } catch (_) { /* Broadcast พังไม่กระทบผล */ }
+  if (smCount > 0 || simpleBus.length > 0) console.log(`vendor_category sync [${code}]: sm_code_list=${smCount} simple_bu=${simpleBus.join(",")}`);
+}
+app.put("/api/vendor_category/:id", async (req, res, next) => {
+  let oldCode = null;
+  try {
+    const o = await pool.query(`SELECT "Code" FROM vendor_category WHERE id = $1`, [req.params.id]);
+    oldCode = o.rows[0] ? String(o.rows[0]["Code"] || "").trim() : null;
+  } catch (_) { /* ข้าม */ }
+  res.on("finish", () => {
+    if (res.statusCode >= 400) return;
+    syncVendorCategoryDependents(req.params.id, oldCode).catch((e) => console.error("vendor_category sync error:", e.message));
+  });
+  next();
+});
+// Batch ที่ Export/Backup ไปแล้ว ซึ่งยังใช้ชื่อ/Tax ID ต่างจาก Category ตอนนี้ (ใช้แจ้งเตือนหลัง Save)
+app.get("/api/vendor_category/:id/exported-impact", async (req, res) => {
+  try {
+    const c = await pool.query(`SELECT "Code", "Supplier Name", "TAX ID" FROM vendor_category WHERE id = $1`, [req.params.id]);
+    const v = c.rows[0];
+    if (!v) return res.json({ batches: [] });
+    const code = String(v["Code"] || "").trim();
+    const tax = String(v["TAX ID"] == null ? "" : v["TAX ID"]).trim();
+    const name = String(v["Supplier Name"] == null ? "" : v["Supplier Name"]).trim();
+    if (!code || !(await vcatCodeIsUnique(code))) return res.json({ batches: [] });
+    const q = await pool.query(
+      `SELECT batch_id, status, COUNT(*)::int AS rows
+         FROM vat_simpleinputdraft
+        WHERE category_code = $1 AND batch_id IS NOT NULL
+          AND (supplier_name IS DISTINCT FROM COALESCE(NULLIF($3, ''), supplier_name)
+               OR tax_id IS DISTINCT FROM COALESCE(NULLIF($2, ''), tax_id))
+        GROUP BY batch_id, status ORDER BY batch_id`,
+      [code, tax, name]
+    );
+    res.json({ batches: q.rows });
+  } catch (err) {
+    console.error("vendor_category exported-impact error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 app.use("/api/vendor_category",     createTableRouter("vendor_category"));
 app.use("/api/sm_code_list",        createTableRouter("sm_code_list"));
 app.use("/api", itemMasterSearchRouter); // MARKER_APP_MOUNT_ITEM_MASTER_SEARCH_V1
@@ -2708,6 +2821,21 @@ const server = app.listen(port, "0.0.0.0", () => {
       await purgeExpiredApReconcileLines(); // MARKER_APRECONCILE_EXPIRE_V1 -- ลบแถวข้อมูล AP (ap_cutting_staging) ของงาน Reconcile ที่ Confirm ราย Account แล้วและครบ 30 วัน (Account ที่ไม่ Confirm ไม่ถูกลบ -- Owner ล้างเอง)
     } catch (err) {
       console.error("ap reconcile expire purge cron error:", err.message);
+    }
+    try {
+      await autoFinishDownloadedBatches(); // MARKER_VATEXPORT_AUTO_FINISH_MIDNIGHT_V1 -- Finish Batch ที่โหลดไฟล์ครบ ทุกเที่ยงคืน (เวลาไทย)
+    } catch (err) {
+      console.error("vat-export auto finish midnight cron error:", err.message);
+    }
+    try {
+      await purgeAp0105Retention(); // MARKER_AMAGNO_AP0105_ROUTE_V1 -- เก็บ vat_amagno_ap0105 เฉพาะ Period ปัจจุบัน + ย้อนหลัง 1 งวด
+    } catch (err) {
+      console.error("vat_amagno_ap0105 retention cron error:", err.message);
+    }
+    try {
+      await purgeInputVatReconRetention(); // MARKER_VAT_INPUT_VAT_RECON_ROUTE_V1 -- ลบ vat_input_vat_recon (Input VAT Reconciliation ชั่วคราว) ที่โยนไฟล์มาเกิน N วัน
+    } catch (err) {
+      console.error("vat_input_vat_recon retention cron error:", err.message);
     }
     try {
       await purgeExpiredArCollectionBackup(); // MARKER_ARCOLLECTION_BACKUP_RETENTION_V1 -- ลบ vat_backup_tax_invoice (AR_Collection) ที่ Match ไม่ได้ครบกำหนดหลังปิด Period

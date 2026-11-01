@@ -52,14 +52,15 @@ pool.query(`
     draft_id TEXT NOT NULL,
     username TEXT,
     bu TEXT,
-    fill_started_at TIMESTAMP,
-    created_at TIMESTAMP,
+    fill_started_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,
     batch_id TEXT,
     line_count INTEGER NOT NULL DEFAULT 1,
     module_type TEXT,
     archived_at TIMESTAMPTZ DEFAULT NOW()
   )
-`).catch((e) => console.error("[vat_transaction_archive] create:", e.message));
+`).then(() => pool.query(`ALTER TABLE vat_transaction_archive ALTER COLUMN fill_started_at TYPE TIMESTAMPTZ, ALTER COLUMN created_at TYPE TIMESTAMPTZ`)) // MARKER_VATEXPORT_ARCHIVE_TZ_V1 -- ชนิดเวลาต้องตรงกับตาราง Draft (timestamptz) ไม่งั้นวันที่ของ Transaction ที่เก็บไว้เลื่อนได้
+  .catch((e) => console.error("[vat_transaction_archive] create:", e.message));
 
 // MARKER_VATEXPORT_RETENTION_V1 -- อายุเก็บหลัง Finish/ปิด Period: ADI 1 เดือน, Simple 6 เดือน, Popvat 6 เดือน
 const PV_RETENTION = { popvat: "6 months", simple: "6 months", adi: "1 month" };
@@ -130,6 +131,13 @@ async function purgeExpiredPvBackup() {
       }
       console.log(`[purgeExpiredPvBackup] archived+deleted batch ${batchId} (${filesToDelete.length} files)`);
       broadcastVatExportUpdate("vat_export_updated", { batchId });
+    }
+    // MARKER_VATEXPORT_ARCHIVE_EXPIRE_V1 -- จำนวน Transaction ที่เก็บไว้หลังลบ Backup ไม่เก็บถาวร: นับต่อจนครบ 12 เดือนนับจากวันที่สร้าง Draft (ทุกประเภทรวม ADI) แล้วลบเอง
+    try {
+      const r = await pool.query(`DELETE FROM vat_transaction_archive WHERE created_at < NOW() - INTERVAL '12 months'`);
+      if (r.rowCount) console.log(`[purgeExpiredPvBackup] archive expired: removed ${r.rowCount} rows (> 12 months)`);
+    } catch (err) {
+      console.error("[purgeExpiredPvBackup] archive expire error:", err.message);
     }
   } catch (err) {
     console.error("[purgeExpiredPvBackup] error:", err.message);
@@ -209,7 +217,7 @@ router.post("/generate", async (req, res) => {
     // -- BU List สำหรับ Popvat/ADI (Book Mode กวาดหลาย BU / BU Mode แค่ BU เดียว) -- Simple ใช้แค่ [bu] เสมอ (ทำ Book ไม่ได้) --
     let popvatAdiBuList = [bu];
     if (scope === "book") {
-      const buListRes = await client.query(`SELECT DISTINCT bu FROM company_list WHERE book = $1`, [book]);
+      const buListRes = await client.query(`SELECT DISTINCT bu FROM company_list WHERE "BOOK" = $1`, [book]); // MARKER_VATEXPORT_BOOK_QUOTED_COLUMN_V1 -- column ใน company_list ชื่อ "BOOK" (ตัวพิมพ์ใหญ่ ต้องใส่ Quote) เดิมใช้ book (ตัวเล็ก) ทำให้ Error: column "book" does not exist
       popvatAdiBuList = buListRes.rows.map((r) => r.bu);
       if (popvatAdiBuList.length === 0) popvatAdiBuList = [bu];
     }
@@ -751,5 +759,50 @@ router.delete("/batch/:batchId", async (req, res) => {
     client.release();
   }
 });
+
+// MARKER_VATEXPORT_AUTO_FINISH_MIDNIGHT_V1 -- Auto Finish ทุกเที่ยงคืน (เวลาไทย): Batch ที่ "โหลดไฟล์ครบทุกไฟล์แล้ว" และยังเป็น 'exported' -> Finish (-> pv-backup/sm-backup/adi-backup) เหมือนกดปุ่ม Finish
+// เรียกจาก Cron ใน app.js (รันทุก 5 นาที) -- ฟังก์ชันนี้เช็คเองว่าเป็นช่วง 00:00-00:59 (Asia/Bangkok) และวันนี้ยังไม่เคยรัน (เก็บวันที่ล่าสุดใน system_settings 'vat_auto_finish_last_date')
+export async function autoFinishDownloadedBatches() {
+  const th = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok" }));
+  if (th.getHours() !== 0) return 0;
+  const today = `${th.getFullYear()}-${String(th.getMonth() + 1).padStart(2, "0")}-${String(th.getDate()).padStart(2, "0")}`;
+  const last = await pool.query(`SELECT value FROM system_settings WHERE key = 'vat_auto_finish_last_date'`);
+  if (last.rows[0] && last.rows[0].value === today) return 0;
+  await pool.query(
+    `INSERT INTO system_settings (key, value, updated_by, updated_at) VALUES ('vat_auto_finish_last_date', $1, 'system-cron', NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $1, updated_by = 'system-cron', updated_at = NOW()`,
+    [today]
+  );
+  const { rows } = await pool.query(
+    `SELECT ref_id FROM file_storage
+      WHERE module IN ('${MODULE_POPVAT}', '${MODULE_SIMPLE}', '${MODULE_ADI}', '${MODULE_SIMPLE_ADI}') AND ref_id IS NOT NULL
+      GROUP BY ref_id HAVING COUNT(*) > 0 AND COUNT(*) = COUNT(downloaded_at)`
+  );
+  let finished = 0;
+  for (const { ref_id: batchId } of rows) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const setsFor = (interval, st) => `status = '${st}', finished_at = NOW(), expire_at = NOW() + INTERVAL '${interval}'`;
+      const results = await Promise.all([
+        client.query(`UPDATE vat_upload_popvatdraft SET ${setsFor(PV_RETENTION.popvat, BACKUP_STATUS.popvat)} WHERE batch_id = $1 AND status = 'exported'`, [batchId]),
+        client.query(`UPDATE vat_simpleinputdraft SET ${setsFor(PV_RETENTION.simple, BACKUP_STATUS.simple)} WHERE batch_id = $1 AND status = 'exported'`, [batchId]),
+        client.query(`UPDATE vat_adi_transferdraft SET ${setsFor(PV_RETENTION.adi, BACKUP_STATUS.adi)} WHERE batch_id = $1 AND status = 'exported'`, [batchId]),
+      ]);
+      const updated = results.reduce((n, r) => n + r.rowCount, 0);
+      if (updated === 0) { await client.query("ROLLBACK"); continue; }
+      await client.query("COMMIT");
+      finished += 1;
+      broadcastVatExportUpdate("vat_export_updated", { batchId });
+    } catch (err) {
+      try { await client.query("ROLLBACK"); } catch (e) { /* ignore */ }
+      console.error("[auto-finish midnight] batch", batchId, "error:", err.message);
+    } finally {
+      client.release();
+    }
+  }
+  if (finished > 0) console.log(`[MARKER_VATEXPORT_AUTO_FINISH_MIDNIGHT_V1] auto finished ${finished} batch(es)`);
+  return finished;
+}
 
 export default router;

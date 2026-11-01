@@ -674,11 +674,13 @@ function Lobby({ bus, tab, closed, filter, onView, onToggleScope, period, toolba
                   <>
                     <td style={td}>
                       {p === null ? <b style={{ fontWeight: 500, color: C.navy }}>—</b> : (
-                        <div title={`ความคืบหน้า ${p}%`} style={{ display: "inline-flex", alignItems: "center", gap: 8, width: 150, justifyContent: "center" }}> {/* MARKER_TIMELINE_PROCESS_BAR_V1 -- หลอด Progress ในคอลัมน์ Process */}
-                          <div style={{ flex: 1, height: 8, borderRadius: 99, background: "#E6E8EC", overflow: "hidden" }}>
-                            <div style={{ width: `${Math.max(0, Math.min(100, p))}%`, height: "100%", borderRadius: 99, background: p >= 100 ? "#3B6D11" : "#F0B04A", transition: "width .3s" }} />
-                          </div>
-                          <b style={{ fontWeight: 500, color: C.navy, minWidth: 34, textAlign: "right", fontSize: 12 }}>{p}%</b>
+                        <div title={`ความคืบหน้า ${p}%`} style={{ display: "block", width: "100%", maxWidth: 300, margin: "0 auto" }}> {/* MARKER_TIMELINE_PROCESS_BAR_V2 -- หลอดแบบ B: ยืดเต็มคอลัมน์ + สูง 24px + % อยู่ในหลอด | สีเปลี่ยนที่ 50% (น้ำเงิน) และ 100% (เขียว) */}
+                          {(() => { const pv = Math.max(0, Math.min(100, Number(p) || 0)); const col = pv >= 100 ? "#2F9E44" : pv >= 50 ? "#3B82F6" : "#F0B04A"; return (
+                            <div style={{ position: "relative", height: 24, borderRadius: 8, background: "#E6E8EC", overflow: "hidden" }}>
+                              <div style={{ width: `${pv}%`, height: "100%", background: col, transition: "width .3s, background .3s" }} />
+                              <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: pv >= 55 || pv >= 100 ? "#fff" : C.navy }}>{p}%</span>
+                            </div>
+                          ); })()}
                         </div>
                       )}
                     </td>
@@ -745,7 +747,7 @@ function ZoneHeader({ badge, title, state, children }) {
   );
 }
 
-function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onStepClear, onMode, onItemEnable, onVatEnable, onVatId, onVatCommit, onVatStatus, onReqId, onReqToggle, onVatPick, onReqCommit, onReqPick, onRptSet, onRptNote, onRptNoteDel, onBuClose, onReset, onDefaultsSet, userName, prepBy, reconPeriod, onGoRecon, onRidDone }) {
+function BuPage({ retBtn, u, closed, onBack, onTick, onTickAll, onStage, onNoData, onStepClear, onMode, onItemEnable, onVatEnable, onVatId, onVatCommit, onVatStatus, onReqId, onReqToggle, onVatPick, onReqCommit, onReqPick, onRptSet, onRptNote, onRptNoteDel, onBuClose, onReset, onDefaultsSet, userName, prepBy, reconPeriod, onGoRecon, onRidDone }) {
   // หน้า BU ทำทีละ Zone: ตอนนี้มีเฉพาะ Zone "เตรียมข้อมูล" (ซ้าย PP36/CPN/AP01-5/Pop M/Deposit Clearing, ขวา 46119)
   const LEFT = ["PP36", "CPN", "AP01-5", "Pop M", "Deposit Clearing"];
   const pg = buProgress(u);
@@ -1179,7 +1181,10 @@ function BuPage({ u, closed, onBack, onTick, onTickAll, onStage, onNoData, onSte
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 20, flexWrap: "wrap", padding: `${16 - stickyTop}px 20px 16px`, borderRadius: 0, background: "#F4F3EF", border: "none", marginTop: stickyTop, marginBottom: 14, position: "sticky", top: stickyTop, zIndex: 20 }} ref={hdrRef}>
         <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 32 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
-          <button type="button" style={{ ...btn, height: 34, padding: "0 14px", borderRadius: 8, fontSize: 13 }} onClick={onBack}>← กลับ Lobby</button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button type="button" style={{ ...btn, height: 34, padding: "0 14px", borderRadius: 8, fontSize: 13 }} onClick={onBack}>← กลับ Lobby</button>
+            {retBtn}
+          </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
             <span style={{ fontSize: 36, fontWeight: 600, color: C.navy }}>{u.bu}</span>
           </div>
@@ -2273,6 +2278,7 @@ export default function TimelinePage({ onNavigate }) {
   React.useEffect(() => { loadBucketCount(); }, [loadBucketCount]);
   const tabEff = isAdmin ? tab : "mine";
   const [cur, setCur] = React.useState(-1);
+  const [retTab, setRetTab] = React.useState(() => { try { const x = JSON.parse(sessionStorage.getItem("timeline_return") || "null"); return x && x.tab && Date.now() - (x.t || 0) < 6 * 3600 * 1000 ? x : null; } catch (e) { return null; } }); // MARKER_TIMELINE_RETURN_TO_ORIGIN_V1
   React.useEffect(() => { // MARKER_RECON_GO_TIMELINE_V1 -- มาจากปุ่ม Timeline ในหน้า Reconcile -> เปิดหน้า BU นั้นให้เลย
     if (!bus.length) return;
     let j = null;
@@ -2315,14 +2321,62 @@ export default function TimelinePage({ onNavigate }) {
     const vatSet = ((b.vat && b.vat.cards) || []).filter((c) => c.v).length + (b.vat && b.vat.status && (b.vat.status.s || b.vat.status.claimed) ? 1 : 0);
     return { pct: typeof pg.all === "number" ? pg.all : 0, ticks, rids, vatSet, closed: !!b.buClosed };
   };
-  const askResetAll = () => { setRaInput(""); setRaErr(false); setRaCode(String(Math.floor(100000 + Math.random() * 900000))); };
+  const [raDoneFor, setRaDoneFor] = React.useState(""); // MARKER_RESET_ALL_ONCE_PER_CLOSE_V1 -- closed_at ของรอบที่ Reset All ไปแล้ว (Reset ได้ครั้งเดียวต่อการปิด Period 1 รอบ)
+  React.useEffect(() => {
+    let off = false;
+    (async () => {
+      try {
+        const q = await db.from("timeline_progress").select("*").eq("period_ym", "__resetall__").eq("bu", "vat");
+        const row = Array.isArray(q.data) ? q.data[0] : null;
+        if (!off) setRaDoneFor(row && row.state && row.state.closed_at ? String(row.state.closed_at) : "");
+      } catch (e) { /* no-op */ }
+    })();
+    return () => { off = true; };
+  }, [period.closedAt, reload]);
+  const raAlready = !!period.closedAt && raDoneFor === String(period.closedAt);
+  const raClosedOk = !!isOwner || (period.status === "closed" && !raAlready); // MARKER_RESET_ALL_OWNER_OVERRIDE_V1 -- Owner กด Reset ได้เสมอ ; Admin ต้องหลังปิด Period + ครั้งเดียวต่อการปิด 1 รอบ
+  // MARKER_RESET_ALL_VIEW_ALL_V1 -- BU ที่มี % ทั้งระบบ (รวม BU ที่ไม่ได้โหลดอยู่ใน My Job / User ที่เลือก) : ดึงจาก timeline_progress ของ Period นี้ + company_list
+  const [raExtra, setRaExtra] = React.useState([]); // [{ b, row }]
+  const [raView, setRaView] = React.useState(false);
+  React.useEffect(() => {
+    if (!loadedProg || !isAdmin) { setRaExtra([]); return undefined; }
+    let off = false;
+    (async () => {
+      try {
+        const [pr, co] = await Promise.all([db.from("timeline_progress").select("*").eq("period_ym", curYm), db.from("company_list").select("*")]);
+        if (off || !pr || pr.error || !co || co.error) return;
+        const have = new Set(bus.map((b) => b.bu));
+        const rows = Array.isArray(pr.data) ? pr.data : [];
+        const comps = Array.isArray(co.data) ? co.data : [];
+        const out = [];
+        rows.forEach((row) => {
+          if (!row.bu || have.has(row.bu) || !row.state || typeof row.state !== "object") return;
+          const c = comps.find((x) => String(x.bu) === String(row.bu));
+          if (!c) return;
+          const b = mergeProg(mkRealBu(c), row.state);
+          const pg = buProgress(b);
+          if (b.buClosed || (typeof pg.all === "number" && pg.all > 0)) out.push({ b, row });
+        });
+        out.sort((x, y) => String(x.b.bu).localeCompare(String(y.b.bu)));
+        if (!off) setRaExtra(out);
+      } catch (e) { /* no-op */ }
+    })();
+    return () => { off = true; };
+  }, [loadedProg, isAdmin, curYm, busKeys, raDoneFor, reload]); // eslint-disable-line react-hooks/exhaustive-deps
+  const raAllList = [...raTargets.map(({ b }) => b), ...raExtra.map((e) => e.b)];
+  const askResetAll = () => { if (!raClosedOk) return; setRaInput(""); setRaErr(false); setRaCode(String(Math.floor(100000 + Math.random() * 900000))); };
   const closeResetAll = () => { setRaCode(""); setRaInput(""); setRaErr(false); };
   const confirmResetAll = () => {
     if (raInput.trim() !== raCode) { setRaErr(true); return; }
     const idx = raTargets.map((t) => t.i);
     setBus((prev) => { const next = clone(prev); idx.forEach((i) => { resetValues(next[i]); }); return next; });
     idx.forEach((i) => log(i, "Reset All (คง Enable/Disable)"));
+    raExtra.forEach((e) => { // MARKER_RESET_ALL_VIEW_ALL_V1 -- ล้าง BU ที่มี % นอก My Job ด้วย (เขียนกลับ timeline_progress ตรงๆ)
+      (async () => { try { const o = clone(e.b); resetValues(o); await db.from("timeline_progress").update({ state: pickProg(o), updated_by: userName || "", updated_at: new Date().toISOString() }).eq("id", e.row.id); } catch (err) { /* no-op */ } })();
+    });
+    setRaExtra([]);
     closeResetAll();
+    setRaDoneFor(String(period.closedAt || "")); // MARKER_RESET_ALL_ONCE_PER_CLOSE_V1
     // MARKER_TIMELINE_RESET_ALL_HOME_REMINDER_V1 -- จดว่า Reset All แล้วสำหรับรอบปิด Period นี้ (Home จะเลิกเตือน)
     (async () => {
       try {
@@ -2487,6 +2541,7 @@ export default function TimelinePage({ onNavigate }) {
     const msg = [
       `Tax Type : ${typeTxt}     Rate : ${rateTxt}`,
       "",
+      "Step 1  →  Disable ทั้งหมด (PP36 · CPN · AP01-5 · Pop M · Deposit Clearing · 46119) · ไม่เลือกแพลตฟอร์ม 46119", // MARKER_TIMELINE_DEFAULTS_STEP1_DISABLED_V1
       rule ? (en.length ? `Enable   →  ${en.join(" · ")}` : "") : "",
       rule ? (dis.length ? `Disable  →  ${dis.join(" · ")}` : "") : "",
       rule && rule.codes ? "Tax Code / Input Summary / Final Step  →  ตั้งตาม Tax Type" : "",
@@ -2497,7 +2552,8 @@ export default function TimelinePage({ onNavigate }) {
     ].filter((l, n, a) => l !== "" || (n > 0 && a[n - 1] !== "")).join("\n");
     const ok = await confirmDialog.confirm(msg, { title: `Defaults Set · BU ${b.bu}`, confirmText: "ตั้งค่า", cancelText: "ยกเลิก" });
     if (!ok) return false;
-    mutate(cur, (x) => { if (rule) applyDefaultsRule(x, rule); const snap = clone(pickProg(x)); delete snap.defaults; delete snap.rhist; delete snap.rnotes; resetValues(snap); x.defaults = snap; });
+    // MARKER_TIMELINE_DEFAULTS_STEP1_DISABLED_V1 -- Defaults Set (ทีละ BU ที่กด): Step 1 ทุกการ์ดเป็น Disable + 46119 ไม่มีแพลตฟอร์มไหนอยู่กลุ่ม Enable · ไม่แตะ Step อื่น
+    mutate(cur, (x) => { if (rule) applyDefaultsRule(x, rule); COUNT_RULES.step1.forEach((k) => { const t = x.tasks[k]; if (!t) return; t.mode = "X"; t.nodata = false; t.items.forEach((it) => { it.done = false; it.by = ""; if (k === "46119") it.off = true; }); }); const snap = clone(pickProg(x)); delete snap.defaults; delete snap.rhist; delete snap.rnotes; resetValues(snap); x.defaults = snap; });
     log(cur, rule ? `Defaults Set (Tax Type ${typeTxt} · Rate ${rateTxt})` : "Defaults Set (บันทึก Enable/Disable เป็นค่าเริ่มต้นของ BU)");
     return true;
   };
@@ -2526,6 +2582,7 @@ export default function TimelinePage({ onNavigate }) {
 
   // MARKER_TIMELINE_HEADER_CLEANUP_V1 (หัวข้อ "Timeline ปิดภาษี" ถูกลบแล้ว)
   // แถบฟิลเตอร์: My Job / All Job ชิดซ้าย · สถานะ + Config ชิดขวา (อยู่ในการ์ดเดียวกับ Timeline)
+  const retBtn = retTab ? (<button type="button" title={"กลับไป " + (retTab.label || "หน้าเดิม")} onClick={() => { try { sessionStorage.removeItem("timeline_return"); } catch (e) {} const t = retTab.tab; setRetTab(null); if (typeof onNavigate === "function") onNavigate(t); else if (typeof window.__vatGoSubTab === "function") window.__vatGoSubTab(t); }} style={{ ...btn, height: 34, padding: "0 14px", borderRadius: 8, fontSize: 13, color: C.navy, borderColor: "#D5DBE3", background: "#fff", fontWeight: 700, cursor: "pointer" }}>{"↩ กลับไป " + (retTab.label || "หน้าเดิม")}</button>) : null; // MARKER_TIMELINE_RETURN_BTN_IN_BUPAGE_V1
   const tlToolbar = (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, fontSize: 12, color: "#999" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2542,14 +2599,55 @@ export default function TimelinePage({ onNavigate }) {
         <button type="button" onClick={() => setShowMail(true)} title="เปิด Outlook Draft แจ้งปิดภาษีซื้อ" style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: C.navy, fontWeight: 600 }}>✉ Email Report</button>
         <button type="button" onClick={() => setShowBucket(true)} title="รายการ Report Input ที่ Confirm แล้ว (เก็บใน Backend รอส่ง)" style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: "#0f6e56", borderColor: "#2fb58a", background: "#e8f7f1", fontWeight: 700 }}>🗂 Bucket Report{bucketCount ? <span style={{ background: "#2fb58a", color: "#fff", borderRadius: 99, padding: "1px 8px", marginLeft: 6, fontSize: 11 }}>{bucketCount}</span> : null}</button>
         {isAdmin && (
-          <button type="button" disabled={!raTargets.length} onClick={askResetAll} title={raTargets.length ? `ล้างค่าที่กรอก/ติ๊ก/Finish/Confirm ของทุก BU ที่มี % (${raTargets.length} BU) · คง Enable/Disable · เฉพาะ Owner/Admin · ยืนยันด้วย OTP` : "ยังไม่มี BU ที่มี % ให้ Reset"} style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: "#B3691B", borderColor: "#F7E3C8", background: "#FEF8F0", fontWeight: 700, opacity: raTargets.length ? 1 : 0.5, cursor: raTargets.length ? "pointer" : "not-allowed" }}>↺ Reset All{raTargets.length ? <span style={{ background: "#B3691B", color: "#fff", borderRadius: 99, padding: "1px 8px", marginLeft: 6, fontSize: 11 }}>{raTargets.length}</span> : null}</button>
+          <button type="button" onClick={() => setRaView(true)} title={`ดูรายชื่อ BU ทั้งหมดที่มี % (${raAllList.length} BU) · ปุ่ม Reset อยู่ในหน้าต่างนี้`} style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: C.navy, borderColor: "#D5DBE3", background: "#fff", fontWeight: 700, cursor: "pointer" }}>👁 View All{raAllList.length ? <span style={{ background: C.navy, color: "#fff", borderRadius: 99, padding: "1px 8px", marginLeft: 6, fontSize: 11 }}>{raAllList.length}</span> : null}</button>
+        )}
+        {raView && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(20,30,50,0.5)", zIndex: 9999999, display: "flex", alignItems: "center", justifyContent: "center" }} onMouseDown={(e) => { if (e.target === e.currentTarget) setRaView(false); }}>
+            {/* MARKER_RESET_ALL_VIEWALL_POPUP_V2 */}
+            <div style={{ background: "#fff", borderRadius: 16, maxWidth: 820, width: "94%", maxHeight: "94vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 18px 50px rgba(20,30,50,0.28)" }}>
+              <div style={{ flex: "none", padding: "18px 22px 14px", background: "linear-gradient(180deg,#f7f9fc,#fff)", borderBottom: "1px solid #eceae3", display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: "#eaf1fb", display: "grid", placeItems: "center", fontSize: 20, flex: "none" }}>👁</div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.navy }}>BU ที่มีความคืบหน้า</div>
+                  <div style={{ fontSize: 12, color: "#7b8794", marginTop: 2 }}>รวมทุก BU ในระบบที่มี % · Period {(() => { const m = /^(\d{4})-(\d{2})/.exec(String((period && (period.periodYm || period.month)) || PERIOD_YM)); return m ? m[2] + "." + m[1] : String(PERIOD_YM); })()}</div>
+                </div>
+                <span style={{ marginLeft: "auto", background: C.navy, color: "#fff", borderRadius: 99, padding: "3px 12px", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>{raAllList.length} BU</span>
+              </div>
+              <div style={{ flex: "none", margin: "14px 22px 0", padding: "10px 12px", borderRadius: 10, fontSize: 12, display: "flex", gap: 8, alignItems: "center", background: raClosedOk ? "#e9f7ee" : "#fff7e8", color: raClosedOk ? "#1f6b33" : "#8a5a14", border: raClosedOk ? "1px solid #c9ecd4" : "1px solid #f7e3c8" }}>
+                {raClosedOk ? "✅" : "🔒"}
+                <span>{isOwner ? "Owner: Reset ได้ตลอดเวลา (ยืนยันด้วย OTP)" : raClosedOk ? "Period ปิดแล้ว — Reset ได้ 1 ครั้ง (ยืนยันด้วย OTP)" : raAlready ? "Reset All ไปแล้วสำหรับการปิด Period รอบนี้ (ทำได้ครั้งเดียว)" : "ยัง Reset ไม่ได้ — ต้องปิด Period ก่อน"}</span>
+              </div>
+              <div style={{ flex: "1 1 auto", minHeight: 0, margin: "12px 22px 0", border: "1px solid #eceae3", borderRadius: 12, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                <div style={{ flex: "none", display: "grid", gridTemplateColumns: "80px 1fr 56px 260px", gap: 12, alignItems: "center", padding: "10px 16px", background: "#f6f7f9", fontSize: 11, color: "#7b8794", fontWeight: 600, letterSpacing: 0.3 }}>
+                  <span>BU</span><span>ความคืบหน้า</span><span style={{ textAlign: "right" }}>%</span><span>รายละเอียด</span>
+                </div>
+                {/* Default แสดง 20 BU แล้ว Scroll */}
+                <div style={{ overflowY: "auto", maxHeight: "min(760px, calc(94vh - 300px))" }}>
+                  {!raAllList.length && <div style={{ padding: 16, fontSize: 12, color: "#888", textAlign: "center" }}>ยังไม่มี BU ที่มีความคืบหน้า</div>}
+                  {raAllList.map((b) => { const q = raSummary(b); const pv = Number(q.pct) || 0; const col = pv >= 100 ? "#2F9E44" : pv >= 50 ? "#3B82F6" : "#F0B04A"; const tx = pv >= 100 ? "#2F9E44" : pv >= 50 ? "#3B82F6" : "#B3691B"; return (
+                    <div key={b.bu} style={{ display: "grid", gridTemplateColumns: "80px 1fr 56px 260px", gap: 12, padding: "9px 16px", borderTop: "1px solid #eceae3", alignItems: "center", fontSize: 12 }}>
+                      <span style={{ display: "inline-block", background: "#eaf1fb", color: C.navy, fontWeight: 700, fontSize: 12, borderRadius: 8, padding: "3px 10px", textAlign: "center" }}>{b.bu}</span>
+                      <div style={{ height: 12, background: "#e5e7eb", borderRadius: 99, overflow: "hidden" }}><i style={{ display: "block", height: "100%", width: `${Math.min(100, Math.max(0, pv))}%`, background: col, borderRadius: 99 }} /></div>
+                      <span style={{ fontWeight: 700, fontSize: 13, textAlign: "right", color: tx, fontVariantNumeric: "tabular-nums" }}>{pv}%</span>
+                      <span style={{ fontSize: 11, color: "#7b8794", lineHeight: 1.5 }}>ติ๊ก <b style={{ color: "#1f2933" }}>{q.ticks}</b> · Req <b style={{ color: "#1f2933" }}>{q.rids}</b> · Vat <b style={{ color: "#1f2933" }}>{q.vatSet}</b>{q.closed ? <span style={{ marginLeft: 4, background: "#e3f4e8", color: "#1f6b33", borderRadius: 99, padding: "0 8px", fontSize: 10, fontWeight: 700 }}>Confirm</span> : null}</span>
+                    </div>
+                  ); })}
+                </div>
+              </div>
+              <div style={{ flex: "none", display: "flex", gap: 10, alignItems: "center", padding: "16px 22px 18px" }}>
+                <span style={{ fontSize: 12, color: "#7b8794", marginRight: "auto" }}>รวม {raAllList.length} BU</span>
+                <button type="button" onClick={() => setRaView(false)} style={{ height: 38, borderRadius: 10, padding: "0 22px", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "1px solid #d5dbe3", background: "#fff", color: "#4a5568" }}>ปิด</button>
+                <button type="button" disabled={!raClosedOk || !raAllList.length} onClick={() => { setRaView(false); askResetAll(); }} title={!raClosedOk ? (raAlready ? "Reset All ไปแล้วสำหรับการปิด Period รอบนี้ (ทำได้ครั้งเดียว)" : "ยัง Reset ไม่ได้ — ต้องปิด Period ก่อน") : !raAllList.length ? "ยังไม่มี BU ที่มี % ให้ Reset" : "ล้างค่าของทุก BU ข้างต้น (ยืนยันด้วย OTP)"} style={{ height: 38, borderRadius: 10, padding: "0 22px", fontSize: 13, fontWeight: 700, border: "none", color: raClosedOk && raAllList.length ? "#fff" : "#9aa3ad", background: raClosedOk && raAllList.length ? "linear-gradient(180deg,#c47a26,#b3691b)" : "#e5e7eb", cursor: raClosedOk && raAllList.length ? "pointer" : "not-allowed" }}>↺ Reset All</button>
+              </div>
+            </div>
+          </div>
         )}
         {raCode && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 9999999, display: "flex", alignItems: "center", justifyContent: "center" }} onMouseDown={(e) => { if (e.target === e.currentTarget) closeResetAll(); }}>
             <div style={{ background: "#fff", borderRadius: 12, maxWidth: 340, width: "90%", padding: 22, boxShadow: "0 10px 40px rgba(0,0,0,0.25)", textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 500, color: C.navy, marginBottom: 4 }}>ยืนยันการ Reset All ({raTargets.length} BU)</div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: C.navy, marginBottom: 4 }}>ยืนยันการ Reset All ({raAllList.length} BU)</div>
               <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #eee", borderRadius: 8, marginBottom: 10, textAlign: "left" }}>
-                {raTargets.map(({ b }) => { const q = raSummary(b); return (
+                {raAllList.map((b) => { const q = raSummary(b); return (
                   <div key={b.bu} style={{ display: "grid", gridTemplateColumns: "56px 44px 1fr", gap: 6, padding: "6px 10px", borderTop: "0.5px solid #f0f0f0", fontSize: 12, alignItems: "center" }}>
                     <b style={{ color: C.navy }}>{b.bu}</b>
                     <span style={{ color: "#B3691B", fontWeight: 600 }}>{q.pct}%</span>
@@ -2583,6 +2681,11 @@ export default function TimelinePage({ onNavigate }) {
 
   return (
     <div ref={rootRef} className="tl-hide-scroll" style={{ padding: "12px 16px", height: "100vh", display: cur < 0 ? "flex" : "block", flexDirection: "column", overflowY: cur < 0 ? "hidden" : "auto", overscrollBehavior: "contain", boxSizing: "border-box", background: "#F4F3EF" }}>
+      {retTab && cur < 0 && (/* MARKER_TIMELINE_RETURN_TO_ORIGIN_V1 -- มาจาก Icon Timeline ใน Bucket -> กดกลับหน้าเดิมได้ */
+        <div style={{ flex: "none", marginBottom: 8 }}>
+          <button type="button" onClick={() => { try { sessionStorage.removeItem("timeline_return"); } catch (e) {} const t = retTab.tab; setRetTab(null); if (typeof onNavigate === "function") onNavigate(t); else if (typeof window.__vatGoSubTab === "function") window.__vatGoSubTab(t); }} style={{ ...btn, height: 30, padding: "0 12px", borderRadius: 8, boxSizing: "border-box", color: C.navy, borderColor: "#D5DBE3", background: "#fff", fontWeight: 700, cursor: "pointer" }}>{"↩ กลับไป " + (retTab.label || "หน้าเดิม")}</button>
+        </div>
+      )}
       {saveMsg && <div style={{ flex: "none", marginBottom: 8, padding: "6px 12px", borderRadius: 8, background: "#FCEBEB", color: "#791F1F", fontSize: 12 }}>{saveMsg}</div>}
       {showInc && <IncludeModal opts={userOpts} sel={inc || []} onSave={saveInc} onClose={() => setShowInc(false)} />}
       {showBucket && <BucketReportModal tab={tabEff} onClose={() => { setShowBucket(false); loadBucketCount(); }} onLoaded={(r) => setBucketCount(r.filter((f) => !f.sp_sent_at).length)} />}
@@ -2600,6 +2703,7 @@ export default function TimelinePage({ onNavigate }) {
         </>
       ) : (
         <BuPage
+          retBtn={retBtn}
           u={bus[cur]}
           closed={closed || bus[cur].buClosed}
           history={hist.filter((h) => h.i === cur).slice(-5).reverse()}

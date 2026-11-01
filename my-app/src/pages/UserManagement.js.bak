@@ -5,7 +5,7 @@
   import { useAuth } from '../contexts/AuthContext';
   import { useUserRole } from '../contexts/useUserRole';
   import DeployMonitor, { RAMDashboardTab, CPUDashboardTab, StorageDashboardTab } from './DeployMonitor'; // MARKER_USERMANAGEMENT_CPU_DASHBOARD_TAB
-  import { MAINTENANCE_MENU_GROUPS } from '../menuConfig';
+  import { MAINTENANCE_MENU_GROUPS, ALL_FUNCTION_MENUS } from '../menuConfig';
   import { DOC_FOLDERS, folderPermOk, folderPermLabel, PERM_TO_FOLDER } from '../docFolderConfig'; // MARKER_DOCFOLDER_CONFIG_V1
   import { broadcastWs, subscribeWs } from '../wsManager';
   import { useTeamPresence } from '../teamPresence'; // MARKER_TEAM_PRESENCE_SHARED_V1
@@ -15,6 +15,7 @@
   // ── ApproveBatch: สิทธิ์แยกต่างหากจาก Owner/Admin (คุมระบบ vs คุมการดำเนินงาน) ──
   // ── Default false ทุก Role — Owner ต้องมาเปิดให้ทีละคนเอง ไม่ผูกกับ Role อัตโนมัติ ──
   const PERMISSIONS = ['VAT', 'I-Pro', 'GL', 'IE', 'Function', 'Manual', 'ApproveBatch'];
+  const PERM_ICON = { ...Object.fromEntries(ALL_FUNCTION_MENUS.map(m => [m.permKey, m.icon])), Function: '⚙️' }; // MARKER_USERMANAGEMENT_PERM_MENU_ICON_V1 -- ไอคอนหัวคอลัมน์สิทธิ์ตาม Sidebar Menu (menuConfig) · Function ไม่มีเมนูในไฟล์ Config จึงใช้ ⚙️
   const DASHBOARD_MODULES = ['Manual', 'IE']; // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1 -- Module ที่มี Transaction Dashboard จริงตอนนี้
 
   const DEFAULT_PERMISSIONS = {
@@ -1860,12 +1861,17 @@ function MinRoleSwitch({ value, onChange, disabled, allowGuest }) { // MARKER_GU
     const [currentUserId, setCurrentUserId] = React.useState(null); // db.js update() ต้องใช้ id เท่านั้น
     const [so, setSo] = React.useState({ my_name: '', my_job: '', report_to_name: '', report_to_job: '', module: '' }); // MARKER_GL_SIGNOFF_PROFILE_UI_V1
     const [soMsg, setSoMsg] = React.useState('');
-    React.useEffect(() => { loadSignoffProfile().then(d => setSo(d)).catch(() => {}); }, []);
+    const [vatPrep, setVatPrep] = React.useState(''); // MARKER_PROFILE_PREPAREBY_FROM_CONNECT_V1 -- ชื่อ Prepare By ที่ Admin/Owner Connect ไว้ (Timeline > Config BU -> user_roles.vat_prepare_name)
+    const [soLoaded, setSoLoaded] = React.useState(false);
+    React.useEffect(() => { loadSignoffProfile().then(d => setSo(d)).catch(() => {}).finally(() => setSoLoaded(true)); }, []);
+    React.useEffect(() => { // MARKER_PROFILE_PREPAREBY_FROM_CONNECT_V1 -- ถ้า Prepare by > ชื่อ - นามสกุล ยังว่าง และมีการ Connect ไว้แล้ว -> เติมชื่อที่ Connect ให้ (ไม่ทับค่าที่เคยบันทึก) ; กด Save ถึงจะบันทึกจริง
+      if (soLoaded && vatPrep) setSo(prev => (String(prev.my_name || '').trim() ? prev : { ...prev, my_name: vatPrep }));
+    }, [soLoaded, vatPrep]);
 
     React.useEffect(() => {
       const fetchUser = async () => {
-        const { data } = await db.from('user_roles').select('id, username, role').eq('email', currentUser?.email).single(); // MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1 -- เพิ่ม id, role เข้า Query
-        if (data) { setCurrentUserId(data.id); setCurrentUsername(data.username || ''); setUsername(data.username || ''); setCurrentRole(data.role || ''); }
+        const { data } = await db.from('user_roles').select('id, username, role, vat_prepare_name').eq('email', currentUser?.email).single(); // MARKER_USERMANAGEMENT_PROFILE_COMBINED_FIX_V1 -- เพิ่ม id, role เข้า Query
+        if (data) { setVatPrep(String(data.vat_prepare_name || '').trim()); setCurrentUserId(data.id); setCurrentUsername(data.username || ''); setUsername(data.username || ''); setCurrentRole(data.role || ''); }
       };
       fetchUser();
     }, []);
@@ -3053,7 +3059,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     // MARKER_SYSTEMCONSOLE_BREADCRUMB_V3 -- Title แบบ "System Console - {Section}"
     // Base Label ตาม Tab หลัก + subLabel (ละเอียดกว่า ส่งขึ้นมาจาก AccessControlTab/
     // SystemSettingsTab ตอนอยู่ใน Access Control เช่น "AP Period", "Access Panel")
-    const TAB_LABELS = { users: 'User Management', access: 'Access Control', recycle: 'Recycle Bin', activity: 'Activity Log', deploy: 'Backend Ops', settings: 'System Settings' };
+    const TAB_LABELS = { users: 'User Management', access: 'Access Control', recycle: 'Recycle Bin', inactive: 'Inactive Users', activity: 'Activity Log', deploy: 'Backend Ops', settings: 'System Settings' };
     const [subLabel, setSubLabel] = useState('');
     useEffect(() => { if (tab !== 'access') setSubLabel(''); }, [tab]);
     const consoleTitle = `System Console - ${TAB_LABELS[tab] || ''}${tab === 'access' && subLabel ? ' - ' + subLabel : ''}`;
@@ -3105,6 +3111,9 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     const [savedId, setSavedId] = useState(null);
     const [backendOpsSubTab, setBackendOpsSubTab] = useState('deploy');
     const [dashboardUser, setDashboardUser] = useState(null); // MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1
+    const INACTIVE_DAYS = 60; // MARKER_USERMANAGEMENT_AUTO_INACTIVE_V1 -- ไม่ได้เข้าระบบเกิน 60 วัน -> ย้ายไปแท็บ Inactive อัตโนมัติ (กลับมาแท็บ Users เองเมื่อ Login อีกครั้ง)
+    const [oldSeen, setOldSeen] = useState({}); // MARKER_USERMANAGEMENT_LAST_SEEN_V1 -- Login ล่าสุด (เก่ากว่า 60 วัน) ของคนที่อยู่แท็บ Inactive : id -> เวลา | null = ไม่เคย Login
+    const [lastLogin, setLastLogin] = useState(null); // { username/email (lower): เวลา Login ล่าสุดใน 60 วัน, __any: true } · null = ยังโหลดไม่ได้ -> ไม่ย้ายใคร
     const teamPresence = useTeamPresence(true); // MARKER_TEAM_PRESENCE_SHARED_V1 -- แหล่งเดียวกับ Home และ Popup ทีม Online ใน App
     const onlineUsernames = teamPresence.onlineSet; // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1
     const { currentUser, userName, userPermissions } = useAuth();
@@ -3113,6 +3122,30 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
 
     // MARKER_USERMANAGEMENT_USERS_ONLINE_SORT_V1 -- Sort: Owner อยู่อันดับ 1 เสมอ, ถัดไป Online ก่อน Offline, เท่ากันเรียงชื่อ (ไม่ Sort ตาม Role แล้ว)
     const guestView = isOwner && userMode === 'guest'; // MARKER_GUEST_USER_TOGGLE_V1
+    const isInactiveUser = (u) => { // MARKER_USERMANAGEMENT_AUTO_INACTIVE_V1
+      if (!lastLogin || !lastLogin.__any) return false;
+      if (u.role === 'Owner' || (currentUser && u.email === currentUser.email) || onlineUsernames.has(u.username)) return false;
+      if (u.created_at && new Date(u.created_at).getTime() > Date.now() - INACTIVE_DAYS * 86400000) return false; // เพิ่งสร้างบัญชี ยังอยู่ในช่วง 60 วัน
+      const k1 = String(u.username || '').trim().toLowerCase(); const k2 = String(u.email || '').trim().toLowerCase();
+      return !(lastLogin[k1] || lastLogin[k2]);
+    };
+    const inactiveUsers = users.filter(isInactiveUser).slice().sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+    const inactiveKey = inactiveUsers.map(u => u.id).join(',');
+    useEffect(() => { // Last seen ของคน Inactive = Login ล่าสุดทั้งหมด (ดึงทีละคน เฉพาะที่ยังไม่มีค่า)
+      let off = false;
+      inactiveUsers.filter(u => !(u.id in oldSeen) && u.username).forEach(async (u) => {
+        try { const r = await apiFetch(`/activity_log?eq_action=LOGIN&eq_username=${encodeURIComponent(u.username)}&select=created_at&order=created_at.desc&limit=1`); if (!off) setOldSeen(p => ({ ...p, [u.id]: (Array.isArray(r) && r[0] && r[0].created_at) || null })); } catch (_) { /* ปล่อยเป็น … */ }
+      });
+      return () => { off = true; };
+    }, [inactiveKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    const fmtSeen = (iso) => { try { return new Date(iso).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' }); } catch (_) { return ''; } };
+    const lastSeenCell = (u) => { // MARKER_USERMANAGEMENT_LAST_SEEN_V1
+      if (onlineUsernames.has(u.username)) return <span style={{ color: '#1f8a5f', fontWeight: 600 }}>Online</span>;
+      const t = (lastLogin && (lastLogin[String(u.username || '').trim().toLowerCase()] || lastLogin[String(u.email || '').trim().toLowerCase()])) || oldSeen[u.id];
+      if (t) return fmtSeen(t);
+      if (isInactiveUser(u)) return oldSeen[u.id] === null ? 'ไม่เคย Login' : '…';
+      return '—';
+    };
     const filteredUsers = users.filter(u => {
       // MARKER_USERMANAGEMENT_SEARCH_PERMISSION_V1 -- ค้นหาได้ทั้ง Username / Email / Prefix / Role และ Permission (พิมพ์ชื่อ Permission = คนที่เป็น Yes, ใส่ - นำหน้า = คนที่เป็น No เช่น "gl" หรือ "-vat") หลายคำ = ต้องตรงทุกคำ
       const searchTokens = String(userSearch || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -3127,7 +3160,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
       });
       const matchRole = !filterRole || u.role === filterRole;
       const matchMode = (isOwner && userMode === 'guest') ? u.role === 'Guest' : u.role !== 'Guest'; // MARKER_GUEST_USER_TOGGLE_V1 -- Guest เห็น/จัดการได้เฉพาะ Owner
-      return matchSearch && matchRole && matchMode;
+      return matchSearch && matchRole && matchMode && !isInactiveUser(u); // MARKER_USERMANAGEMENT_AUTO_INACTIVE_V1 -- คน Inactive ไปอยู่แท็บ Inactive
     }).slice().sort((a, b) => {
       if (a.role === 'Owner' && b.role !== 'Owner') return -1;
       if (b.role === 'Owner' && a.role !== 'Owner') return 1;
@@ -3150,6 +3183,23 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
     };
 
     useEffect(() => { fetchUsers(); fetchBinCount(); }, []);
+
+    // MARKER_USERMANAGEMENT_AUTO_INACTIVE_V1 -- ดึงรายชื่อที่ Login ภายใน 60 วัน (Activity Log: LOGIN) แล้วเทียบกับผู้ใช้ทั้งหมด
+    useEffect(() => {
+      let off = false;
+      const load = async () => {
+        try {
+          const cut = new Date(Date.now() - INACTIVE_DAYS * 86400000).toISOString();
+          const rows = await apiFetch(`/activity_log?eq_action=LOGIN&gte_created_at=${encodeURIComponent(cut)}&select=username,created_at&limit=200000`);
+          if (off || !Array.isArray(rows)) return;
+          const m = {}; rows.forEach(r => { const k = String(r.username || '').trim().toLowerCase(); if (k && (!m[k] || r.created_at > m[k])) m[k] = r.created_at; });
+          if (rows.length) m.__any = true; // ถ้าไม่มี Login ให้เทียบเลย (เช่น ยังไม่ได้บันทึก) -> ไม่ย้ายใคร กันย้ายทั้งระบบผิดพลาด
+          setLastLogin(m);
+        } catch (_) { if (!off) setLastLogin(null); }
+      };
+      load(); const t = setInterval(load, 10 * 60 * 1000);
+      return () => { off = true; clearInterval(t); };
+    }, []);
 
 
     // MARKER_USERMANAGEMENT_SIGNUP_LISTENER_V1
@@ -3371,7 +3421,11 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
           <div style={{ borderBottom: '2px solid #e8e8e8', display: 'flex', marginBottom: '0' }}>
             <button style={S.tabBtn(tab === 'users')} onClick={() => setTab('users')}>
               👥 Users
-              <span style={{ background: tab==='users'?'#1a3a5c':'#e8e8e8', color: tab==='users'?'white':'#888', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{users.length}</span>
+              <span style={{ background: tab==='users'?'#1a3a5c':'#e8e8e8', color: tab==='users'?'white':'#888', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{users.length - inactiveUsers.length}</span>
+            </button>
+            <button style={S.tabBtn(tab === 'inactive')} onClick={() => setTab('inactive')} title={`ไม่ได้เข้าระบบเกิน ${INACTIVE_DAYS} วัน`}>
+              💤 Inactive
+              {inactiveUsers.length > 0 && <span style={{ background: tab==='inactive'?'#1a3a5c':'#e8e8e8', color: tab==='inactive'?'white':'#888', fontSize: '10px', padding: '1px 6px', borderRadius: '20px' }}>{inactiveUsers.length}</span>}
             </button>
             <button style={S.tabBtn(tab === 'access')} onClick={() => setTab('access')}>🔐 Access Control</button>
             <button style={S.tabBtn(tab === 'recycle')} onClick={() => setTab('recycle')}>
@@ -3406,7 +3460,7 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                 <button onClick={() => { setUserSearch(''); setFilterRole(''); }}
                   style={{ padding: '4px 10px', borderRadius: '6px', border: '0.5px solid #ddd', fontSize: '12px', cursor: 'pointer', background: '#f5f5f5', color: '#555' }}>✕ ล้าง</button>
               )}
-              <span style={{ fontSize: '12px', color: '#888' }}>{filteredUsers.length} / {users.length} คน</span>
+              <span style={{ fontSize: '12px', color: '#888' }}>{filteredUsers.length} / {users.length - inactiveUsers.length} คน</span>
               <span style={{ fontSize: '11px', color: '#aaa' }}>📈 = มี Transaction Dashboard (Permission Manual หรือ IE)</span> {/* MARKER_USERMANAGEMENT_TRANSACTION_DASHBOARD_V1 */}
             </div>
             <div style={{ background: 'white', borderRadius: '0 0 8px 8px', flex: 1, minHeight: 0, overflow: 'auto', border: '0.5px solid #e8e8e8', borderTop: 'none' }}>
@@ -3414,10 +3468,10 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                 <thead>
                   <tr>
                     <th style={S.thLeft}>{guestView ? 'User' : 'Username'}</th>
-                    <th style={S.thLeft}>Email</th>
+                    <th style={S.thLeft}>Email</th><th style={S.th}>Last seen</th>
                     <th style={S.th}>{guestView ? 'Business' : 'Prefix'}</th>
                     <th style={S.th}>Role</th>
-                    {PERMISSIONS.filter(p => !(guestView && p === 'ApproveBatch')).map(p => <th key={p} style={S.th}>{p}</th>)}
+                    {PERMISSIONS.filter(p => !(guestView && p === 'ApproveBatch')).map(p => <th key={p} style={S.th}>{PERM_ICON[p] ? <span style={{ marginRight: '4px' }}>{PERM_ICON[p]}</span> : null}{p}</th>)}
                     <th style={S.th}>Action</th>
                   </tr>
                 </thead>
@@ -3441,15 +3495,11 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                             ) : (
                               <span>{u.username || '-'}</span>
                             )}
-                            {onlineUsernames.has(u.username) && (
-                              <span style={{ fontSize: '9.5px', background: '#EAF3DE', color: '#27500A', padding: '1px 7px', borderRadius: '20px', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#639922', display: 'inline-block' }}></span>Online
-                              </span>
-                            )}
+                            {/* MARKER_USERMANAGEMENT_REMOVE_ONLINE_BADGE_V1 -- เอา Badge Online ออก เพราะคอลัมน์ Last seen แสดง Online อยู่แล้ว */}
                             {isMe && <span style={{ fontSize: '10px', background: '#e8f0fb', color: '#1a3a5c', padding: '1px 6px', borderRadius: '20px' }}>คุณ</span>}
                           </div>
                         </td>
-                        <td style={S.tdLeft}>{u.email}</td>
+                        <td style={S.tdLeft}>{u.email}</td><td style={{ ...S.td, fontSize: '11.5px', color: '#555', whiteSpace: 'nowrap' }}>{lastSeenCell(u)}</td>
                         <td style={S.td}>
                           {guestView ? (
                             <input value={u.guest_bu || ''} onChange={e => handleGuestBuInput(u.id, e.target.value)} onBlur={() => handleGuestBuBlur(u)}
@@ -3491,6 +3541,22 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
           </div>
         )}
 
+        {tab === 'inactive' && ( // MARKER_USERMANAGEMENT_AUTO_INACTIVE_V1 -- ผู้ใช้ที่ไม่ได้เข้าระบบเกิน N วัน (ระบบย้ายมาเอง · กลับไปแท็บ Users เองเมื่อ Login อีกครั้ง)
+          <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - var(--console-header-height, 180px) - 40px)' }}>
+            <div style={{ padding: '10px 0 6px', fontSize: '12px', color: '#888', flexShrink: 0 }}>ไม่ได้เข้าระบบเกิน {INACTIVE_DAYS} วัน · {inactiveUsers.length} คน — ระบบย้ายมาให้อัตโนมัติ และจะกลับไปแท็บ Users เองเมื่อผู้ใช้ Login อีกครั้ง</div>
+            <div style={{ background: 'white', borderRadius: '0 0 8px 8px', flex: 1, minHeight: 0, overflow: 'auto', border: '0.5px solid #e8e8e8' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <thead><tr><th style={S.thLeft}>Username</th><th style={S.thLeft}>Email</th><th style={S.th}>Last seen</th><th style={S.th}>Prefix</th><th style={S.th}>Role</th><th style={S.th}>สถานะ</th></tr></thead>
+                <tbody>
+                  {inactiveUsers.length === 0 && <tr><td colSpan={6} style={{ padding: '40px', textAlign: 'center', color: '#aaa', fontSize: '13px' }}>ไม่มีผู้ใช้ที่ Inactive</td></tr>}
+                  {inactiveUsers.map(u => (
+                    <tr key={u.id}><td style={S.tdLeft}>{u.username || '—'}</td><td style={S.tdLeft}>{u.email}</td><td style={{ ...S.td, fontSize: '11.5px', color: '#555', whiteSpace: 'nowrap' }}>{lastSeenCell(u)}</td><td style={S.td}>{u.system_prefix || '—'}</td><td style={S.td}>{u.role}</td><td style={S.td}><span style={{ fontSize: '11px', padding: '2px 10px', borderRadius: '20px', background: '#f1f3f7', color: '#6b7a90' }}>Inactive</span></td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         {tab === 'access' && <AccessControlTab users={users} currentUser={currentUser} userName={userName} isOwner={isOwner} userRole={userRole} userPermissions={userPermissions} onLabelChange={setSubLabel} />}
         {tab === 'activity' && <ActivityLogTab currentUserRole={userRole} currentUserPermissions={userPermissions} />}
         {tab === 'recycle' && <RecycleBinTab currentUser={currentUser} userName={userName} fetchBinCount={fetchBinCount} initialTableFilter={initialTableFilter} />} {/* MARKER_USERMANAGEMENT_INITIAL_RECYCLEBIN_V1 */}
@@ -4099,7 +4165,11 @@ function SystemSettingsTab({ isOwner, isAdmin, userName, userRole, userPermissio
                                     <div title={t.batch_id || ''} style={{ wordBreak: 'break-word', fontWeight: 600 }}>{t.batch_id}</div>
                                     <div style={{ fontSize: '10.5px', color: '#8a96a3' }} title={t._members.map((m) => m.invoice_no).filter(Boolean).slice(0, 30).join(', ')}>{t._count} Transaction</div>
                                   </>) : (<>
-                                  <div title={t.invoice_no || ''} style={{ wordBreak: 'break-word' }}>{t.invoice_no || '-'}</div>
+                                  {(() => { // MARKER_USERMANAGEMENT_INVOICE_LIST_COLLAPSE_V1 -- COL-AP รวมเลข Invoice ทั้งเอกสาร (หลายร้อยเลข): แสดง 3 เลขแรก + จำนวนที่เหลือ กดเพื่อดูทั้งหมด
+                                    const raw = String(t.invoice_no || ''); const parts = raw.split(/,\s*/).filter(Boolean);
+                                    if (parts.length <= 3) return <div title={raw} style={{ wordBreak: 'break-word' }}>{raw || '-'}</div>;
+                                    return (<details><summary style={{ cursor: 'pointer', wordBreak: 'break-word' }}>{parts.slice(0, 3).join(', ')} <span style={{ color: '#8a96a3' }}>… +{parts.length - 3} เลข</span></summary><div style={{ wordBreak: 'break-word', marginTop: '4px', fontSize: '11.5px' }}>{raw}</div></details>);
+                                  })()}
                                   <div style={{ fontSize: '10.5px', color: '#8a96a3', wordBreak: 'break-word' }}>{t.batch_id || 'Draft'}</div>
                                   </>)}
                                 </div>

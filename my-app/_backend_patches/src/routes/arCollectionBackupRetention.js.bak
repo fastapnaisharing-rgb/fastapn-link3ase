@@ -1,0 +1,112 @@
+/**
+ * routes/arCollectionBackupRetention.js
+ *
+ * Retention ของ vat_backup_tax_invoice ที่มาจาก AR_Collection (source_type='ar_collection_match')
+ *
+ *   pending ──(POST /api/vat/period/close)──▶ Stamp expired_date = เวลาปิด ──(ครบ N วัน ปฏิทิน)──▶ DELETE ถาวร
+ *
+ * ไฟล์นี้ไม่ใช่ Router — เป็น Helper ที่ถูกเรียกจาก:
+ *   - vatPeriodRoute.js     → stampArCollectionBackupExpired (ภายใน SAVEPOINT ของ /close)
+ *   - app.js (Cron 5 นาที) → purgeExpiredArCollectionBackup
+ *
+ * เฉพาะแถว source_type='ar_collection_match' ที่ status='pending' เท่านั้น (ยัง Match ไม่ได้ ณ ตอนปิด Period)
+ * แถวที่ Match สำเร็จไปแล้ว (status เปลี่ยนไปทางอื่นก่อนปิด Period) จะไม่ถูก Stamp/ลบ
+ * ปิด Period ของระบบนี้ปิดทุก BU พร้อมกันทีเดียว (ดู vatPeriodRoute.js) จึง Stamp ทุกแถวทุก BU โดยไม่ต้องเจาะจง BU
+ * ไม่กระทบ vat_backup_tax_invoice ของ source_type อื่น (เช่น amagno)
+ *
+ * ต้องรัน schema/ar_collection_backup_retention_v1.sql ก่อน (เพิ่ม Column expired_date + system_settings key)
+ *
+ * MARKER_AP0105_BACKUP_RETENTION_V1 -- หน้า VAT Reconcile AP01-AP05 เก็บแถว Amagno ลง vat_backup_tax_invoice ด้วย source_type='ap01_05'
+ *   (Column period 'YYYY-MM' = งวดของไฟล์, ap_set = AP01..AP05, tax_type = N/M/A/T/F)
+ *   ปิด Period -> Stamp expired_date ให้ทุกแถว ap01_05 ที่ period <= vat_period_month (เดือนที่เพิ่งปิด) -> ครบ 45 วัน (ปรับได้ที่
+ *   system_settings 'ap01_05_backup_retention_days') Cron ลบถาวร งวดที่ยังเปิดอยู่ไม่ถูก Stamp จึงไม่ถูกลบ
+ */
+
+import { pool } from "../db.js";
+
+const DEFAULT_RETENTION_DAYS = 30;
+const DEFAULT_AP0105_RETENTION_DAYS = 45; // MARKER_AP0105_BACKUP_RETENTION_V1
+
+// MARKER_AP0105_BACKUP_RETENTION_V1 -- Column ที่หน้า VAT Reconcile AP01-AP05 ใช้ (สร้างอัตโนมัติตอน Start Backend)
+pool.query(`ALTER TABLE vat_backup_tax_invoice
+  ADD COLUMN IF NOT EXISTS period text,
+  ADD COLUMN IF NOT EXISTS ap_set text,
+  ADD COLUMN IF NOT EXISTS tax_type text,
+  ADD COLUMN IF NOT EXISTS expired_date timestamptz`).catch((e) => console.error("[migrate vat_backup_tax_invoice ap01_05 columns]", e.message));
+pool.query(`CREATE INDEX IF NOT EXISTS idx_vbti_ap0105_period ON vat_backup_tax_invoice (source_type, period, bu)`).catch(() => {});
+
+export async function getAp0105BackupRetentionDays(db) {
+  try {
+    const { rows } = await (db || pool).query(
+      `SELECT value FROM system_settings WHERE key = 'ap01_05_backup_retention_days'`
+    );
+    const n = parseInt(rows[0]?.value, 10);
+    return Number.isInteger(n) && n >= 1 && n <= 365 ? n : DEFAULT_AP0105_RETENTION_DAYS;
+  } catch (err) {
+    return DEFAULT_AP0105_RETENTION_DAYS;
+  }
+}
+
+// ── อ่านจำนวนวันเก็บจาก system_settings (fallback 30 ถ้าไม่มี/ค่าผิด) ──
+export async function getArCollectionBackupRetentionDays(db) {
+  try {
+    const { rows } = await (db || pool).query(
+      `SELECT value FROM system_settings WHERE key = 'ar_collection_backup_retention_days'`
+    );
+    const n = parseInt(rows[0]?.value, 10);
+    return Number.isInteger(n) && n >= 1 && n <= 365 ? n : DEFAULT_RETENTION_DAYS;
+  } catch (err) {
+    return DEFAULT_RETENTION_DAYS;
+  }
+}
+
+// ── เรียกตอน Period ถูกปิด: Stamp expired_date ให้แถว AR_Collection Backup ที่ยัง pending ทุกแถว ทุก BU ──
+// ต้องเรียกภายใน SAVEPOINT ของ /close — ถ้าพลาดต้องไม่ทำให้การปิด Period ล้ม
+export async function stampArCollectionBackupExpired(client) {
+  const { rowCount } = await client.query(
+    `UPDATE vat_backup_tax_invoice
+        SET expired_date = NOW()
+      WHERE source_type = 'ar_collection_match'
+        AND status = 'pending'
+        AND expired_date IS NULL`
+  );
+  // MARKER_AP0105_BACKUP_RETENTION_V1 -- Stamp แถว ap01_05 ของงวดที่ปิดแล้ว (period <= เดือนที่เพิ่งปิด) ใน Transaction เดียวกับการปิด Period
+  const ap = await client.query(
+    `UPDATE vat_backup_tax_invoice
+        SET expired_date = NOW()
+      WHERE source_type = 'ap01_05'
+        AND expired_date IS NULL
+        AND period IS NOT NULL
+        AND period <= (SELECT value FROM system_settings WHERE key = 'vat_period_month')`
+  );
+  return rowCount + ap.rowCount;
+}
+
+// ── Cron: ลบถาวรแถวที่ถูก Stamp expired_date ไว้ครบกำหนดแล้ว ──
+export async function purgeExpiredArCollectionBackup() {
+  const days = await getArCollectionBackupRetentionDays();
+  const { rowCount } = await pool.query(
+    `DELETE FROM vat_backup_tax_invoice
+      WHERE source_type = 'ar_collection_match'
+        AND status = 'pending'
+        AND expired_date IS NOT NULL
+        AND expired_date <= NOW() - make_interval(days => $1)`,
+    [days]
+  );
+  if (rowCount > 0) {
+    console.log(`[MARKER_ARCOLLECTION_BACKUP_RETENTION_V1] purged ${rowCount} rows (ar_collection_match, expired > ${days} days)`);
+  }
+  // MARKER_AP0105_BACKUP_RETENTION_V1 -- ลบแถว ap01_05 ที่ Stamp ไว้ครบ N วัน (ค่าเริ่มต้น 45) หลังปิด Period
+  const days = await getAp0105BackupRetentionDays();
+  const ap = await pool.query(
+    `DELETE FROM vat_backup_tax_invoice
+      WHERE source_type = 'ap01_05'
+        AND expired_date IS NOT NULL
+        AND expired_date <= NOW() - make_interval(days => $1)`,
+    [days]
+  );
+  if (ap.rowCount > 0) {
+    console.log(`[MARKER_AP0105_BACKUP_RETENTION_V1] purged ${ap.rowCount} rows (ap01_05, expired > ${days} days)`);
+  }
+  return rowCount + ap.rowCount;
+}

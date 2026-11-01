@@ -34,7 +34,7 @@ function PageCanvas({ doc, pageNo, tokens, title, zoom }) { // MARKER_T36_PDF_CS
     <div ref={wrap} style={{ position: 'relative', background: '#fff', border: '1px solid #cdd5df', minHeight: ar ? undefined : 120, margin: '6px auto 0', width: `${Math.round(zoom * 100)}%`, boxSizing: 'border-box' }}>
       <span style={{ position: 'absolute', top: 4, right: 6, zIndex: 2, fontSize: '10px', background: NAVY, color: '#fff', borderRadius: '6px', padding: '1px 7px' }}>{title} · หน้า {pageNo}</span>
       <canvas ref={cv} style={{ display: 'block', width: '100%', height: 'auto' }} />
-      {hl.map((b, i) => <div key={i} ref={i === 0 && title.indexOf('ฟอร์ม') === 0 ? (el) => { if (el && !el.__sc) { el.__sc = 1; setTimeout(() => { try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) { /* ignore */ } }, 80); } } : undefined} style={{ position: 'absolute', left: b.x + '%', top: b.y + '%', width: b.w + '%', height: b.h + '%', background: 'rgba(255,214,0,.35)', outline: '2px solid #f5c400', borderRadius: '2px', pointerEvents: 'none' }} />)}
+      {hl.map((b, i) => <div key={i} style={{ position: 'absolute', left: b.x + '%', top: b.y + '%', width: b.w + '%', height: b.h + '%', background: 'rgba(255,214,0,.35)', outline: '2px solid #f5c400', borderRadius: '2px', pointerEvents: 'none' }} />)}
       {state === 'err' && <div style={{ padding: 12, color: '#e5484d', fontSize: 12 }}>แสดงหน้านี้ไม่ได้</div>}
     </div>
   );
@@ -98,6 +98,7 @@ export default function T36PdfSplit({ file, lookupBranch, existing, holdLoad, on
   const ZMIN = 0.5; const ZMAX = 4;
   const zoomAt = (f, cx, cy) => { const el = leftRef.current; if (el) { const r = el.getBoundingClientRect(); const ox = (cx == null ? r.width / 2 : cx - r.left); const oy = (cy == null ? r.height / 2 : cy - r.top); zAnchor.current = { ox, oy, fx: (el.scrollLeft + ox) / Math.max(1, el.scrollWidth), fy: (el.scrollTop + oy) / Math.max(1, el.scrollHeight) }; } setZoom((z) => Math.min(ZMAX, Math.max(ZMIN, +(z * f).toFixed(3)))); };
   React.useLayoutEffect(() => { const el = leftRef.current; const a = zAnchor.current; if (!el || !a) return; zAnchor.current = null; el.scrollLeft = a.fx * el.scrollWidth - a.ox; el.scrollTop = a.fy * el.scrollHeight - a.oy; }, [zoom]);
+  React.useEffect(() => { const el = leftRef.current; if (el) { el.scrollTop = 0; el.scrollLeft = 0; } }, [sel]); // MARKER_T36_PDF_START_TOP_V1 -- เปิดแต่ละชุดให้เริ่มที่จุดเริ่มต้น (บนสุด/ซ้ายสุด) ไม่เลื่อนไปกลางหน้าตามกรอบไฮไลต์
   React.useEffect(() => { // MARKER_T36_PDF_WHEEL_ZOOM_V2 -- เอาเมาส์ชี้รูป + Ctrl + ล้อเมาส์ = ซูมเข้า/ออกตรงตำแหน่งเมาส์ (ล้อธรรมดา = เลื่อน)
     const el = leftRef.current; if (!el) return undefined;
     const h = (e) => { if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); zoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY); };
@@ -116,18 +117,19 @@ export default function T36PdfSplit({ file, lookupBranch, existing, holdLoad, on
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #e3e8ef', flexWrap: 'wrap' }}>
           <b style={{ color: NAVY, fontSize: '15px' }}>Temp. T36 · อ่านจาก PDF</b>
           <span style={{ color: '#6b7280', fontSize: '12px' }}>{file.name}</span>
-          <span style={{ display: 'inline-flex', border: `1px solid ${NAVY}`, borderRadius: 99, overflow: 'hidden' }}>
-            {[['preview', 'Preview'], ['list', `Confirm List (${nDone})`]].map(([k, lb]) => (
-              <button key={k} type="button" onClick={() => setTab(k)} style={{ height: 28, padding: '0 16px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: tab === k ? NAVY : '#fff', color: tab === k ? '#fff' : NAVY }}>{lb}</button>))}
-          </span>
-          {res && <span style={{ background: '#e3f4e8', color: '#2e7d32', borderRadius: 99, padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>{res.forms} ชุด · ตรงใบเสร็จ {nOk}</span>}
-          {res && nBad > 0 && <span style={{ background: '#fff3d6', color: '#b26a00', borderRadius: 99, padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>⚠ ไม่ตรง {nBad}</span>}
           {payer && <span style={{ color: '#6b7280', fontSize: 12 }}>ผู้นำส่ง Tax ID {payer.ptax} · สาขา {payer.pbr} → Lookup Branch List{res.br[0] && res.br[0].code ? ' = ' + res.br[0].code : (res.br[0] && res.br[0].cands && res.br[0].cands.length > 1 ? '' : ' : ' + ((res.br[0] && res.br[0].note) || 'ไม่พบ'))}</span>}
           {res && res.br[0] && res.br[0].cands && res.br[0].cands.length > 1 && (
             <span style={{ fontSize: 12, color: '#b26a00', fontWeight: 600 }}>พบหลายสาขา → เลือกสาขา Oracle:{' '}
               <select value={brPick} onChange={(e) => chooseBr(e.target.value)} style={{ height: 28, borderRadius: 8, border: '1px solid #cfd6e0', padding: '0 6px' }}>
                 <option value="">— เลือก —</option>{res.br[0].cands.map((c) => <option key={c} value={c}>{c}</option>)}
               </select></span>)}
+          <span style={{ flexBasis: '100%', height: 0 }} />{/* MARKER_T36_PDF_TABS_ROW2_V1 -- แถวบน = ชื่อหน้า/ไฟล์/ผู้นำส่ง/สาขา Oracle ; แถวล่าง = Tab + สถานะ + ปุ่มเลื่อนชุด */}
+          <span style={{ display: 'inline-flex', border: `1px solid ${NAVY}`, borderRadius: 99, overflow: 'hidden' }}>
+            {[['preview', 'Preview'], ['list', `Confirm List (${nDone})`]].map(([k, lb]) => (
+              <button key={k} type="button" onClick={() => setTab(k)} style={{ height: 28, padding: '0 16px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: tab === k ? NAVY : '#fff', color: tab === k ? '#fff' : NAVY }}>{lb}</button>))}
+          </span>
+          {res && <span style={{ background: '#e3f4e8', color: '#2e7d32', borderRadius: 99, padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>{res.forms} ชุด · ตรงใบเสร็จ {nOk}</span>}
+          {res && nBad > 0 && <span style={{ background: '#fff3d6', color: '#b26a00', borderRadius: 99, padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>⚠ ไม่ตรง {nBad}</span>}
           <span style={{ flex: 1 }} />
           {nNoBr > 0 && <span style={{ color: '#b26a00', fontSize: 12 }}>{nNoBr} แถวไม่มีสาขา Oracle (ใช้ BU ที่เลือกในหน้า T36)</span>}
           {res && (<>
@@ -179,7 +181,7 @@ export default function T36PdfSplit({ file, lookupBranch, existing, holdLoad, on
                         {it.ok ? `✓ ตรงใบเสร็จ (ยอดใบเสร็จ ${fmtAmt(it.recAmount)})` : `⚠ ${it.issues.join(' ; ')}`}
                         {it.extra && parseFloat(it.extra) > 0 && <div style={{ fontWeight: 400, marginTop: 2 }}>มีเงินเพิ่ม {fmtAmt(it.extra)} — ไม่รวมในช่อง ภ.พ.36</div>}
                       </div>
-                      {lock ? <div style={{ padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, color: done[i] === 'ok' ? '#2e7d32' : '#6b7280', fontWeight: 700 }}><span>{done[i] === 'ok' ? '✓ Confirm แล้ว — เก็บเป็น Draft แล้ว' : 'ข้ามแล้ว'}</span><button type="button" onClick={() => undoOne(i)} style={{ height: 30, borderRadius: 8, border: '1px solid #cfd6e0', background: '#fff', padding: '0 12px', cursor: 'pointer', fontWeight: 600 }}>{done[i] === 'ok' ? '↩ ดึงออก' : '↩ เอากลับมาตรวจ'}</button></div> : (
+                      {lock ? <div style={{ padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, color: done[i] === 'ok' ? '#2e7d32' : '#6b7280', fontWeight: 700 }}><span>{done[i] === 'ok' ? '✓ Confirm แล้ว — เก็บเป็น Draft แล้ว' : 'ข้ามแล้ว'}</span><button type="button" onClick={() => undoOne(i)} style={{ height: 30, borderRadius: 8, border: '1px solid #cfd6e0', background: '#fff', padding: '0 12px', cursor: 'pointer', fontWeight: 600 }}>{done[i] === 'ok' ? 'Cancel' : '↩ เอากลับมาตรวจ'}</button></div> : (
                         <div style={{ display: 'flex', gap: 8 }}>
                           <button type="button" onClick={() => confirmOne(i)} disabled={busy} style={{ opacity: busy ? 0.6 : 1, flex: 1, height: 42, borderRadius: 10, border: `1px solid ${NAVY}`, background: NAVY, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : '✓ Confirm ชุดนี้'}</button>
                           <button type="button" onClick={() => skipOne(i)} style={{ height: 42, borderRadius: 10, border: '1px solid #cfd6e0', background: '#fff', padding: '0 16px', cursor: 'pointer' }}>ข้าม</button>
@@ -204,7 +206,7 @@ export default function T36PdfSplit({ file, lookupBranch, existing, holdLoad, on
                       <tr key={i}>
                         <td style={td}>{i + 1}</td><td style={td}>{r[1]}</td><td style={{ ...td, textAlign: 'right' }}>{r[2]}</td><td style={{ ...td, textAlign: 'right' }}>{r[3]}</td><td style={td}>{r[4]}</td><td style={td}>{r[5]}</td><td style={td}>{r[6] || <span style={{ color: '#b26a00' }}>— (ใช้ BU)</span>}</td>
                         <td style={{ ...td, color: it.ok ? '#2e7d32' : '#b26a00', fontWeight: 600 }}>{it.ok ? '✓ ตรงใบเสร็จ' : '⚠ ' + it.issues.join(' ; ')}</td>
-                        <td style={td}><button type="button" onClick={() => { setTab('preview'); pick(i, 'right'); }} style={{ height: 24, borderRadius: 6, border: '1px solid #cfd6e0', background: '#fff', padding: '0 10px', cursor: 'pointer', fontSize: 12 }}>ดูชุดนี้</button> <button type="button" onClick={() => undoOne(i)} style={{ height: 24, borderRadius: 6, border: '1px solid #cfd6e0', background: '#fff', padding: '0 10px', cursor: 'pointer', fontSize: 12 }}>↩ ดึงออก</button></td>
+                        <td style={td}><button type="button" onClick={() => { setTab('preview'); pick(i, 'right'); }} style={{ height: 24, borderRadius: 6, border: '1px solid #cfd6e0', background: '#fff', padding: '0 10px', cursor: 'pointer', fontSize: 12 }}>ดูชุดนี้</button> <button type="button" onClick={() => undoOne(i)} style={{ height: 24, borderRadius: 6, border: '1px solid #cfd6e0', background: '#fff', padding: '0 10px', cursor: 'pointer', fontSize: 12 }}>Cancel</button></td>
                       </tr>); })}
                 </tbody>
               </table>)}

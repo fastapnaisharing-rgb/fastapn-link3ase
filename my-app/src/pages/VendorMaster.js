@@ -9,6 +9,16 @@
   import { confirmDialog } from '../confirmDialog';
   import { broadcastWs } from '../wsManager'; // MARKER_VENDORRULE_REALTIME_SYNC_V1 -- Vendor Rule (รวม Notice) ไม่เคยต่อเข้า Realtime Broadcast มาก่อน
   import { useRealtimeRefresh } from '../useRealtimeRefresh';
+// MARKER_VENDORMASTER_CATEGORY_EXPORTED_NOTICE_V1 -- แก้ Category แล้ว Backend Sync SM-Code + Simple ที่ยังไม่ Export ให้เอง | แถวที่ Export แล้วไม่แก้ -> แจ้งว่ามี Batch ไหนใช้ค่าเก่า (ถ้าต้องการ Undo Export แล้ว Generate ใหม่)
+const notifyCategoryExportedImpact = async (categoryId) => {
+  try {
+    const r = await apiFetch(`/vendor_category/${categoryId}/exported-impact`);
+    const list = (r && Array.isArray(r.batches)) ? r.batches : [];
+    if (!list.length) return;
+    const lines = list.slice(0, 10).map((b) => `• ${b.batch_id} (${b.rows} แถว)`).join('\n');
+    await confirmDialog.alert(`แก้ Category แล้ว Simple ที่ยังไม่ Export ถูกอัปเดตตามให้เรียบร้อย\nแต่มี Batch ที่ Export ไปแล้วและยังใช้ชื่อ/Tax ID เดิมอยู่ ${list.length} Batch:\n${lines}${list.length > 10 ? '\n…' : ''}\n\nถ้าต้องการให้ไฟล์ถูกต้อง ให้ Undo Export แล้ว Generate ใหม่`, { title: 'มี Batch ที่ใช้ค่าเดิม', variant: 'warning' });
+  } catch (e) { /* ไม่กระทบการบันทึก */ }
+};
 
 // MARKER_HEAD_TINT_V1 -- สีหัวคอลัมน์แยกตามชื่อ (คงที่ต่อชื่อคอลัมน์) + แถบสีหนาด้านล่าง
 const __HEAD_PAL = [['#dbe6f5','#1a3a5c'],['#e0ecfc','#3b82f6'],['#efe7fb','#8b5cf6'],['#e3f4e8','#2f9e44'],['#fdeee0','#f08a24'],['#e6f6f2','#2fb58a'],['#fde8ea','#d1495b'],['#fff6d6','#d4a017']];
@@ -1226,6 +1236,7 @@ const computeNextSyRunning = async () => {
       if (tab === 'iecode') refreshNextSyRunning();
       if (tab === 'apcode') invalidate('SupplierList');
       if (tab === 'category') { invalidate('VendorCategory'); try { broadcastWs('sm_code_list_updated', { vendorCategory: String(data['Code'] || '') }); } catch (e) { console.error('[broadcast vendorCategory]', e); } } // MARKER_VENDORMASTER_VENDORCAT_BROADCAST_V1 -- Backend Sync Type เข้า Report แล้ว -> แจ้งหน้า VAT ให้ Refetch
+      if (tab === 'category' && wasEdit) notifyCategoryExportedImpact(editId); // MARKER_VENDORMASTER_CATEGORY_EXPORTED_NOTICE_V1
       // MARKER_VENDORMASTER_SMCODE_WS_BROADCAST_V1
       if (tab === 'smcode') {
         apiFetch('/ws-notify', { method: 'POST', body: JSON.stringify({ event: 'smcode_updated' }) }).catch(e => console.error('[SmCode broadcast]', e));
@@ -1341,6 +1352,7 @@ const computeNextSyRunning = async () => {
       setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === prevItem.id ? { ...i, ...updated } : i)) }));
       if (tab === 'apcode') invalidate('SupplierList');
       if (tab === 'category') { invalidate('VendorCategory'); try { broadcastWs('sm_code_list_updated', { vendorCategory: String(data['Code'] || '') }); } catch (e) { console.error('[broadcast vendorCategory]', e); } } // MARKER_VENDORMASTER_VENDORCAT_BROADCAST_V1
+      if (tab === 'category') notifyCategoryExportedImpact(detailItem.id); // MARKER_VENDORMASTER_CATEGORY_EXPORTED_NOTICE_V1
     } catch (err) {
       // ❌ ย้อนกลับ
       setDataMap(prev => ({ ...prev, [tab]: prev[tab].map(i => (i.id === prevItem.id ? prevItem : i)) }));

@@ -52,14 +52,15 @@ pool.query(`
     draft_id TEXT NOT NULL,
     username TEXT,
     bu TEXT,
-    fill_started_at TIMESTAMP,
-    created_at TIMESTAMP,
+    fill_started_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,
     batch_id TEXT,
     line_count INTEGER NOT NULL DEFAULT 1,
     module_type TEXT,
     archived_at TIMESTAMPTZ DEFAULT NOW()
   )
-`).catch((e) => console.error("[vat_transaction_archive] create:", e.message));
+`).then(() => pool.query(`ALTER TABLE vat_transaction_archive ALTER COLUMN fill_started_at TYPE TIMESTAMPTZ, ALTER COLUMN created_at TYPE TIMESTAMPTZ`)) // MARKER_VATEXPORT_ARCHIVE_TZ_V1 -- ชนิดเวลาต้องตรงกับตาราง Draft (timestamptz) ไม่งั้นวันที่ของ Transaction ที่เก็บไว้เลื่อนได้
+  .catch((e) => console.error("[vat_transaction_archive] create:", e.message));
 
 // MARKER_VATEXPORT_RETENTION_V1 -- อายุเก็บหลัง Finish/ปิด Period: ADI 1 เดือน, Simple 6 เดือน, Popvat 6 เดือน
 const PV_RETENTION = { popvat: "6 months", simple: "6 months", adi: "1 month" };
@@ -130,6 +131,13 @@ async function purgeExpiredPvBackup() {
       }
       console.log(`[purgeExpiredPvBackup] archived+deleted batch ${batchId} (${filesToDelete.length} files)`);
       broadcastVatExportUpdate("vat_export_updated", { batchId });
+    }
+    // MARKER_VATEXPORT_ARCHIVE_EXPIRE_V1 -- จำนวน Transaction ที่เก็บไว้หลังลบ Backup ไม่เก็บถาวร: นับต่อจนครบ 12 เดือนนับจากวันที่สร้าง Draft (ทุกประเภทรวม ADI) แล้วลบเอง
+    try {
+      const r = await pool.query(`DELETE FROM vat_transaction_archive WHERE created_at < NOW() - INTERVAL '12 months'`);
+      if (r.rowCount) console.log(`[purgeExpiredPvBackup] archive expired: removed ${r.rowCount} rows (> 12 months)`);
+    } catch (err) {
+      console.error("[purgeExpiredPvBackup] archive expire error:", err.message);
     }
   } catch (err) {
     console.error("[purgeExpiredPvBackup] error:", err.message);
@@ -209,7 +217,7 @@ router.post("/generate", async (req, res) => {
     // -- BU List สำหรับ Popvat/ADI (Book Mode กวาดหลาย BU / BU Mode แค่ BU เดียว) -- Simple ใช้แค่ [bu] เสมอ (ทำ Book ไม่ได้) --
     let popvatAdiBuList = [bu];
     if (scope === "book") {
-      const buListRes = await client.query(`SELECT DISTINCT bu FROM company_list WHERE book = $1`, [book]);
+      const buListRes = await client.query(`SELECT DISTINCT bu FROM company_list WHERE "BOOK" = $1`, [book]); // MARKER_VATEXPORT_BOOK_QUOTED_COLUMN_V1 -- column ใน company_list ชื่อ "BOOK" (ตัวพิมพ์ใหญ่ ต้องใส่ Quote) เดิมใช้ book (ตัวเล็ก) ทำให้ Error: column "book" does not exist
       popvatAdiBuList = buListRes.rows.map((r) => r.bu);
       if (popvatAdiBuList.length === 0) popvatAdiBuList = [bu];
     }
@@ -524,7 +532,7 @@ router.get("/history", async (req, res) => {
       try {
         const buList = [...new Set(Array.from(batchMap.values()).map((b) => b.bu).filter(Boolean))];
         const [segRes, perRes] = await Promise.all([
-          pool.query(`SELECT bu, "SEGMENT3" AS seg3 FROM company_list WHERE bu = ANY($1)`, [buList]),
+          pool.query(`SELECT bu, "SEGMENT3" AS seg3, "BOOK" AS book FROM company_list WHERE bu = ANY($1)`, [buList]),
           pool.query(
             `SELECT batch_id, MIN(NULLIF(period, '')) AS period FROM (
                SELECT batch_id, period FROM vat_upload_popvatdraft WHERE batch_id = ANY($1)
@@ -535,7 +543,8 @@ router.get("/history", async (req, res) => {
           ),
         ]);
         const segByBu = new Map();
-        segRes.rows.forEach((r) => { if (!segByBu.has(r.bu) && r.seg3) segByBu.set(r.bu, String(r.seg3).trim()); });
+        const crgBuSet = new Set(); // MARKER_VATEXPORT_CRG_SUBFOLDER_V1 -- BU ที่ BOOK = CRG (กลุ่ม CRG) -> Frontend/Handler ส่งไฟล์ลง <BU>\\<YYYY.MM>\\<SEGMENT3> (โฟลเดอร์ย่อยแยกเฉพาะ CRG Group)
+        segRes.rows.forEach((r) => { if (!segByBu.has(r.bu) && r.seg3) segByBu.set(r.bu, String(r.seg3).trim()); if (String(r.book || "").trim().toUpperCase() === "CRG") crgBuSet.add(r.bu); });
         const perByBatch = new Map(perRes.rows.map((r) => [r.batch_id, r.period]));
         const toSpPeriod = (s) => {
           const v = String(s || "").trim();
@@ -546,7 +555,10 @@ router.get("/history", async (req, res) => {
           const n = new Date();
           return `${n.getFullYear()}.${String(n.getMonth() + 1).padStart(2, "0")}`;
         };
-        batchMap.forEach((bt) => { bt.spBu = segByBu.get(bt.bu) || ""; bt.spPeriod = toSpPeriod(perByBatch.get(bt.batchId)); });
+        // MARKER_VATEXPORT_CRG_PARENT_HEAD_V1 -- กลุ่ม CRG : โฟลเดอร์แม่ = SEGMENT3 ของ BU หัวกลุ่ม (company_list.bu = ชื่อ BOOK เช่น CRG -> 5000) , โฟลเดอร์ย่อย = SEGMENT3 ของ BU เอง -> 5000\\YYYY.MM\\5895 ; ไม่พบหัวกลุ่ม = ใช้ของ BU เองเหมือนเดิม
+        let headSeg = "";
+        if (crgBuSet.size > 0) { try { const hr = await pool.query(`SELECT "SEGMENT3" AS seg3 FROM company_list WHERE UPPER(TRIM(bu)) = 'CRG' AND "SEGMENT3" IS NOT NULL AND TRIM("SEGMENT3") <> '' LIMIT 1`); headSeg = hr.rows[0] ? String(hr.rows[0].seg3).trim() : ""; } catch (e) { /* ignore */ } }
+        batchMap.forEach((bt) => { const own = segByBu.get(bt.bu) || ""; if (crgBuSet.has(bt.bu) && headSeg) { bt.spBu = headSeg; bt.spSub = own || headSeg; } else { bt.spBu = own; bt.spSub = ""; } bt.spPeriod = toSpPeriod(perByBatch.get(bt.batchId)); });
       } catch (e) { console.error("GET /vat-export/history SP info error:", e.message); }
     }
     res.json({ ok: true, batches: Array.from(batchMap.values()) });

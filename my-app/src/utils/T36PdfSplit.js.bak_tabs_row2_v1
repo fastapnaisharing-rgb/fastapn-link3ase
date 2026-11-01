@@ -1,0 +1,216 @@
+// MARKER_T36_PDF_SPLIT_V1 -- หน้าจอ Split : ซ้าย = ต้นฉบับ PDF แยกเป็น "ชุด" (ฟอร์ม ภ.พ.36 + ใบเสร็จรับเงิน) / ขวา = ข้อมูลที่ดึงมา (แก้ไขได้) -> Confirm
+import React from 'react';
+import { readPp36Pdf } from './pp36PdfReader';
+
+const NAVY = '#1a3a5c';
+const fmtInt = (s) => { const n = parseFloat(s); return isNaN(n) ? '' : Math.floor(n).toLocaleString('en-US'); };
+const commaLive = (v) => { const s = String(v == null ? '' : v).replace(/,/g, ''); const m = /^(-?)(\d*)(\.\d*)?$/.exec(s); return m ? m[1] + m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (m[3] || '') : s; }; // MARKER_T36_PDF_COMMA_V1 -- แสดงตัวเลขมีลูกน้ำ (เก็บค่าจริงไม่มีลูกน้ำ)
+const fmtAmt = (s) => { const n = parseFloat(s); return isNaN(n) ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+function PageCanvas({ doc, pageNo, tokens, title, zoom }) { // MARKER_T36_PDF_CSSZOOM_V1 -- วาดครั้งเดียวความละเอียดสูง ; ซูม = เปลี่ยนความกว้าง CSS (ลื่น ไม่วาดใหม่) ; ไฮไลต์เป็น %
+  const wrap = React.useRef(null); const cv = React.useRef(null); const [hl, setHl] = React.useState([]); const [state, setState] = React.useState('idle'); const [ar, setAr] = React.useState(0);
+  React.useEffect(() => {
+    if (!doc || !pageNo || !wrap.current) return undefined;
+    let dead = false; let started = false; let task = null;
+    const go = async () => {
+      if (started) return; started = true; setState('load');
+      try {
+        const page = await doc.getPage(pageNo); if (dead) return;
+        const v0 = page.getViewport({ scale: 1 }); const PW = 2600; const vp = page.getViewport({ scale: PW / v0.width });
+        const c = cv.current; c.width = Math.floor(vp.width); c.height = Math.floor(vp.height); setAr(vp.height / vp.width);
+        task = page.render({ canvasContext: c.getContext('2d'), viewport: vp }); await task.promise; if (dead) return;
+        const tc = await page.getTextContent(); const boxes = [];
+        tc.items.forEach((it) => { const t = String(it.str || '').trim(); if (!t) return; if (!tokens.some((k) => k && (t === k || (k.length >= 6 && t.includes(k))))) return;
+          const q = vp.convertToViewportPoint(it.transform[4], it.transform[5]); const r = vp.convertToViewportPoint(it.transform[4] + it.width, it.transform[5] + (it.height || 10));
+          const x = Math.min(q[0], r[0]) - 4; const y = Math.min(q[1], r[1]) - 2; const w = Math.abs(q[0] - r[0]) + 8; const h = Math.abs(q[1] - r[1]) + 4;
+          boxes.push({ x: x / vp.width * 100, y: y / vp.height * 100, w: w / vp.width * 100, h: h / vp.height * 100 }); });
+        setHl(boxes); setState('done');
+      } catch (e) { if (!dead) setState('err'); }
+    };
+    const io = new IntersectionObserver((es) => { if (es.some((x) => x.isIntersecting)) { go(); io.disconnect(); } }, { rootMargin: '300px' }); io.observe(wrap.current);
+    return () => { dead = true; try { io.disconnect(); } catch (e) { /* ignore */ } try { task && task.cancel(); } catch (e) { /* ignore */ } };
+  }, [doc, pageNo]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <div ref={wrap} style={{ position: 'relative', background: '#fff', border: '1px solid #cdd5df', minHeight: ar ? undefined : 120, margin: '6px auto 0', width: `${Math.round(zoom * 100)}%`, boxSizing: 'border-box' }}>
+      <span style={{ position: 'absolute', top: 4, right: 6, zIndex: 2, fontSize: '10px', background: NAVY, color: '#fff', borderRadius: '6px', padding: '1px 7px' }}>{title} · หน้า {pageNo}</span>
+      <canvas ref={cv} style={{ display: 'block', width: '100%', height: 'auto' }} />
+      {hl.map((b, i) => <div key={i} ref={i === 0 && title.indexOf('ฟอร์ม') === 0 ? (el) => { if (el && !el.__sc) { el.__sc = 1; setTimeout(() => { try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) { /* ignore */ } }, 80); } } : undefined} style={{ position: 'absolute', left: b.x + '%', top: b.y + '%', width: b.w + '%', height: b.h + '%', background: 'rgba(255,214,0,.35)', outline: '2px solid #f5c400', borderRadius: '2px', pointerEvents: 'none' }} />)}
+      {state === 'err' && <div style={{ padding: 12, color: '#e5484d', fontSize: 12 }}>แสดงหน้านี้ไม่ได้</div>}
+    </div>
+  );
+}
+
+export default function T36PdfSplit({ file, lookupBranch, existing, holdLoad, onAddRow, onRemoveRow, onClose }) {
+  const [res, setRes] = React.useState(null); const [err, setErr] = React.useState(''); const [rows, setRows] = React.useState([]); const [sel, setSel] = React.useState(0); const [tab, setTab] = React.useState('preview'); // MARKER_T36_PDF_TABS_V1 -- Preview | Confirm List
+  const [brPick, setBrPick] = React.useState(''); const ZDEF = 0.8; const [zoom, setZoom] = React.useState(ZDEF); // MARKER_T36_PDF_ZOOM_V1
+  const existingRef = React.useRef(existing || []); existingRef.current = existing || []; const addedRef = React.useRef({}); const skipKey = file ? `t36pdf_skip_${file.name}_${file.size}_${file.lastModified}` : '';
+  const [done, setDone] = React.useState({}); // done[i] = 'ok' (ส่งเข้าตารางแล้ว) | 'skip'
+  const cardRef = React.useRef({}); const rowRef = React.useRef({}); const docRef = React.useRef(null);
+  React.useEffect(() => {
+    let dead = false;
+    readPp36Pdf(file, true).then(async (r) => {
+      if (dead) { try { r.doc && r.doc.destroy(); } catch (e) { /* ignore */ } return; }
+      docRef.current = r.doc;
+      if (!r.rows.length) { setErr(`ไม่พบแบบฟอร์ม ภ.พ.36 ใน ${file.name} (${r.pages} หน้า) — ถ้าเป็นไฟล์สแกนรูปภาพ อ่านไม่ได้`); return; }
+      let hold = []; try { hold = holdLoad ? ((await holdLoad()) || []) : []; } catch (e) { hold = []; } // MARKER_T36_PDF_HOLD_RESTORE_V1 -- อ่าน Draft Hold จาก DB (ทุก User) ก่อนตั้งสถานะชุดที่ Confirm แล้ว
+      if (dead) { try { r.doc && r.doc.destroy(); } catch (e) { /* ignore */ } return; }
+      const br = r.items.map((it) => (lookupBranch ? lookupBranch(it.ptax, it.pbr) : { code: '', note: '' }));
+      let pre = ''; const c0 = (br[0] && br[0].cands) || [];
+      if (c0.length > 1) { try { const sv = window.localStorage.getItem(`t36pdf_br_${r.items[0].ptax}_${r.items[0].pbr}`); if (sv && c0.includes(sv)) pre = sv; } catch (e) { /* ignore */ } if (!pre && br[0].code) pre = br[0].code; }
+      setBrPick(pre);
+      setRows(r.rows.map((x, i) => { const q = x.slice(); q[6] = ((br[i].cands && br[i].cands.length > 1) ? (pre || br[i].code) : br[i].code) || ''; return q; })); setRes({ ...r, br });
+      // MARKER_T36_PDF_RESTORE_V1 -- เปิดไฟล์เดิมซ้ำ : ชุดที่อยู่ในตาราง T36 แล้ว (เลขที่ใบเสร็จ + ชื่อตรงกัน) = Confirm แล้ว ; ชุดที่ข้ามไว้จำจาก localStorage
+      const dn = {}; let sk = []; try { sk = JSON.parse(window.localStorage.getItem(skipKey) || '[]'); } catch (e) { sk = []; }
+      r.rows.forEach((x, i) => { const hit = (existingRef.current || []).find((e) => e && String(e[5]).trim() === String(x[5]).trim() && String(e[1]).trim() === String(x[1]).trim()) || ((hold.find((h) => h && h.row && String(h.row[5]).trim() === String(x[5]).trim() && String(h.row[1]).trim() === String(x[1]).trim()) || {}).row); if (hit) { dn[i] = 'ok'; addedRef.current[i] = hit.slice(); } else if (sk.includes(i)) dn[i] = 'skip'; });
+      setDone(dn); const first = r.rows.findIndex((x, i) => !dn[i]); if (first > 0) setSel(first);
+    }).catch((e) => !dead && setErr('อ่าน PDF ไม่สำเร็จ: ' + (e && e.message ? e.message : e)));
+    return () => { dead = true; try { docRef.current && docRef.current.destroy(); } catch (e) { /* ignore */ } };
+  }, [file]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chooseBr = (v) => { // MARKER_T36_PDF_BRANCH_PICK_V1 -- เจอหลายสาขาใน Branch List -> ให้เลือก (จำค่าไว้ตาม Tax ID + สาขา)
+    setBrPick(v); setRows((rs) => rs.map((r, i) => (r && !done[i] ? r.map((x, j) => (j === 6 ? v : x)) : r)));
+    try { if (res && res.items[0]) window.localStorage.setItem(`t36pdf_br_${res.items[0].ptax}_${res.items[0].pbr}`, v); } catch (e) { /* ignore */ }
+  };
+  const pick = (i, from) => { setSel(i); const t = from === 'left' ? rowRef.current[i] : cardRef.current[i]; if (t && t.scrollIntoView) t.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
+  const setCell = (ri, ci, v) => setRows((rs) => rs.map((r, i) => (i === ri ? r.map((x, j) => (j === ci ? v : x)) : r)));
+  const th = { background: NAVY, color: '#fff', fontWeight: 500, fontSize: '11px', padding: '8px', textAlign: 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0, zIndex: 1 };
+  const inp = { width: '100%', border: '1px solid transparent', background: 'transparent', font: 'inherit', padding: '2px 4px', borderRadius: '4px', boxSizing: 'border-box' };
+  const nOk = res ? res.items.filter((it) => it.ok).length : 0; const nBad = res ? res.items.length - nOk : 0; const nNoBr = res ? rows.filter((r) => !String(r[6]).trim()).length : 0;
+  const payer = res && res.items[0] ? res.items[0] : null;
+  const nDone = Object.values(done).filter((v) => v === 'ok').length;
+  const nextUndone = (i) => { for (let k = i + 1; k < rows.length; k++) if (rows[k] && !done[k]) return k; return -1; };
+  React.useEffect(() => { if (!skipKey || !res) return; try { window.localStorage.setItem(skipKey, JSON.stringify(Object.keys(done).filter((k) => done[k] === 'skip').map(Number))); } catch (e) { /* ignore */ } }, [done]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [busy, setBusy] = React.useState(false); const [saveErr, setSaveErr] = React.useState(''); // MARKER_T36_PDF_HOLD_SAVE_V1
+  const undoOne = async (i) => { // MARKER_T36_PDF_UNDO_V1 -- ดึงออก : ลบชุดออกจาก Draft (DB) และตาราง T36 แล้วกลับมาแก้/ตรวจใหม่ได้
+    if (busy) return; setSaveErr('');
+    if (done[i] === 'ok' && addedRef.current[i] && onRemoveRow) { setBusy(true); let ok = true; try { ok = (await onRemoveRow(addedRef.current[i].slice())) !== false; } catch (e) { ok = false; } setBusy(false); if (!ok) { setSaveErr('ดึงออกไม่สำเร็จ (ลบ Draft ใน DB ไม่ได้) — ลองใหม่อีกครั้ง'); return; } }
+    delete addedRef.current[i]; setDone((d) => { const q = { ...d }; delete q[i]; return q; }); pick(i, 'right');
+  };
+  const confirmOne = async (i) => { // MARKER_T36_PDF_CONFIRM_ONE_V1 -- Confirm ทีละชุด : บันทึกลง Draft (DB ทุกเครื่องเห็น) + ใส่แถวเข้าตาราง T36 แล้วล็อกแถว ; บันทึกไม่สำเร็จ = ไม่ล็อก
+    if (!rows[i] || done[i] || busy) return; setSaveErr(''); const snap = rows[i].slice(); setBusy(true); let ok = true; try { ok = (await onAddRow(snap.slice(), file && file.name)) !== false; } catch (e) { ok = false; } setBusy(false);
+    if (!ok) { setSaveErr('บันทึก Draft ไม่สำเร็จ — ชุดนี้ยังไม่ถูก Confirm ลองใหม่อีกครั้ง'); return; }
+    addedRef.current[i] = snap; setDone((d) => ({ ...d, [i]: 'ok' }));
+    const n = nextUndone(i); if (n >= 0) setTimeout(() => pick(n, 'right'), 50);
+  };
+  const skipOne = (i) => { if (done[i]) return; setDone((d) => ({ ...d, [i]: 'skip' })); const n = nextUndone(i); if (n >= 0) setTimeout(() => pick(n, 'right'), 50); };
+  const go = (d) => { let k = sel + d; while (k >= 0 && k < rows.length && !rows[k]) k += d; if (k >= 0 && k < rows.length) pick(k, 'right'); }; // MARKER_T36_PDF_NEXT_V1 -- Next/Prev ไปเรื่อยๆ
+  const leftRef = React.useRef(null);
+  const zAnchor = React.useRef(null); const drag = React.useRef(null);
+  const ZMIN = 0.5; const ZMAX = 4;
+  const zoomAt = (f, cx, cy) => { const el = leftRef.current; if (el) { const r = el.getBoundingClientRect(); const ox = (cx == null ? r.width / 2 : cx - r.left); const oy = (cy == null ? r.height / 2 : cy - r.top); zAnchor.current = { ox, oy, fx: (el.scrollLeft + ox) / Math.max(1, el.scrollWidth), fy: (el.scrollTop + oy) / Math.max(1, el.scrollHeight) }; } setZoom((z) => Math.min(ZMAX, Math.max(ZMIN, +(z * f).toFixed(3)))); };
+  React.useLayoutEffect(() => { const el = leftRef.current; const a = zAnchor.current; if (!el || !a) return; zAnchor.current = null; el.scrollLeft = a.fx * el.scrollWidth - a.ox; el.scrollTop = a.fy * el.scrollHeight - a.oy; }, [zoom]);
+  React.useEffect(() => { // MARKER_T36_PDF_WHEEL_ZOOM_V2 -- เอาเมาส์ชี้รูป + Ctrl + ล้อเมาส์ = ซูมเข้า/ออกตรงตำแหน่งเมาส์ (ล้อธรรมดา = เลื่อน)
+    const el = leftRef.current; if (!el) return undefined;
+    const h = (e) => { if (!(e.ctrlKey || e.metaKey)) return; e.preventDefault(); zoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY); };
+    el.addEventListener('wheel', h, { passive: false }); return () => el.removeEventListener('wheel', h);
+  }, [res]); // eslint-disable-line react-hooks/exhaustive-deps
+  const keyRef = React.useRef(null); keyRef.current = { go, confirmOne, sel };
+  React.useEffect(() => { // ปุ่มลัด: → / ← = ชุดถัดไป/ก่อนหน้า (ไม่มีปุ่มลัด Confirm — ต้องกดปุ่ม Confirm เองทีละชุด)
+    const h = (e) => { const t = e.target; if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return; const k = keyRef.current;
+      if (e.key === 'ArrowRight') { e.preventDefault(); k.go(1); } else if (e.key === 'ArrowLeft') { e.preventDefault(); k.go(-1); } };
+    window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h);
+  }, []);
+  const btn = { height: 26, borderRadius: 8, padding: '0 12px', cursor: 'pointer', fontSize: 12 };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(15,23,42,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width: '98vw', height: '96vh', background: '#fff', borderRadius: '14px', display: 'flex', flexDirection: 'column', boxShadow: '0 12px 40px rgba(0,0,0,.3)', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #e3e8ef', flexWrap: 'wrap' }}>
+          <b style={{ color: NAVY, fontSize: '15px' }}>Temp. T36 · อ่านจาก PDF</b>
+          <span style={{ color: '#6b7280', fontSize: '12px' }}>{file.name}</span>
+          <span style={{ display: 'inline-flex', border: `1px solid ${NAVY}`, borderRadius: 99, overflow: 'hidden' }}>
+            {[['preview', 'Preview'], ['list', `Confirm List (${nDone})`]].map(([k, lb]) => (
+              <button key={k} type="button" onClick={() => setTab(k)} style={{ height: 28, padding: '0 16px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, background: tab === k ? NAVY : '#fff', color: tab === k ? '#fff' : NAVY }}>{lb}</button>))}
+          </span>
+          {res && <span style={{ background: '#e3f4e8', color: '#2e7d32', borderRadius: 99, padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>{res.forms} ชุด · ตรงใบเสร็จ {nOk}</span>}
+          {res && nBad > 0 && <span style={{ background: '#fff3d6', color: '#b26a00', borderRadius: 99, padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>⚠ ไม่ตรง {nBad}</span>}
+          {payer && <span style={{ color: '#6b7280', fontSize: 12 }}>ผู้นำส่ง Tax ID {payer.ptax} · สาขา {payer.pbr} → Lookup Branch List{res.br[0] && res.br[0].code ? ' = ' + res.br[0].code : (res.br[0] && res.br[0].cands && res.br[0].cands.length > 1 ? '' : ' : ' + ((res.br[0] && res.br[0].note) || 'ไม่พบ'))}</span>}
+          {res && res.br[0] && res.br[0].cands && res.br[0].cands.length > 1 && (
+            <span style={{ fontSize: 12, color: '#b26a00', fontWeight: 600 }}>พบหลายสาขา → เลือกสาขา Oracle:{' '}
+              <select value={brPick} onChange={(e) => chooseBr(e.target.value)} style={{ height: 28, borderRadius: 8, border: '1px solid #cfd6e0', padding: '0 6px' }}>
+                <option value="">— เลือก —</option>{res.br[0].cands.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select></span>)}
+          <span style={{ flex: 1 }} />
+          {nNoBr > 0 && <span style={{ color: '#b26a00', fontSize: 12 }}>{nNoBr} แถวไม่มีสาขา Oracle (ใช้ BU ที่เลือกในหน้า T36)</span>}
+          {res && (<>
+            <button type="button" onClick={() => go(-1)} style={{ height: 30, borderRadius: 8, border: '1px solid #cfd6e0', background: '#fff', padding: '0 12px', cursor: 'pointer' }}>◀ ก่อนหน้า</button>
+            <span style={{ fontSize: 12, color: '#6b7280' }}>ชุด {sel + 1} / {rows.length}</span>
+            <button type="button" onClick={() => go(1)} style={{ height: 30, borderRadius: 8, border: '1px solid #cfd6e0', background: '#fff', padding: '0 12px', cursor: 'pointer' }}>ถัดไป ▶</button></>)}
+          {res && <span style={{ background: '#eaf1fb', color: NAVY, borderRadius: 99, padding: '2px 10px', fontSize: 12, fontWeight: 600 }}>Confirm แล้ว {nDone} / {rows.filter(Boolean).length}</span>}
+          <button type="button" onClick={onClose} style={{ height: 30, borderRadius: 8, border: `1px solid ${NAVY}`, background: NAVY, color: '#fff', padding: '0 16px', fontWeight: 600, cursor: 'pointer' }}>{nDone ? 'เสร็จสิ้น' : 'ปิด'}</button>
+        </div>
+        {!res && !err && <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>… กำลังอ่าน PDF</div>}
+        {err && <div style={{ padding: 40, textAlign: 'center', color: '#e5484d' }}>✗ {err}</div>}
+        {res && tab === 'preview' && (
+          <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(480px,1fr) 400px', gap: '12px', padding: '12px', minHeight: 0 }}>
+            <div style={{ border: '1px solid #e3e8ef', borderRadius: 12, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '8px 12px', background: '#f6f8fb', borderBottom: '1px solid #e3e8ef', fontWeight: 600, color: NAVY, fontSize: 13 }}><span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>ต้นฉบับ PDF <span style={{ fontWeight: 400, color: '#6b7280', fontSize: 12 }}>ชุดเดียว · ไฮไลต์ = ช่องที่ดึงค่า · ชี้รูป + Ctrl+ล้อเมาส์ = ซูม · ลากเพื่อเลื่อน</span><span style={{ flex: 1 }} />
+                <button type="button" onClick={() => zoomAt(1 / 1.25)} style={{ height: 24, width: 28, border: '1px solid #cfd6e0', background: '#fff', borderRadius: 6, cursor: 'pointer' }}>−</button>
+                <span style={{ fontSize: 12, fontWeight: 400, minWidth: 38, textAlign: 'center', cursor: 'pointer' }} title="กลับขนาดเริ่มต้น (80%)" onClick={() => setZoom(ZDEF)}>{Math.round(zoom * 100)}%</span>
+                <button type="button" onClick={() => zoomAt(1.25)} style={{ height: 24, width: 28, border: '1px solid #cfd6e0', background: '#fff', borderRadius: 6, cursor: 'pointer' }}>+</button></span></div>
+              <div ref={leftRef} onMouseDown={(e) => { const el = leftRef.current; if (e.button !== 0 || !el || zoom <= 1) return; drag.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop }; }} onMouseMove={(e) => { const d = drag.current; const el = leftRef.current; if (!d || !el) return; el.scrollLeft = d.sl - (e.clientX - d.x); el.scrollTop = d.st - (e.clientY - d.y); }} onMouseUp={() => { drag.current = null; }} onMouseLeave={() => { drag.current = null; }} title="ชี้รูป + Ctrl + ล้อเมาส์ = ซูมตรงตำแหน่งเมาส์ · ลากเพื่อเลื่อน" style={{ flex: 1, overflow: 'auto', scrollbarWidth: 'thin', scrollbarColor: '#b6c0cc transparent', cursor: zoom > 1 ? 'grab' : 'default', userSelect: 'none', background: '#eef1f5', padding: 10 }}>
+                {res.items.map((it, i) => {
+                  if (i !== sel) return null; // MARKER_T36_PDF_ONE_AT_A_TIME_V1 -- แสดงทีละชุด
+                  const r = res.rows[i]; const tk = [r[1], r[5], fmtInt(r[2]), fmtInt(r[3]), fmtAmt(it.recAmount), r[4].replace(/\./g, '/')];
+                  return (
+                    <div key={i} ref={(el) => { cardRef.current[i] = el; }} onClick={() => pick(i, 'left')} style={{ marginBottom: 14, padding: 8, borderRadius: 10, background: '#fff', border: sel === i ? `2px solid ${NAVY}` : '2px solid transparent', boxShadow: '0 1px 4px rgba(0,0,0,.08)', cursor: 'pointer' }}>
+                      <PageCanvas doc={res.doc} pageNo={it.formPage} tokens={tk} title="ฟอร์ม ภ.พ.36" zoom={zoom} />
+                      {it.recPage ? <PageCanvas doc={res.doc} pageNo={it.recPage} tokens={tk} title="ใบเสร็จรับเงิน" zoom={zoom} /> : <div style={{ padding: 10, color: '#b26a00', fontSize: 12 }}>⚠ ไม่พบหน้าใบเสร็จของชุดนี้</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ border: '1px solid #e3e8ef', borderRadius: 12, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '8px 12px', background: '#f6f8fb', borderBottom: '1px solid #e3e8ef', fontWeight: 600, color: NAVY, fontSize: 13 }}>ข้อมูลที่ดึงมา · ชุดที่ {sel + 1} / {rows.length} <span style={{ fontWeight: 400, color: '#6b7280', fontSize: 12 }}>แก้ไขได้</span></div>
+              <div style={{ flex: 1, overflow: 'auto', padding: 14, scrollbarWidth: 'thin', scrollbarColor: '#b6c0cc transparent' }}>
+                {(() => { // MARKER_T36_PDF_SET_FORM_V1 -- แสดงข้อมูลเป็นชุด (ฟอร์มทีละใบ) ไม่ใช่ตารางรวม
+                  const i = sel; const r = rows[i]; const it = res.items[i];
+                  if (!r) return <div style={{ color: '#6b7280' }}>ชุดนี้ถูกลบออกแล้ว</div>;
+                  const lock = !!done[i];
+                  const F = [[1, 'ชื่อบริษัทที่โอนต่างประเทศ', 'จากฟอร์ม · ชื่อผู้ประกอบการซึ่งเป็นผู้รับเงิน'], [2, 'มูลค่าฐานภาษี', 'จากฟอร์ม · ข้อ 1 จำนวนเงินที่จ่าย'], [3, 'ภ.พ.36 (ภาษีมูลค่าเพิ่มที่ต้องนำส่ง)', 'จากฟอร์ม · ข้อ 2 (ไม่รวมเงินเพิ่ม/เบี้ยปรับ)'], [4, 'วัน/เดือน/ปี ใบเสร็จรับเงิน', 'จากใบเสร็จ · วันชำระเงิน'], [5, 'เลขที่ใบเสร็จรับเงิน', 'จากฟอร์ม + ใบเสร็จ (ใช้จับคู่)'], [6, 'สาขา Oracle', 'Lookup Branch List จาก Tax ID + สาขาผู้นำส่ง']];
+                  return (
+                    <div>
+                      {F.map(([ci, lb, src]) => (
+                        <div key={ci} style={{ marginBottom: 12 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: NAVY }}>{lb} <span style={{ fontWeight: 400, color: '#9aa3af', fontSize: 11 }}>· {src}</span></div>
+                          <input value={ci === 2 || ci === 3 ? commaLive(r[ci]) : r[ci]} disabled={lock} onChange={(e) => setCell(i, ci, ci === 2 || ci === 3 ? e.target.value.replace(/,/g, '') : e.target.value)} style={{ width: '100%', boxSizing: 'border-box', height: 36, fontSize: 15, padding: '0 10px', border: '1px solid #cfd6e0', borderRadius: 8, background: lock ? '#f3f4f6' : '#fff', textAlign: ci === 2 || ci === 3 ? 'right' : 'left', fontVariantNumeric: 'tabular-nums' }} />
+                        </div>
+                      ))}
+                      <div style={{ padding: '10px 12px', borderRadius: 8, background: it.ok ? '#e8f5e9' : '#fff3d6', color: it.ok ? '#2e7d32' : '#b26a00', fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
+                        {it.ok ? `✓ ตรงใบเสร็จ (ยอดใบเสร็จ ${fmtAmt(it.recAmount)})` : `⚠ ${it.issues.join(' ; ')}`}
+                        {it.extra && parseFloat(it.extra) > 0 && <div style={{ fontWeight: 400, marginTop: 2 }}>มีเงินเพิ่ม {fmtAmt(it.extra)} — ไม่รวมในช่อง ภ.พ.36</div>}
+                      </div>
+                      {lock ? <div style={{ padding: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, color: done[i] === 'ok' ? '#2e7d32' : '#6b7280', fontWeight: 700 }}><span>{done[i] === 'ok' ? '✓ Confirm แล้ว — เก็บเป็น Draft แล้ว' : 'ข้ามแล้ว'}</span><button type="button" onClick={() => undoOne(i)} style={{ height: 30, borderRadius: 8, border: '1px solid #cfd6e0', background: '#fff', padding: '0 12px', cursor: 'pointer', fontWeight: 600 }}>{done[i] === 'ok' ? 'Cancel' : '↩ เอากลับมาตรวจ'}</button></div> : (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button type="button" onClick={() => confirmOne(i)} disabled={busy} style={{ opacity: busy ? 0.6 : 1, flex: 1, height: 42, borderRadius: 10, border: `1px solid ${NAVY}`, background: NAVY, color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>{busy ? 'กำลังบันทึก…' : '✓ Confirm ชุดนี้'}</button>
+                          <button type="button" onClick={() => skipOne(i)} style={{ height: 42, borderRadius: 10, border: '1px solid #cfd6e0', background: '#fff', padding: '0 16px', cursor: 'pointer' }}>ข้าม</button>
+                        </div>)}
+                    </div>
+                  );
+                })()}
+              </div>
+              <div style={{ padding: '8px 12px', borderTop: '1px solid #e3e8ef', background: '#fafbfc', color: '#6b7280', fontSize: 12 }}>{saveErr ? <span style={{ color: '#e5484d', fontWeight: 600 }}>{saveErr}</span> : 'Confirm ชุดนี้ = เก็บเป็น Draft ใน DB (ทุกคน/ทุกเครื่องเห็น) + ใส่ตาราง T36 แล้วไปชุดถัดไป · พอ Confirm เข้า Draft จริงค่อยลบ Draft ให้ · การตรวจซ้ำ/ไม่ผ่านใช้กติกา T36 เดิมในตาราง'}</div>
+            </div>
+          </div>
+        )}
+        {res && tab === 'list' && (
+          <div style={{ flex: 1, overflow: 'auto', padding: 14, scrollbarWidth: 'thin', scrollbarColor: '#b6c0cc transparent' }}>
+            <div style={{ fontWeight: 600, color: NAVY, marginBottom: 8 }}>Confirm List <span style={{ fontWeight: 400, color: '#6b7280', fontSize: 12 }}>ชุดที่ Confirm แล้ว (เก็บเป็น Draft แล้ว) · {nDone} ชุด · ข้าม {Object.values(done).filter((v) => v === 'skip').length} ชุด · รอตรวจ {rows.filter((r, i) => r && !done[i]).length} ชุด</span></div>
+            {nDone === 0 ? <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>ยังไม่มีชุดที่ Confirm — ไปที่แท็บ Preview แล้วกด Confirm ทีละชุด</div> : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead><tr>{['ชุดที่', 'ชื่อบริษัทที่โอนต่างประเทศ', 'มูลค่าฐานภาษี', 'ภ.พ.36', 'วัน/เดือน/ปี ใบเสร็จ', 'เลขที่ใบเสร็จรับเงิน', 'สาขา Oracle', 'เทียบใบเสร็จ', ''].map((h, k) => <th key={k} style={{ background: NAVY, color: '#fff', fontWeight: 500, fontSize: 12, padding: '8px 10px', textAlign: k === 2 || k === 3 ? 'right' : 'left', whiteSpace: 'nowrap', position: 'sticky', top: 0 }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {rows.map((r, i) => { if (!r || done[i] !== 'ok') return null; const it = res.items[i]; const td = { padding: '7px 10px', borderBottom: '1px solid #f0eee8', whiteSpace: 'nowrap' };
+                    return (
+                      <tr key={i}>
+                        <td style={td}>{i + 1}</td><td style={td}>{r[1]}</td><td style={{ ...td, textAlign: 'right' }}>{r[2]}</td><td style={{ ...td, textAlign: 'right' }}>{r[3]}</td><td style={td}>{r[4]}</td><td style={td}>{r[5]}</td><td style={td}>{r[6] || <span style={{ color: '#b26a00' }}>— (ใช้ BU)</span>}</td>
+                        <td style={{ ...td, color: it.ok ? '#2e7d32' : '#b26a00', fontWeight: 600 }}>{it.ok ? '✓ ตรงใบเสร็จ' : '⚠ ' + it.issues.join(' ; ')}</td>
+                        <td style={td}><button type="button" onClick={() => { setTab('preview'); pick(i, 'right'); }} style={{ height: 24, borderRadius: 6, border: '1px solid #cfd6e0', background: '#fff', padding: '0 10px', cursor: 'pointer', fontSize: 12 }}>ดูชุดนี้</button> <button type="button" onClick={() => undoOne(i)} style={{ height: 24, borderRadius: 6, border: '1px solid #cfd6e0', background: '#fff', padding: '0 10px', cursor: 'pointer', fontSize: 12 }}>Cancel</button></td>
+                      </tr>); })}
+                </tbody>
+              </table>)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

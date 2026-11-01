@@ -45,6 +45,44 @@ const T36_NAME_STOP = new Set(['inc', 'incorporated', 'ltd', 'limited', 'pte', '
 function t36NameKey(n) {
   return String(n == null ? '' : n).toLowerCase().replace(/[.,()'"\-&/]/g, ' ').split(/\s+/).filter((t) => t && !T36_NAME_STOP.has(t)).join('');
 }
+// MARKER_T36_TIMELINE_AUTO_PREPARE_V1 -- Temp. T36 Confirm -> ติ๊ก "Prepare Data" ของ PP36 ใน Timeline (หน้า BU) ให้อัตโนมัติ เฉพาะ BU ที่ Enable PP36 ไว้ (mode != X/D) ; ไม่สร้างแถว Timeline ใหม่ ; ข้ามถ้า Disable / ยังไม่มีแถว / ติ๊กแล้ว
+async function vatT36AutoPrepareTimeline(buKeys, who) {
+  const out = { checked: [], already: [], disabled: [], missing: [], error: '' };
+  try {
+    const st = await apiFetch('/vat/period/status');
+    const m = /^(\d{4})-(\d{2})/.exec(String((st && st.vat_period_month) || ''));
+    if (!m) { out.error = 'ไม่พบ Period ปัจจุบัน'; return out; }
+    const nx = new Date(Number(m[1]), Number(m[2]), 1); // เดือนถัดจาก vat_period_month = รอบปัจจุบัน (สูตรเดียวกับ Timeline)
+    const periodYm = `${nx.getFullYear()}-${String(nx.getMonth() + 1).padStart(2, '0')}`;
+    const TH = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+    const now = new Date();
+    const stamp = `${who || 'คุณ'} · Auto (Temp. PP36) · ${now.getDate()} ${TH[now.getMonth()]}`;
+    const savedBus = [];
+    for (const keys of buKeys) { // keys = [ชื่อ BU ที่ลองหาใน Timeline ตามลำดับ]
+      let row = null; let usedBu = '';
+      for (const k of keys) {
+        const r = await tlDb.from('timeline_progress').select('*').eq('period_ym', periodYm).eq('bu', k);
+        const hit = r && Array.isArray(r.data) ? r.data[0] : null;
+        if (hit) { row = hit; usedBu = k; break; }
+      }
+      const label = keys[0];
+      const state = row && row.state && typeof row.state === 'object' ? row.state : null;
+      const t = state && state.tasks && state.tasks.PP36;
+      if (!t || !Array.isArray(t.items) || !t.items.length) { out.missing.push(label); continue; }
+      if (t.mode === 'X' || t.mode === 'D') { out.disabled.push(label); continue; }
+      const it = t.items[0]; // Prepare Data
+      if (it.off) { out.disabled.push(label); continue; }
+      if (it.done && !t.nodata) { out.already.push(label); continue; }
+      const next = JSON.parse(JSON.stringify(state));
+      const nt = next.tasks.PP36; nt.mode = 'auto'; nt.nodata = false; nt.items[0].done = true; nt.items[0].by = stamp;
+      const ur = await tlDb.from('timeline_progress').update({ state: next, updated_by: who || '', updated_at: now.toISOString() }).eq('id', row.id);
+      if (ur && ur.error) { out.error = String(ur.error.message || ur.error); continue; }
+      out.checked.push(label); savedBus.push(usedBu);
+    }
+    if (savedBus.length) { try { broadcastWs('timeline_progress_updated', { period_ym: periodYm, bus: savedBus, by: who || '' }); } catch (e) { /* ignore */ } }
+  } catch (e) { out.error = String((e && e.message) || e); }
+  return out;
+}
 // MARKER_T36_DIRECT_DRAFT_V1 -- Temp. T36 Confirm ครั้งเดียวถึง Draft (ไม่ผ่าน Pre-draft) : วางแผนเลข GRN ต่อใบกำกับภาษี + แบ่ง ปกติ/Over Period ด้วยกติกาเดียวกับปุ่ม Confirm ของ Pre-draft Monitor
 // items = [{ key, taxInvIso, receiveIso }] (1 แถว = 1 ใบ = 1 เลข GRN เรียงตามลำดับ) ; คืน { plan: { [key]: { over, grn, period, receiveOverride } }, commit() }
 async function vatT36PlanGrn(buCode, items) {
@@ -110,13 +148,14 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
   React.useEffect(() => { try { localStorage.setItem(T36_LS_KEY, JSON.stringify(t36Rows)); } catch (e) { /* ignore */ } }, [t36Rows]);
   // MARKER_VAT_T36_FILE_SWITCH_V1 -- Switch form: วางข้อมูล <-> โยนไฟล์ (Excel/CSV) ; อ่านแผ่น "T36 Temp." (หัวแถว ลำดับ…สาขา Oracle) แล้วเติมลงตาราง
   const [t36Mode, setT36Mode] = React.useState('paste');
-  const [t36DateMode, setT36DateMode] = React.useState(() => { try { const v = localStorage.getItem('vat_t36_date_mode_v3'); return v === 'dmy' || v === 'mdy' ? v : 'auto'; } catch (e) { return 'auto'; } }); // MARKER_T36_DATE_DEFAULT_DMY_V1 -- auto = ถาม: อ่านเป็น วัน.เดือน.ปี ไปก่อน แต่ถ้ามีวันที่กำกวมจะขึ้นให้เลือก (MARKER_T36_DATE_ASK_CHOICE_V1) -- ค่าเริ่มต้น = วัน.เดือน.ปี (12.10.2026 = 12-Oct-26) ; ใช้ Key ใหม่ ไม่เอาค่า 'auto' ที่เคยถูกจำไว้อัตโนมัติ // MARKER_T36_DATE_MODE_CHOOSER_V1 -- ให้เลือกวิธีอ่านวันที่กำกวม : auto = เดือน/วัน/ปี (เดิม) | dmy = วัน/เดือน/ปี | mdy = เดือน/วัน/ปี
+  const [t36DateMode] = React.useState('auto'); /* MARKER_T36_DATE_NO_ASK_V1 -- ไม่มี Dropdown เลือกวิธีอ่านวันที่แล้ว : ระบบตัดสินเอง (ดู t36ColProof) */ // MARKER_T36_DATE_DEFAULT_DMY_V1 -- auto = ถาม: อ่านเป็น วัน.เดือน.ปี ไปก่อน แต่ถ้ามีวันที่กำกวมจะขึ้นให้เลือก (MARKER_T36_DATE_ASK_CHOICE_V1) -- ค่าเริ่มต้น = วัน.เดือน.ปี (12.10.2026 = 12-Oct-26) ; ใช้ Key ใหม่ ไม่เอาค่า 'auto' ที่เคยถูกจำไว้อัตโนมัติ // MARKER_T36_DATE_MODE_CHOOSER_V1 -- ให้เลือกวิธีอ่านวันที่กำกวม : auto = เดือน/วัน/ปี (เดิม) | dmy = วัน/เดือน/ปี | mdy = เดือน/วัน/ปี
   const [t36BuPick, setT36BuPick] = React.useState(''); // MARKER_T36_BU_PICK_V1 -- เลือก BU เองกรณีแถวไม่มีสาขา Oracle และหน้าหลักไม่ได้เลือก BU
   const [t36DateChosen, setT36DateChosen] = React.useState(null); // MARKER_T36_DATE_ASK_CHOICE_V1 -- ตัวเลือกที่ผู้ใช้กดตอนเจอวันที่กำกวม (ใช้กับข้อมูลชุดนี้ ไม่ถูกจำถาวร ล้างเมื่อกด ล้าง)
   const t36AmbSig = (t36Rows || []).map((r) => { const m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4}|\d{2})$/.exec(String((r && r[4]) || '').trim()); return m && +m[1] <= 12 && +m[2] <= 12 && +m[1] !== +m[2] ? String(r[4]).trim() : ''; }).filter(Boolean).join('|'); // MARKER_T36_DATE_CHOICE_STALE_FIX_V1 -- ตัวเลือกที่เคยกดใช้ได้เฉพาะชุดวันที่กำกวมชุดเดิม ข้อมูลใหม่/วันที่ต่างไป = ถามใหม่
-  const [t36ChosenSig, setT36ChosenSig] = React.useState('');
+  const [t36ChosenSig] = React.useState('');
   const [t36Ovr, setT36Ovr] = React.useState({}); // MARKER_T36_MONITOR_EDITABLE_V1 -- ค่าที่แก้ใน Monitor (เฉพาะช่องที่ไม่ได้มาจากข้อมูลที่วาง) key = ชื่อบริษัท|เลขที่ใบเสร็จ
   const t36Eff = (t36DateChosen && t36ChosenSig === t36AmbSig ? t36DateChosen : null) || t36DateMode;
+  const t36ColProof = React.useMemo(() => { /* MARKER_T36_DATE_NO_ASK_V1 -- ระบบตัดสินวิธีอ่านวันที่เอง : ถ้าในข้อมูลมีแถวที่พิสูจน์รูปแบบได้ (ตัวหน้า > 12 = วัน/เดือน/ปี , ตัวหลัง > 12 = เดือน/วัน/ปี) ใช้กับทุกแถวที่คั่นด้วยตัวคั่นชนิดเดียวกัน (s = / , d = . หรือ -) ; ถ้าพิสูจน์ไม่ได้ใช้กติกาเดิม (/ = เดือน/วัน/ปี , . หรือ - = วัน/เดือน/ปี) */ const pr = { s: null, d: null }; (t36Rows || []).forEach((r) => { const m = /^(\d{1,2})([\/\-.])(\d{1,2})[\/\-.](\d{4}|\d{2})$/.exec(String((r && r[4]) || '').trim()); if (!m) return; const k = m[2] === '/' ? 's' : 'd'; const x = +m[1]; const y = +m[3]; if (x > 12 && y <= 12) pr[k] = pr[k] || 'dmy'; else if (y > 12 && x <= 12) pr[k] = pr[k] || 'mdy'; }); return pr; }, [t36Rows]);
   React.useEffect(() => { try { localStorage.setItem('vat_t36_date_mode_v3', t36DateMode); } catch (e) { /* ignore */ } }, [t36DateMode]);
   const t36PrevRef = React.useRef(null); const t36PrevH = React.useRef(0); // MARKER_T36_ADD_MEASURE_V1 -- วัดความสูง Preview ก่อนเปิดแถบ + เพิ่ม Text แล้วหักเท่าแถบ ให้ Monitor อยู่ที่เดิม
   const [t36DupNote, setT36DupNote] = React.useState(''); // MARKER_T36_AUTO_DEDUP_V1
@@ -507,7 +546,7 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
     }
     const m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4}|\d{2})$/.exec(String(v || '').trim()); if (!m) return null; // MARKER_T36_DATE_2DIGIT_YEAR_V1 -- ปี 2 หลัก: >= 50 = พ.ศ. (69 -> 2569 -> 2026) , < 50 = ค.ศ. 20xx (26 -> 2026)
     let a1 = +m[1], b1 = +m[2]; let yr = +m[3]; if (m[3].length === 2) yr = yr >= 50 ? 2500 + yr : 2000 + yr; const y = yr >= 2400 ? yr - 543 : yr;
-    const t36Slash = String(v || '').indexOf('/') >= 0; /* MARKER_T36_SLASH_MDY_V1 -- คั่นด้วย / = เดือน/วัน/ปี (MM/DD/YYYY) ; คั่นด้วย . หรือ - = วัน.เดือน.ปี */ let mo = a1, d = b1; if (t36Eff === 'mdy' || (t36Eff === 'auto' && t36Slash)) { if (a1 > 12) { d = a1; mo = b1; } } else { d = a1; mo = b1; if (mo > 12) { d = b1; mo = a1; } } // dmy / auto(ไม่ใช่ /) อ่านเป็น วัน.เดือน.ปี ก่อน
+    const t36Slash = String(v || '').indexOf('/') >= 0; /* MARKER_T36_SLASH_MDY_V1 -- คั่นด้วย / = เดือน/วัน/ปี (MM/DD/YYYY) ; คั่นด้วย . หรือ - = วัน.เดือน.ปี */ let mo = a1, d = b1; if (t36Eff === 'mdy' || (t36Eff === 'auto' && (t36ColProof[t36Slash ? 's' : 'd'] ? t36ColProof[t36Slash ? 's' : 'd'] === 'mdy' : t36Slash))) { if (a1 > 12) { d = a1; mo = b1; } } else { d = a1; mo = b1; if (mo > 12) { d = b1; mo = a1; } } // dmy / auto(ไม่ใช่ /) อ่านเป็น วัน.เดือน.ปี ก่อน
     const dt = new Date(y, mo - 1, d); if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
     return { y, mo, d, amb: t36Eff === 'auto' && a1 <= 12 && b1 <= 12 && a1 !== b1, be: yr >= 2400 };
   };
@@ -675,7 +714,7 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
     const dupN = t36Out.filter((x) => x.dup || x.dbDup).length; // MARKER_T36_BLOCK_CONFIRM_ON_DUP_V1 -- มีแถวซ้ำ = ห้าม Confirm จนกว่าจะลบแถวซ้ำออก
     if (dupN > 0) { await confirmDialog.alert(`มีแถวซ้ำ ${dupN} แถว (ซ้ำกับรายการที่มีอยู่แล้ว) — ลบแถวที่ติด ⚠ ซ้ำ ออกจากตารางก่อน แล้วค่อย Confirm`, { title: 'Confirm', variant: 'danger' }); return; }
     if (t36Err > 0) { await confirmDialog.alert(`ยังมีแถวไม่ผ่าน ${t36Err} แถว — แก้ให้ผ่านก่อน (เช่น ตั้ง Liability ใน Config BU) แล้วค่อย Confirm`, { title: 'Confirm' }); return; }
-    const ok = await confirmDialog.confirm(`Confirm ${rows.length} แถว เข้า Draft (Source = sm-pp36) ? — ระบบรันเลข GRN ต่อใบ และแยกใบที่เป็น Over Period ให้อัตโนมัติ (ไม่ผ่าน Pre-draft)`, { title: 'Confirm Temp. T36' });
+    const ok = await confirmDialog.confirm(`Confirm ${rows.length} แถว เข้า Draft (Source = sm-pp36) ? — ระบบรันเลข GRN ต่อใบ และแยกใบที่เป็น Over Period ให้อัตโนมัติ (ไม่ผ่าน Pre-draft)`, { title: 'Confirm Temp. PP36' });
     if (!ok) return;
     setT36Saving(true);
     const nowIso = new Date().toISOString(); const username = t36UserName || (t36CurUser && t36CurUser.email) || 'unknown';
@@ -711,15 +750,16 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
       for (const gu of grnDone) { try { await apiFetch(`/company_list/${gu.id}`, { method: 'PUT', body: JSON.stringify({ [gu.field]: gu.prevVal }) }); broadcastWs('company_list_updated', { bu: gu.bu }); } catch (e) { /* ignore */ } }
       for (const d of draftIds) { try { await apiFetch(`/vat_simpleinputdraft?eq_draft_id=${encodeURIComponent(d)}&hard=true`, { method: 'DELETE' }); } catch (e) { /* ignore */ } }
       setT36Saving(false);
-      await confirmDialog.alert(`ไม่สำเร็จ (เขียนไป ${done}/${rows.length} แถว ระบบยกเลิกที่เขียนไปแล้วให้) : ${(err && err.message) || ''}`, { title: 'Confirm Temp. T36', variant: 'danger' });
+      await confirmDialog.alert(`ไม่สำเร็จ (เขียนไป ${done}/${rows.length} แถว ระบบยกเลิกที่เขียนไปแล้วให้) : ${(err && err.message) || ''}`, { title: 'Confirm Temp. PP36', variant: 'danger' });
       return;
     }
     [...new Set(rows.map((x) => comOfBu(x.buU)))].forEach((b) => { try { broadcastWs('vat_simpleinputdraft_updated', { bu: b }); } catch (e) { /* ignore */ } });
+    let tlRes = null; try { const bKeys = {}; rows.forEach((x) => { const k = comOfBu(x.buU); (bKeys[k] = bKeys[k] || new Set()).add(x.buU); }); tlRes = await vatT36AutoPrepareTimeline(Object.keys(bKeys).map((k) => [k, ...Array.from(bKeys[k]).filter((v) => v !== k)]), username); } catch (e) { tlRes = null; } // MARKER_T36_TIMELINE_AUTO_PREPARE_V1 -- ติ๊ก Prepare Data ของ PP36 ใน Timeline
     Object.keys(t36DraftByBu).forEach((b) => { try { popvatReportDashboard(username, b, t36DraftByBu[b][0], t36DraftByBu[b].length, nowIso, 'SM-PP36'); } catch (e) { /* ignore */ } }); // MARKER_T36_TRANSACTION_TO_DASHBOARD_V1 -- นับเป็น Transaction แยกหมวด SM-PP36 : 1 Transaction ต่อ BU ต่อการ Confirm, lines = จำนวนแถว
     let holdFail = 0; try { holdFail = await t36HoldRemoveKeys([...new Set(rows.map((x) => t36HoldKey(t36Rows[x.i])).filter((k) => t36HoldKeys.has(k)))]); } catch (e) { holdFail = 1; } // MARKER_T36_CONFIRM_CLEAR_HOLD_V1 -- Confirm เข้า Draft จริงแล้ว ลบแถวใน Draft Hold ของชุดที่ Confirm
     setT36Saving(false);
     setT36Ovr({}); setT36Rows(t36Blank()); setT36FileMsg(''); setT36Raw(''); setT36Meta(null); setT36Manual(false); setT36DupNote('');
-    await confirmDialog.alert(`Confirm แล้ว ${done} แถว เข้า Draft (Source = sm-pp36)\nDraft ปกติ ${done - overN} แถว / Over Period ${overN} แถว${holdFail ? `\n⚠ ลบ Draft Hold ไม่สำเร็จ ${holdFail} รายการ (ลบเองได้ที่ปุ่ม Draft)` : ''}`, { title: 'สำเร็จ' });
+    await confirmDialog.alert(`Confirm แล้ว ${done} แถว เข้า Draft (Source = sm-pp36)\nDraft ปกติ ${done - overN} แถว / Over Period ${overN} แถว${holdFail ? `\n⚠ ลบ Draft Hold ไม่สำเร็จ ${holdFail} รายการ (ลบเองได้ที่ปุ่ม Draft)` : ''}${tlRes ? `\n\nTimeline PP36 › Prepare Data: ติ๊กให้แล้ว ${tlRes.checked.length} BU${tlRes.checked.length ? ' (' + tlRes.checked.join(', ') + ')' : ''}${tlRes.already.length ? `\nติ๊กไว้แล้ว: ${tlRes.already.join(', ')}` : ''}${tlRes.disabled.length ? `\nข้าม (PP36 Disable): ${tlRes.disabled.join(', ')}` : ''}${tlRes.missing.length ? `\nข้าม (ยังไม่มีแถว Timeline รอบนี้): ${tlRes.missing.join(', ')}` : ''}${tlRes.error ? `\n⚠ ${tlRes.error}` : ''}` : ''}`, { title: 'สำเร็จ' });
   };
   const T36_SRC_COL = { supplier_name: 1, amount_ex_vat: 2, vat_amount: 3, tax_invoice_date: 4, vendor_tax_invoice_number: 5 }; // MARKER_T36_MONITOR_EDITABLE_V1 -- ช่องที่ Map กลับไปที่ข้อมูลต้นทาง (แก้แล้วตรวจใหม่ได้ทันที)
   const t36OvrKey = (r) => `${String((r && r[1]) || '').trim()}|${String((r && r[5]) || '').trim()}`;
@@ -740,7 +780,7 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 20px', borderBottom: '1px solid #e5e7eb' }}>
           <div style={{ fontSize: '17px', fontWeight: 600, color: '#1a3a5c' }}>Generate Overall</div>
           <span style={{ fontSize: '12px', color: '#6b7280' }}>{bu ? `BU ที่เลือก: ${bu} · ` : ''}Simple</span>
-          <button type="button" onClick={() => { setShow46119(false); setShowT36((v) => !v); }} style={{ border: '1px solid #1a3a5c', background: showT36 ? '#1a3a5c' : '#fff', color: showT36 ? '#fff' : '#1a3a5c', borderRadius: '18px', padding: '6px 18px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>Temp. T36</button>
+          <button type="button" onClick={() => { setShow46119(false); setShowT36((v) => !v); }} style={{ border: '1px solid #1a3a5c', background: showT36 ? '#1a3a5c' : '#fff', color: showT36 ? '#fff' : '#1a3a5c', borderRadius: '18px', padding: '6px 18px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>Temp. PP36</button>
           <button type="button" onClick={() => { setShowT36(false); setShow46119((v) => !v); }} style={{ border: '1px solid #1a3a5c', background: show46119 ? '#1a3a5c' : '#fff', color: show46119 ? '#fff' : '#1a3a5c', borderRadius: '18px', padding: '6px 18px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>Temp. 46119</button>{/* MARKER_VAT_GENERATE_OVERALL_TEMP_46119_BTN_V1 */}
           <div style={{ flex: 1 }} />
           <button type="button" onClick={onClose} style={{ border: '1px solid #c5d6ee', background: '#fff', color: '#1a3a5c', borderRadius: '18px', padding: '6px 18px', cursor: 'pointer', fontSize: '13px' }}>ปิด</button>
@@ -761,7 +801,7 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
                   <div style={{ flex: 1 }} />
                   {t36DupNote && <span style={{ fontSize: '12px', color: '#b45309' }}>{t36DupNote}</span>}
                   {!String(bu || '').trim() && <select value={t36BuPick} onChange={(e) => setT36BuPick(e.target.value)} title="เลือก BU สำหรับแถวที่ไม่มีสาขา Oracle" style={{ padding: '5px 8px', fontSize: '12px', border: '1px solid #cfd6df', borderRadius: '6px', background: '#fff' }}>{/* MARKER_T36_BU_PICK_V1 */}<option value="">BU: เลือก (กรณีไม่มีสาขา Oracle)</option>{[...new Set((t36Co || []).filter((c) => !c.deleted).map((c) => String(c.bu ?? c.BU ?? '').trim().toUpperCase()).filter(Boolean))].sort().map((b) => <option key={b} value={b}>{b}</option>)}</select>}
-                  <select value={t36DateMode} onChange={(e) => { setT36DateMode(e.target.value); setT36DateChosen(null); }} title="วิธีอ่านวันที่ เช่น 12.10.2026" style={{ padding: '5px 8px', fontSize: '12px', border: '1px solid #cfd6df', borderRadius: '6px', background: '#fff' }}>{/* MARKER_T36_DATE_MODE_CHOOSER_V1 */}<option value="auto">วันที่: ถามเมื่อกำกวม</option><option value="dmy">วันที่: วัน/เดือน/ปี (12.10 = 12 ต.ค.)</option><option value="mdy">วันที่: เดือน/วัน/ปี (12.10 = 10 ธ.ค.)</option></select>
+                  {/* MARKER_T36_DATE_NO_ASK_V1 -- เอา Dropdown วิธีอ่านวันที่ออก (ระบบตัดสินเอง) */}
                   {(t36Out && t36Out.length > 0) && <button type="button" style={{ ...t36Btn, ...(t36AddOpen ? { background: '#1a3a5c', color: '#fff' } : {}) }} onClick={() => { if (!t36AddOpen && t36PrevRef.current) t36PrevH.current = t36PrevRef.current.offsetHeight; setT36Mode('paste'); setT36AddOpen((v) => !v); }}>{t36AddOpen ? 'ปิดช่องวาง' : '+ เพิ่ม Text'}</button>}
                   {t36Sel.length > 0 && (<button type="button" style={{ ...t36Btn, background: '#e5484d', color: '#fff', borderColor: '#e5484d' }} onClick={t36DelSel}>ลบที่เลือก ({t36Sel.length})</button>)}
                   <span style={{ position: 'relative', display: 'inline-block' }}>{/* MARKER_T36_DRAFT_HOLD_BTN_V1 -- Draft (n) : ชุดที่ Confirm จาก PDF เก็บใน DB ทุกเครื่องเห็น ; ดึงมาใส่ตาราง / ลบทิ้งได้ */}
@@ -774,22 +814,7 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
                   <button type="button" style={{ ...t36Btn, color: '#e5484d', borderColor: '#f3c1c3' }} onClick={() => { setT36Ovr({}); setT36DateChosen(null); setT36DupNote(''); setT36AddOpen(false); setT36Rows(t36Blank()); setT36FileMsg(""); setT36Raw(""); setT36Meta(null); setT36Manual(false); }}>ล้าง</button>
                   <button type="button" style={{ ...t36Btn, ...(t36ShowCfg ? { background: '#eef4fb' } : {}) }} onClick={() => setT36ShowCfg((v) => !v)}>⚙ Config BU</button>
                 </div>
-                {(() => { // MARKER_T36_DATE_ASK_CHOICE_V1 -- เจอวันที่กำกวม (วัน<=12 และเดือน<=12 ต่างกัน) -> ขึ้นให้เลือกวิธีอ่าน
-                  if (t36Eff !== 'auto') return null;
-                  const mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-                  let n = 0; let ex = null;
-                  (t36Rows || []).forEach((r) => { const raw = String((r && r[4]) || '').trim(); const dd = raw ? t36Date(raw) : null; if (dd && dd.amb) { n += 1; if (!ex) ex = raw; } });
-                  if (n === 0) return null;
-                  const m2 = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(ex); const a1 = +m2[1]; const b1 = +m2[2]; const yy = String(+m2[3] >= 2400 ? +m2[3] - 543 : +m2[3]).slice(-2);
-                  const btn = { padding: '6px 14px', fontSize: '12.5px', border: '1px solid #1a3a5c', borderRadius: '8px', background: '#fff', color: '#1a3a5c', cursor: 'pointer', fontWeight: 600 };
-                  return (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 12px', margin: '6px 0', background: '#fff8e6', border: '1px solid #f5d38a', borderRadius: '8px', fontSize: '12.5px', color: '#7a4b00' }}>
-                      <span>⚠ พบวันที่กำกวม {n} แถว (เช่น {ex}) — เลือกวิธีอ่าน:</span>
-                      <button type="button" style={btn} onClick={() => { setT36DateChosen('dmy'); setT36ChosenSig(t36AmbSig); }}>วัน.เดือน.ปี → {String(a1).padStart(2, '0')}-{mons[b1 - 1]}-{yy}</button>
-                      <button type="button" style={btn} onClick={() => { setT36DateChosen('mdy'); setT36ChosenSig(t36AmbSig); }}>เดือน.วัน.ปี → {String(b1).padStart(2, '0')}-{mons[a1 - 1]}-{yy}</button>
-                    </div>
-                  );
-                })()}
+                {/* MARKER_T36_DATE_NO_ASK_V1 -- เอาแถบถามวันที่กำกวมออก */}
                 {t36ShowCfg && (() => {
                   const o = t36Cfg.ovr || {};
                   const fq = t36CfgQ.trim().toUpperCase();
@@ -872,7 +897,7 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
                     <div onClick={() => setT36ShowCfg(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: '12px', padding: '16px 20px', boxShadow: '0 12px 40px rgba(0,0,0,0.3)', width: '1080px', maxWidth: '96vw', height: '88vh', maxHeight: '90vh', overflow: 'auto' }}>{/* MARKER_T36_CFG_TALLER_V1 -- สูงขึ้น (ความกว้างเท่าเดิม) */}
                       <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px' }}>
-                        <div style={{ fontSize: '15px', fontWeight: 600, color: '#1a3a5c', flex: 1 }}>⚙ Config Temp. T36 — By BU › By Supplier</div>
+                        <div style={{ fontSize: '15px', fontWeight: 600, color: '#1a3a5c', flex: 1 }}>⚙ Config Temp. PP36 — By BU › By Supplier</div>
                         <button type="button" style={t36Btn} onClick={() => setT36ShowCfg(false)}>ปิด</button>
                       </div>
                       <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', marginBottom: '10px' }}>
@@ -1102,7 +1127,7 @@ function GenerateOverallPopup({ onClose, bu, periodMonth, comOf }) { // MARKER_V
                 <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="#1a3a5c" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M12 17v-6" /><path d="M9.5 13.5 12 11l2.5 2.5" /></svg>
               </div>
               <div style={{ fontSize: '28px', fontWeight: 700, color: '#1a3a5c', letterSpacing: '0.2px' }}>เลือก Template ที่ต้องการ Upload ข้อมูล</div>
-              <div style={{ fontSize: '17px', color: '#6b7a90', lineHeight: 1.7 }}>กดปุ่ม <span style={{ display: 'inline-block', border: '1px solid #1a3a5c', color: '#1a3a5c', borderRadius: '16px', padding: '1px 14px', fontSize: '14px', fontWeight: 600, margin: '0 4px' }}>Temp. T36</span> ด้านบน เพื่อเริ่มวางข้อมูลหรือโยนไฟล์</div>
+              <div style={{ fontSize: '17px', color: '#6b7a90', lineHeight: 1.7 }}>กดปุ่ม <span style={{ display: 'inline-block', border: '1px solid #1a3a5c', color: '#1a3a5c', borderRadius: '16px', padding: '1px 14px', fontSize: '14px', fontWeight: 600, margin: '0 4px' }}>Temp. PP36</span> ด้านบน เพื่อเริ่มวางข้อมูลหรือโยนไฟล์</div>
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#9db8da" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginTop: '4px' }}><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
             </div>
           )}{/* MARKER_T36_EMPTY_HINT_V1 */}
@@ -1343,9 +1368,10 @@ const parseThaiTextDate = (str) => {
   else return null;
   return isoIfValidFlexDate(y, idx + 1, +m[1]);
 };
+const stripDateTimeTail = (v) => String(v == null ? '' : v).trim().replace(/^['\u2018\u2019`"\u201c\u201d]+/, '').replace(/\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:[AaPp]\.?[Mm]\.?|\u0e19\.))?$/, '').trim(); // MARKER_VATCONTROLLER_DATE_STRIP_TIME_V1 -- วางวันที่จาก Excel ที่มีเวลาต่อท้าย (เช่น 4/7/2569 14:51) หรือมี ' นำหน้า: ตัดส่วนเวลา/เครื่องหมายออกก่อนอ่านวันที่ (เดิมอ่านไม่ออกและไม่ถามเรื่องกำกวม)
 const parseFlexibleDate = (str) => {
   if (!str) return null;
-  let s = String(str).trim();
+  let s = stripDateTimeTail(str);
   s = s.replace(/[๐-๙]/g, (c) => String(c.charCodeAt(0) - 0x0E50)); // เลขไทย -> เลขอารบิก
   if (/[ก-๛]/.test(s)) { const thDate = parseThaiTextDate(s); if (thDate) return thDate; }
   let m = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/); // MARKER_VATCONTROLLER_DATE_YYYYMMDD_V1 -- รับ YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD (รองรับ พ.ศ.)
@@ -1395,7 +1421,7 @@ if (typeof document !== 'undefined' && !window.__vcDatePasteHooked) {
 }
 const getDateAmbiguity = (str) => { // คืน { DMY: iso, MDY: iso } เมื่อกำกวมจริง (ตัวเลขสองตัวแรก <= 12 และไม่เท่ากัน และอ่านได้ทั้งสองแบบ) ไม่งั้น null
   if (!str) return null;
-  const s = String(str).trim().replace(/[๐-๙]/g, (c) => String(c.charCodeAt(0) - 0x0E50));
+  const s = stripDateTimeTail(str).replace(/[๐-๙]/g, (c) => String(c.charCodeAt(0) - 0x0E50));
   let a, b, yRaw;
   let m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
   if (m) { a = +m[1]; b = +m[2]; yRaw = m[3]; }
@@ -1436,7 +1462,11 @@ const handleDatePasteAskNow = (e, getCurrentIso, applyIso) => {
   setTimeout(async () => {
     const text = el.value;
     const amb = getDateAmbiguity(text);
-    if (!amb) return;
+    if (!amb) { // MARKER_DATE_PASTE_NORMALIZE_V1 -- วางวันที่ที่ไม่กำกวม (เช่น 21/10/2026) -> แปลงเป็น MM/DD/YYYY ในช่องทันที ไม่รอ Blur
+      const isoNow = parseFlexibleDate(text);
+      if (isoNow) { lastPastedDateEl = null; el.value = formatDateDisplayMDY(isoNow); applyIso(isoNow); }
+      return;
+    }
     lastPastedDateEl = null;
     const pick = await askDateOrderPopup(amb, text);
     if (pick) { el.value = formatDateDisplayMDY(amb[pick]); applyIso(amb[pick]); }
@@ -6316,7 +6346,7 @@ function buildPdfTaxInvArResult(pdfRows, matches, uploadedBy) {
     if (isReview && (p.supplierKey !== 'INBOX' || rs.length > 0)) { // MARKER_INBOX_BUCKET_V1 -- Inbox Excel: ใบที่ Match ได้บางส่วน/ติดเงื่อนไข Quick Action ไม่ได้ (เช่น สาขาไม่ตรง, Ref ซ้ำหลายใบ) -> ตั้งผลที่ Match ได้ไว้ที่ Bucket (ไปต่อที่ Full Page Popvat) | ไม่พบ Incomplete เลย ยังไม่เข้า (MARKER_INBOX_NO_BACKUP_V1)
       pendingBackup.push({
         bu, docNum: base.docNum, sellerTaxId: base.sellerTaxId || '', matchKey: key,
-        row: { ...buildArCollectionTaxInvoiceBackupRow(base, bu, null, { sourceFile, uploadedBy, draftId, vendorCategoryByCode }), gross_value: amounts.grossValue, vat_value: amounts.vatValue, total_value: amounts.totalValue, source_type: p.supplierKey === 'INBOX' ? 'inbox_excel' : 'pdf_tax_invoice', ...(true /* MARKER_BUCKET_IDS_ALL_SOURCES_V1 -- ฝังรหัสแถวคู่ให้ทุกแหล่ง (PDF ด้วย ไม่ใช่เฉพาะ Inbox) ไม่งั้น Bucket หา Invoice คู่ไม่เจอ ('ไม่พบ') */ ? { ref_name: [...new Set(rs.map((x) => String(x.invoice_ref || '').trim()).filter(Boolean))].join(' | ') + ((() => { const ids = [...new Set(rs.map((x) => x.id).filter((v) => v != null && v !== ''))]; return ids.length ? ` ⟦ids:${ids.join(',')}⟧${m && m.step > 0 ? ` ⟦step:${m.step}⟧` : ''}` : ''; })()) } : {}) /* MARKER_BUCKET_EXACT_IDS_V1 -- ต่อท้าย id ของแถว Incomplete ที่ Match จริง ให้ Load จาก Bucket ดึงเป๊ะ */ /* ref_name = Invoice Ref. ของแถว Incomplete ที่ Match ได้ทั้งหมด -> Bucket 'Load ใบ to Full Page' หา Invoice เข้า Invoice List ได้ครบ */, ...(rs[0] && String(rs[0].supplier_code || '').trim() ? { supplier_code: String(rs[0].supplier_code).trim() } : {}) /* MARKER_BUCKET_SUPPLIER_CODE_FROM_INCOMPLETE_V1 -- Vendor Code ต้องเป็นของ BU นี้ (จากแถว Incomplete ที่ Match) ไม่ใช่หยิบโค้ดแรกของ Tax ID ซึ่งอาจเป็นของ BU อื่น (เช่น REV) */ },
+        row: { ...buildArCollectionTaxInvoiceBackupRow(base, bu, base.businessName || null, { sourceFile, uploadedBy, draftId, vendorCategoryByCode }), gross_value: amounts.grossValue, vat_value: amounts.vatValue, total_value: amounts.totalValue, source_type: p.supplierKey === 'INBOX' ? 'inbox_excel' : 'pdf_tax_invoice', ...(true /* MARKER_BUCKET_IDS_ALL_SOURCES_V1 -- ฝังรหัสแถวคู่ให้ทุกแหล่ง (PDF ด้วย ไม่ใช่เฉพาะ Inbox) ไม่งั้น Bucket หา Invoice คู่ไม่เจอ ('ไม่พบ') */ ? { ref_name: [...new Set(rs.map((x) => String(x.invoice_ref || '').trim()).filter(Boolean))].join(' | ') + ((() => { const ids = [...new Set(rs.map((x) => x.id).filter((v) => v != null && v !== ''))]; return ids.length ? ` ⟦ids:${ids.join(',')}⟧${m && m.step > 0 ? ` ⟦step:${m.step}⟧` : ''}` : ''; })()) } : {}) /* MARKER_BUCKET_EXACT_IDS_V1 -- ต่อท้าย id ของแถว Incomplete ที่ Match จริง ให้ Load จาก Bucket ดึงเป๊ะ */ /* ref_name = Invoice Ref. ของแถว Incomplete ที่ Match ได้ทั้งหมด -> Bucket 'Load ใบ to Full Page' หา Invoice เข้า Invoice List ได้ครบ */, ...(rs[0] && String(rs[0].supplier_code || '').trim() ? { supplier_code: String(rs[0].supplier_code).trim() } : {}) /* MARKER_BUCKET_SUPPLIER_CODE_FROM_INCOMPLETE_V1 -- Vendor Code ต้องเป็นของ BU นี้ (จากแถว Incomplete ที่ Match) ไม่ใช่หยิบโค้ดแรกของ Tax ID ซึ่งอาจเป็นของ BU อื่น (เช่น REV) */ },
       });
     }
   });
@@ -6855,7 +6885,7 @@ function buildArCollectionArchiveMatchRows(incompleteRowsForBu, archiveRowsForBu
   return out;
 }
 
-function VatWatchlistUploadModal({ onClose, initialFiles = null, autoRun = false }) {
+function VatWatchlistUploadModal({ onClose, initialFiles = null, autoRun = false, plain = false }) { // MARKER_AP0105_INC_PLAIN_V1 -- plain = เปิดจากหน้า Reconcile: ทำทุกขั้นเหมือน Upload Incomplete ปกติ (ไม่โชว์กล่องสรุปล้างของเดิมแบบหน้า Suspense)
   const { userName, currentUser } = useAuth(); // MARKER_VATWATCHLISTOPS_ACTION_LOG_V1
   const fileInputRef = React.useRef(null);
   const textareaRef = React.useRef(null);
@@ -6996,8 +7026,9 @@ function VatWatchlistUploadModal({ onClose, initialFiles = null, autoRun = false
         const buffer = await file.arrayBuffer();
         let text;
         if (file.__utf8) text = new TextDecoder('utf-8').decode(buffer); // MARKER_VATSUSPENSE_INTAKE_V1 -- ข้อความที่ Paste เป็น UTF-8 อยู่แล้ว
-        else { try { text = new TextDecoder('windows-874').decode(buffer); }
-        catch (err) { text = new TextDecoder('utf-8').decode(buffer); } }
+        else { try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); /* MARKER_VATWATCHLIST_AUTO_ENCODING_V1 -- ไฟล์ UTF-8 จริงอ่านเป็น UTF-8 ; ไฟล์ Windows-874 (ไบต์ไทยไม่ใช่ UTF-8 ที่ถูกต้อง) จะ throw แล้วไปอ่านเป็น Windows-874 -> ตัดคอลัมน์ตามตำแหน่งตัวอักษรได้ตรงทุกเส้นทางที่โยนเข้ามา */ }
+        catch (err0) { try { text = new TextDecoder('windows-874').decode(buffer); }
+        catch (err) { text = new TextDecoder('utf-8').decode(buffer); } } }
         const rawRows = parseVatWatchlistRawText(text);
         const dateIso = extractVatWatchlistIncompleteToDate(text);
         let dateStr = '—';
@@ -7743,7 +7774,7 @@ function VatWatchlistUploadModal({ onClose, initialFiles = null, autoRun = false
   };
   const [existingCounts, setExistingCounts] = React.useState(null); // MARKER_VATSUSPENSE_PREVIEW_CLEAR_COUNT_V1 -- จำนวนข้อมูลเดิมที่จะถูกล้างต่อ BU (เฉพาะเปิดจากหน้า Suspense)
   React.useEffect(() => {
-    if (!initialFiles || !previewRows) { setExistingCounts(null); return undefined; }
+    if (!initialFiles || plain || !previewRows) { setExistingCounts(null); return undefined; }
     let off = false;
     const bus = [...new Set(previewRows.map((r) => r.bu).filter(Boolean))];
     (async () => { try { const d = await apiFetch(`/vat-suspense/existing?bus=${encodeURIComponent(bus.join(','))}`); if (!off) setExistingCounts(d.rows || []); } catch (_) { if (!off) setExistingCounts([]); } })();
@@ -9267,13 +9298,13 @@ function VatWatchlistUploadZone() {
   const { rows: recentUploads, loading: recentUploadsLoading } = useVatWatchlistRecentUploads(5);
 
   return (
-    <div style={{ border: '0.5px solid #e8e8e8', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', height: '100%', boxSizing: 'border-box' }}>
+    <div style={{ border: '1px solid #e3e8ec', borderRadius: '10px', boxShadow: '0 1px 3px rgba(15,40,60,.06)', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', height: '100%', boxSizing: 'border-box' }}>
       {!isGuestRole && (
       <button
         onClick={() => { if (!isViewerRole) setShowModal(true); }}
         disabled={isViewerRole}
         title={isViewerRole ? 'สิทธิ์ Viewer ใช้ปุ่มนี้ไม่ได้' : undefined}
-        style={{ opacity: isViewerRole ? 0.45 : 1, width: '100%', padding: '10px', fontSize: '13px', fontWeight: '500', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: isViewerRole ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+        style={{ opacity: isViewerRole ? 0.45 : 1, width: '100%', padding: '10px', fontSize: '13px', fontWeight: '600', border: 'none', borderRadius: '999px', background: '#0f7a6b', color: 'white', cursor: isViewerRole ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
       >
         ⬆️ Import Overall file
       </button>
@@ -9283,7 +9314,7 @@ function VatWatchlistUploadZone() {
         <div style={{ fontSize: '10px', fontWeight: '600', color: '#888', letterSpacing: '0.4px' }}>อัปโหลดล่าสุด</div>
         <div onClick={() => setShowAllModal(true)} style={{ fontSize: '10px', color: '#555', cursor: 'pointer', textDecoration: 'underline' }}>ดูทั้งหมด</div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '50px 1fr 60px', gap: '4px', padding: '2px 4px', fontSize: '10px', color: '#888' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '84px 1fr 78px', gap: '4px', padding: '2px 4px 2px 9px', fontSize: '10px', color: '#888' }}> {/* MARKER_VATWATCHLISTOPS_RECENT_UPLOAD_COLOR_V1 -- รายการอัปโหลดล่าสุด: แถบสีซ้าย + วงกลมตัวย่อ BU (สีตามรหัส BU) + สลับสีพื้นแถว + วันที่ล่าสุด (วันนี้/เมื่อวาน) ตัวหนาเขียว */}
         <div>BU</div><div>Tax ID</div><div>Last update</div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
@@ -9291,13 +9322,24 @@ function VatWatchlistUploadZone() {
         {!recentUploadsLoading && recentUploads.length === 0 && (
           <div style={{ fontSize: '11px', color: '#aaa', padding: '5px 4px' }}>ยังไม่มีการอัปโหลด</div>
         )}
-        {recentUploads.map((row) => (
-          <div key={row.bu} style={{ display: 'grid', gridTemplateColumns: '50px 1fr 60px', gap: '4px', padding: '5px 4px', fontSize: '11px', borderTop: '0.5px solid #f0f0f0' }}>
-            <div style={{ fontWeight: '500' }}>{row.bu}</div>
-            <div style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.taxId}</div>
-            <div style={{ color: row.overdue ? '#c0392b' : '#333' }} title="Cut Off Incomplete Time">{row.updatedAt}</div>
-          </div>
-        ))}
+        {recentUploads.map((row, ri) => {
+          const buColors = ['#378ADD', '#7F77DD', '#1D9E75', '#D85A30', '#D4537E', '#BA7517', '#639922'];
+          const buKey = String(row.bu || '');
+          const buColor = buColors[[...buKey].reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % buColors.length];
+          const dm = String(row.updatedAt || '').match(/^(\d{2})-(\d{2})-(\d{4})/);
+          const ageDays = dm ? Math.floor((Date.now() - new Date(Number(dm[3]), Number(dm[2]) - 1, Number(dm[1])).getTime()) / 86400000) : null;
+          const isFresh = ageDays != null && ageDays <= 1;
+          return (
+            <div key={row.bu} style={{ display: 'grid', gridTemplateColumns: '84px 1fr 78px', gap: '4px', alignItems: 'center', padding: '6px 4px 6px 6px', fontSize: '12px', borderTop: '0.5px solid #f0f0f0', borderLeft: `3px solid ${buColor}`, background: ri % 2 ? '#f8fafb' : '#fff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '500' }}>
+                <span style={{ width: '26px', height: '26px', borderRadius: '50%', background: buColor, color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '500', flexShrink: 0 }}>{buKey.slice(0, 2).toUpperCase()}</span>
+                <span>{row.bu}</span>
+              </div>
+              <div style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.taxId}</div>
+              <div style={{ color: row.overdue ? '#c0392b' : isFresh ? '#27500A' : '#4b5563', fontWeight: isFresh ? '500' : '400', textAlign: 'right' }} title="Cut Off Incomplete Time">{row.updatedAt}</div>
+            </div>
+          );
+        })}
       </div>
 
       {showModal && <VatWatchlistUploadModal onClose={() => setShowModal(false)} />}
@@ -9416,12 +9458,12 @@ const VAT_MONITOR_COLS = [
   { key: 'fp', label: 'FP', width: 64, align: 'center' }, // MARKER_FP_COLUMN_BU_LIST_V1 -- คอลัมน์แยกแสดงจำนวนรายการรอใน Full Page (Bucket)
   { key: 'taxId', label: 'Tax ID', width: 120 },
   { key: 'vatPct', label: 'VAT %', width: 60, align: 'center' }, // MARKER_VATWATCHLISTOPS_VATPCT_CENTER_V1
-  { key: 'book', label: 'Book', width: 60 },
-  { key: 'taxType', label: 'Tax type', width: 110 }, // MARKER_VATWATCHLISTOPS_TAXTYPE_COL_V1
-  { key: 'prepareBy', label: 'Prepare by', width: 110 },
-  { key: 'lastIncomplete', label: 'Last incomplete date', width: 140, sortable: true },
-  { key: 'lastUpdate', label: 'สถานะรอบนี้', width: 150, sortable: true }, // MARKER_VATWATCHLISTOPS_MONITOR_STATUS_BADGE_V1 -- เดิม 'Last update at'
-  { key: 'action', label: 'Action', width: 80, align: 'center' }, // MARKER_VATWATCHLISTOPS_ACTION_COL_V1
+  { key: 'book', label: 'Book', width: 60, align: 'center' }, // MARKER_VATWATCHLISTOPS_COLS_CENTER_V1
+  { key: 'taxType', label: 'Tax type', width: 110, align: 'center' }, // MARKER_VATWATCHLISTOPS_TAXTYPE_COL_V1
+  { key: 'prepareBy', label: 'Prepare by', width: 110, align: 'center' },
+  { key: 'lastIncomplete', label: 'Last incomplete date', width: 140, sortable: true, align: 'center' },
+  { key: 'lastUpdate', label: 'สถานะรอบนี้', width: 150, sortable: true, align: 'center' }, // MARKER_VATWATCHLISTOPS_MONITOR_STATUS_BADGE_V1 -- เดิม 'Last update at'
+  { key: 'action', label: 'Action', width: 150, align: 'center' }, // MARKER_VATWATCHLISTOPS_ACTION_COL_V1
 ];
 
 // MARKER_VATWATCHLISTOPS_CONFIG_MODAL_V1
@@ -12104,16 +12146,16 @@ function VatWatchlistMonitorTable({ onGoto, onGotoQuick, search, setSearch, base
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: '4px', borderBottom: '0.5px solid #e8e8e8', flexShrink: 0 }}>
+      <div style={{ display: 'flex', gap: '2px', background: '#f3f3f3', borderRadius: '999px', padding: '4px', alignSelf: 'flex-start', margin: '4px 4px 8px', flexShrink: 0 }}> {/* MARKER_WATCHLIST_LIST_PILL_TEAL_V1 */}
         {VAT_WATCHLIST_MONITOR_TABS.map((t) => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
             style={{
-              padding: '8px 16px', fontSize: '13px', fontWeight: '500', border: 'none',
-              background: 'transparent', cursor: 'pointer',
-              borderBottom: activeTab === t.key ? '2px solid #1a3a5c' : '2px solid transparent',
-              color: activeTab === t.key ? '#1a3a5c' : '#888',
+              padding: '6px 18px', fontSize: '13px', fontWeight: '600', border: 'none', borderRadius: '999px',
+              cursor: 'pointer',
+              background: activeTab === t.key ? '#0f7a6b' : 'transparent',
+              color: activeTab === t.key ? 'white' : '#374151',
             }}
           >
             {t.label}
@@ -12141,12 +12183,12 @@ function VatWatchlistMonitorTable({ onGoto, onGotoQuick, search, setSearch, base
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search"
-          style={{ flex: 1, maxWidth: '260px', padding: '7px 10px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', outline: 'none', boxSizing: 'border-box' }}
+          style={{ flex: 1, maxWidth: '260px', padding: '7px 16px', fontSize: '13px', border: '1px solid #dde3e8', background: '#f5f6f8', borderRadius: '999px', outline: 'none', boxSizing: 'border-box' }}
         />
         <select
           value={baseFilter}
           onChange={(e) => setBaseFilter(e.target.value)}
-          style={{ width: '140px', padding: '7px 10px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', outline: 'none' }}
+          style={{ width: '140px', padding: '7px 12px', fontSize: '13px', border: '1px solid #dde3e8', background: '#f5f6f8', borderRadius: '999px', outline: 'none' }}
         >
           <option value="">Base: ทั้งหมด</option>
           {baseOptions.map((b) => <option key={b} value={b}>{b}</option>)}
@@ -12158,9 +12200,9 @@ function VatWatchlistMonitorTable({ onGoto, onGotoQuick, search, setSearch, base
           title={fastapnDriverStatus === 'missing' ? 'เครื่องนี้ยังไม่ได้ติดตั้งตัวช่วย fastapn:// (ดูคู่มือติดตั้งในหน้า Batch Control) — คลิกไอคอน 🔄 ข้างๆ ถ้าติดตั้งแล้ว' : 'Config Email'}
           aria-label="Config Email"
           onClick={() => { if (fastapnDriverStatus !== 'missing') setShowMailConfig(true); }}
-          onMouseEnter={(e) => { if (fastapnDriverStatus !== 'missing') { e.currentTarget.style.background = '#e8f5e9'; e.currentTarget.style.borderColor = '#2e7d32'; } }}
-          onMouseLeave={(e) => { if (fastapnDriverStatus !== 'missing') { e.currentTarget.style.background = 'white'; e.currentTarget.style.borderColor = '#d0d5dd'; } }}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px', height: '36px', padding: '0 14px', marginRight: fastapnDriverStatus === 'missing' ? '0' : '4px', fontSize: '13px', border: fastapnDriverStatus === 'missing' ? '0.5px solid #e0c0c0' : '0.5px solid #d0d5dd', borderRadius: '10px', background: fastapnDriverStatus === 'missing' ? '#f5f5f5' : 'white', color: fastapnDriverStatus === 'missing' ? '#aaa' : '#2e7d32', cursor: fastapnDriverStatus === 'missing' ? 'not-allowed' : 'pointer', transition: 'background 0.15s, border-color 0.15s' }}
+          onMouseEnter={(e) => { if (fastapnDriverStatus !== 'missing') { e.currentTarget.style.background = '#e3f4ef'; e.currentTarget.style.borderColor = '#0f7a6b'; } }}
+          onMouseLeave={(e) => { if (fastapnDriverStatus !== 'missing') { e.currentTarget.style.background = 'white'; e.currentTarget.style.borderColor = '#dde3e8'; } }}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px', height: '36px', padding: '0 14px', marginRight: fastapnDriverStatus === 'missing' ? '0' : '4px', fontSize: '13px', border: fastapnDriverStatus === 'missing' ? '1px solid #e0c0c0' : '1px solid #dde3e8', borderRadius: '999px', background: fastapnDriverStatus === 'missing' ? '#f5f5f5' : 'white', color: fastapnDriverStatus === 'missing' ? '#aaa' : '#0f7a6b', cursor: fastapnDriverStatus === 'missing' ? 'not-allowed' : 'pointer', transition: 'background 0.15s, border-color 0.15s' }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></svg>
           Email
@@ -12178,8 +12220,8 @@ function VatWatchlistMonitorTable({ onGoto, onGotoQuick, search, setSearch, base
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px', height: '36px',
             padding: '0 14px', marginRight: '4px', fontSize: '13px',
-            border: rateUnresolvedRows.length > 0 ? '0.5px solid #e0a0a0' : '0.5px solid #d0d5dd',
-            borderRadius: '10px',
+            border: rateUnresolvedRows.length > 0 ? '1px solid #e0a0a0' : '1px solid #dde3e8',
+            borderRadius: '999px',
             background: rateUnresolvedRows.length > 0 ? '#FCEBEB' : 'white',
             color: rateUnresolvedRows.length > 0 ? '#791F1F' : '#888',
             cursor: 'pointer',
@@ -12189,10 +12231,15 @@ function VatWatchlistMonitorTable({ onGoto, onGotoQuick, search, setSearch, base
         </button>
         </>)}
         <div style={{ flex: 1 }} />
-        <button type="button" title="ค้นหาทั้ง Report (ทุก BU)" aria-label="ค้นหาทั้ง Report" onClick={() => setShowReportSearch(true)}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '36px', height: '36px', border: '0.5px solid #d0d5dd', borderRadius: '10px', background: 'white', color: '#1a3a5c', cursor: 'pointer' }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+        <div style={{ width: `calc((100% - 7px) * ${(VAT_MONITOR_COLS.reduce((acc, c) => acc + (c.key === 'action' ? wOf(c) : 0), 0)) / totalWidth})`, marginRight: '11px', display: 'flex', justifyContent: 'center', flexShrink: 0 }}> {/* MARKER_VATWATCHLISTOPS_ADVANCE_ALIGN_ACTION_V1 -- ปุ่ม Advance อยู่เหนือคอลัมน์ Action และกว้างเท่าความกว้างคอลัมน์ Action (width 100% ของกล่องที่คำนวณจาก width ของคอลัมน์) */}
+        <button type="button" title="ค้นหาทั้ง Report (ทุก BU)" aria-label="Advance — ค้นหาทั้ง Report" onClick={() => setShowReportSearch(true)} /* MARKER_VATWATCHLISTOPS_ADVANCE_SEARCH_BTN_V1 -- ปุ่มค้นหาทั้ง Report เปลี่ยนจากวงกลมแว่นขยาย เป็นปุ่ม "Advance" + ไอคอน ทรงเดียวกับ Email / Rate ไม่พบ */
+          onMouseEnter={(e) => { e.currentTarget.style.background = '#e3f4ef'; e.currentTarget.style.borderColor = '#0f7a6b'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; e.currentTarget.style.borderColor = '#dde3e8'; }}
+          style={{ display: 'flex', width: '100%', boxSizing: 'border-box', alignItems: 'center', justifyContent: 'center', gap: '7px', height: '36px', padding: '0 14px', fontSize: '13px', border: '1px solid #dde3e8', borderRadius: '999px', background: 'white', color: '#0f7a6b', cursor: 'pointer' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+          Advance
         </button>
+        </div>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto' }}>
@@ -12207,7 +12254,7 @@ function VatWatchlistMonitorTable({ onGoto, onGotoQuick, search, setSearch, base
                 <th
                   key={c.key}
                   onClick={c.sortable ? () => handleSort(c.key) : undefined}
-                  style={{ padding: '8px 8px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: c.align || 'left', position: 'sticky', top: 0, cursor: c.sortable ? 'pointer' : 'default', userSelect: c.sortable ? 'none' : 'auto' }}
+                  style={{ padding: '9px 8px', background: '#0f7a6b', color: 'white', fontWeight: '600', textAlign: c.align || 'left', position: 'sticky', top: 0, cursor: c.sortable ? 'pointer' : 'default', userSelect: c.sortable ? 'none' : 'auto' }}
                 >
                   {c.label}{c.sortable && sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                   <span onMouseDown={(e) => startColResize(e, c)} onDoubleClick={(e) => { e.stopPropagation(); resetColW(c); }} onClick={(e) => e.stopPropagation()} title="ลากเพื่อปรับความกว้าง · ดับเบิลคลิก = ค่าเริ่มต้น" style={{ position: 'absolute', top: 0, right: 0, width: '6px', height: '100%', cursor: 'col-resize', userSelect: 'none' }} />
@@ -12244,15 +12291,15 @@ function VatWatchlistMonitorTable({ onGoto, onGotoQuick, search, setSearch, base
                   <td style={{ padding: '7px 8px', textAlign: 'center' }}>{(() => { const _g = fpGroupByBu[c.bu] || 0; const _t = fpTaxByBu[c.bu] || 0; return (_g + _t) > 0 ? (<span title={`มีรายการรออยู่ใน Full Page (Bucket) · Invoice Select ${_g} · Tax Invoice ${_t}`} style={{ padding: '1px 9px', borderRadius: '9px', background: '#fff8e1', border: '0.5px solid #f0c36d', color: '#8a6d00', fontSize: '11px', fontWeight: 600, whiteSpace: 'nowrap' }}>{_g + _t}</span>) : <span style={{ color: '#ccc' }}>—</span>; })()}</td>
                   <td style={{ padding: '7px 8px', color: '#555' }}>{c['TAX ID']}</td>
                   <td style={{ padding: '7px 8px', textAlign: 'center', color: '#555' }}>{c['VAT %'] || '—'}</td>
-                  <td style={{ padding: '7px 8px', color: '#555' }}>{c.BOOK}</td>
-                  <td style={{ padding: '7px 8px', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.allowed_tax_type || '—'}</td>
-                  <td style={{ padding: '7px 8px', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c['PREPARE BY']}</td>
-                  <td style={{ padding: '7px 8px', color: overdue ? '#c0392b' : '#333' }}>{formatVatWatchlistDate(lastIncompleteRaw)}</td>
+                  <td style={{ padding: '7px 8px', textAlign: 'center', color: '#555' }}>{c.BOOK}</td>
+                  <td style={{ padding: '7px 8px', textAlign: 'center', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.allowed_tax_type || '—'}</td>
+                  <td style={{ padding: '7px 8px', textAlign: 'center', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c['PREPARE BY']}</td>
+                  <td style={{ padding: '7px 8px', textAlign: 'center', color: overdue ? '#c0392b' : '#333' }}>{formatVatWatchlistDate(lastIncompleteRaw)}</td>
                   {(() => { // MARKER_VATWATCHLISTOPS_MONITOR_STATUS_BADGE_V1 MARKER_VATWATCHLISTOPS_ROUND_BASED_STATUS_V1 -- เปลี่ยนจากเทียบ Period เป็นเทียบกับ round_started_at
                     const isUpdatedThisPeriod = isVatWatchlistUpdatedThisRound(c, roundState);
                     return (
-                      <td style={{ padding: '7px 8px' }}>
-                        <div style={{ display: 'inline-flex', flexDirection: 'column', gap: '2px' }}>
+                      <td style={{ padding: '7px 8px', textAlign: 'center' }}>
+                        <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
                           <span style={{ background: isUpdatedThisPeriod ? '#EAF3DE' : '#FAEEDA', color: isUpdatedThisPeriod ? '#27500A' : '#854F0B', fontSize: '11px', padding: '2px 8px', borderRadius: '10px', width: 'fit-content' }}>
                             {isUpdatedThisPeriod ? '✅ อัปเดตแล้ว' : '⏳ ยังไม่ทำ'}
                           </span>
@@ -12265,21 +12312,25 @@ function VatWatchlistMonitorTable({ onGoto, onGotoQuick, search, setSearch, base
                   })()}
                   <td style={{ padding: '7px 8px', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                      {!isViewerRole && <button
-                        onClick={() => setConfigBu(c)}
-                        title="Config BU"
-                        style={{ width: '16px', height: '16px', padding: 0, border: '1px solid #888', borderRadius: '3px', background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: '10px', lineHeight: 1 }}
-                      >⚙</button>}
+                      {/* MARKER_VATWATCHLISTOPS_ACTION_ICONS_V3 -- ไอคอน Action: ปุ่มเข้าไปทำงาน BU อยู่แรกและกว้าง 2 เท่า (60px) ; ไอคอนใหญ่ขึ้น (30px) เป็น SVG ตรงหน้าที่: ตั้งค่า BU / เข้าไปทำงาน BU / ลบ ; Viewer ซ่อนปุ่มแต่เว้นช่องไว้ ตำแหน่งไม่ขยับ */}
                       <button
                         onClick={() => onGoto && onGoto(c)}
                         title="Goto Incomplete BU Operation"
-                        style={{ width: '16px', height: '16px', padding: 0, border: '1px solid #1a3a5c', borderRadius: '3px', background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1a3a5c', fontSize: '10px', lineHeight: 1 }}
-                      >→</button>
-                      {!isViewerRole && <button
+                        aria-label="Goto Incomplete BU Operation"
+                        style={{ width: '60px', height: '30px', padding: 0, border: '1px solid #1a3a5c', borderRadius: '6px', background: 'white', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#1a3a5c', lineHeight: 1 }}
+                      ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" ><path d="M15 8v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2v-2" /><path d="M21 12h-13l3-3" /><path d="M11 15l-3-3" /></svg></button>
+                      {!isViewerRole ? <button
+                        onClick={() => setConfigBu(c)}
+                        title="Config BU"
+                        aria-label="Config BU"
+                        style={{ width: '30px', height: '30px', padding: 0, border: '1px solid #555', borderRadius: '6px', background: 'white', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#555', lineHeight: 1 }}
+                      ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" ><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 0 0-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 0 0-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 0 0-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 0 0-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 0 0 1.066-2.573c-.94-1.543.826-3.31 2.37-2.37 1 .608 2.296.07 2.572-1.065z" /><circle cx="12" cy="12" r="3" /></svg></button> : <span style={{ width: '30px', height: '30px', display: 'inline-block' }} />}
+                      {!isViewerRole ? <button
                         onClick={() => handleDeleteVatWatchlistBu(c)}
                         title="ลบข้อมูล VAT Watchlist ของ BU นี้"
-                        style={{ width: '16px', height: '16px', padding: 0, border: '1px solid #c0392b', borderRadius: '3px', background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c0392b', fontSize: '10px', lineHeight: 1 }}
-                      >🗑</button>}
+                        aria-label="ลบข้อมูล VAT Watchlist ของ BU นี้"
+                        style={{ width: '30px', height: '30px', padding: 0, border: '1px solid #c0392b', borderRadius: '6px', background: 'white', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#c0392b', lineHeight: 1 }}
+                      ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" ><path d="M4 7h16" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12" /><path d="M9 7v-3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" /></svg></button> : <span style={{ width: '30px', height: '30px', display: 'inline-block' }} />}
                     </div>
                   </td>
                 </tr>
@@ -12501,14 +12552,15 @@ function VatIncompleteConfigModal({ allConfigs, currentUsername, currentVisible,
 
 // MARKER_VATWATCHLISTOPS_ADD_SUPPLIER_SMCOMBOBOX_V1 -- Copy มาจาก APController.js ทั้งดุ้น (Combo พิมพ์กรองได้)
 // MARKER_VATWATCHLISTOPS_SMCOMBOBOX_FULL_KEYBOARD_V1 -- Combobox เต็มรูปแบบ: Focus โชว่ทั้งหมด, Arrow Up/Down, Enter, Tab/Blur ปิด
-function SmComboBox({ value, onChange, options = [], center = false, disabled = false }) {
+function SmComboBox({ value, onChange, options = [], center = false, disabled = false, clearOnFocus = '' }) { // MARKER_SMCOMBO_CLEAR_ON_FOCUS_V1 -- clearOnFocus='ทั้งหมด': กดเข้าช่องแล้วล้างคำนั้นเป็นค่าว่างให้พิมพ์ค้นหาได้เลย (ออกจากช่องโดยไม่เลือก = กลับเป็นค่าเดิม)
+  const focusedRef = React.useRef(false);
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState(value || '');
   const [hasTyped, setHasTyped] = React.useState(false);
   const [highlightedIndex, setHighlightedIndex] = React.useState(-1);
   const wrapRef = React.useRef(null);
   const itemRefs = React.useRef([]);
-  React.useEffect(() => { setQuery(value || ''); }, [value]);
+  React.useEffect(() => { if (clearOnFocus && focusedRef.current && value === clearOnFocus) return; setQuery(value || ''); }, [value]);
   React.useEffect(() => {
     const onDocClick = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', onDocClick);
@@ -12559,8 +12611,8 @@ function SmComboBox({ value, onChange, options = [], center = false, disabled = 
     <div ref={wrapRef} style={{ position: 'relative', width: '100%' }}>
       <input
         value={query}
-        onFocus={() => { setOpen(true); setHasTyped(false); }}
-        onBlur={() => setOpen(false)}
+        onFocus={() => { setOpen(true); setHasTyped(false); if (clearOnFocus) { focusedRef.current = true; if (query === clearOnFocus) setQuery(''); } }}
+        onBlur={() => { setOpen(false); if (clearOnFocus) { focusedRef.current = false; setQuery(value || ''); } }}
         onKeyDown={handleKeyDown}
         onChange={(e) => { setQuery(e.target.value); onChange(e.target.value); setOpen(true); setHasTyped(true); }}
         style={{ height: '24px', padding: '0 8px', fontSize: '12px', border: 'none', outline: 'none', background: 'transparent', color: '#1a3a5c', width: '100%', boxSizing: 'border-box', textAlign: center ? 'center' : 'left' }}
@@ -14115,6 +14167,8 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
   const [qaPopMenuOpen, setQaPopMenuOpen] = React.useState(false); // MARKER_VATWATCHLISTOPS_QA_POPVAT_CODE_MENU_V1 -- เมนูลอย N/A/B/F ของปุ่ม Popvat
   const [qaCancelMenuOpen, setQaCancelMenuOpen] = React.useState(false); // MARKER_VATWATCHLISTOPS_QA_GLTRANSFER_V1 -- เมนูลอยของปุ่ม Cancel: Netting-Zero / GL-Transfer
   const [qaGlOpen, setQaGlOpen] = React.useState(false);
+  const [qaGlChk, setQaGlChk] = React.useState(() => new Set()); // MARKER_QA_GL_TAXLIST_CHECKBOX_V1 -- Checkbox เลือกแถวใน Tax Invoice List เพื่อ Clear เฉพาะที่เลือก
+  const qaGlCodeInputRef = React.useRef(null); // MARKER_QA_GL_CODE_AUTOFOCUS_V1 -- Auto Focus ช่อง Code เมื่อเปิดฟอร์ม GL-TransferVat
   const [qaGlSupplierCode, setQaGlSupplierCode] = React.useState('');
   const [qaGlSupplierSearch, setQaGlSupplierSearch] = React.useState('');
   const [qaGlSimpleCond, setQaGlSimpleCond] = React.useState('auto'); // auto = ระบบคำนวณ / YNY / NNN
@@ -14159,6 +14213,7 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
   const [qaGlBranchNoEdit, setQaGlBranchNoEdit] = React.useState(null); // MARKER_VATCONTROLLER_QAGL_BRANCHNO_EDIT_V1 -- Branch No. ใน Supplier Monitor แก้ได้ (null = ใช้ค่าจาก Supplier)
   const [qaGlFormKey, setQaGlFormKey] = React.useState(0);
   const [qaGlShowSmSearch, setQaGlShowSmSearch] = React.useState(false); // MARKER_VATWATCHLISTOPS_QA_GLTRANSFER_SMSEARCH_MODAL_V1 -- ไอคอนค้นหาข้าง Code เปิด VatSmCodeSearchModal (มี + Add Form ข้างใน) เหมือน Simple Input Ops
+  React.useEffect(() => { if (!qaGlOpen || qaGlShowSmSearch) return undefined; const t = setTimeout(() => { try { qaGlCodeInputRef.current?.focus(); } catch (e) {} }, 80); return () => clearTimeout(t); }, [qaGlOpen, qaGlShowSmSearch]); // MARKER_QA_GL_CODE_REFOCUS_AFTER_SMSEARCH_V1 -- ปิดหน้าค้นหา Simple Code (Esc/Cancel/เลือก) แล้วกลับมา Focus ช่อง Code อีกครั้ง
   const qaGlTivInputRef = React.useRef(null);
   const [quickActionCancelReason, setQuickActionCancelReason] = React.useState('Cancel'); // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1 -- Cancel / Simple_NNN / Simple_YNY
   const openNoteModal = (row) => {
@@ -14677,6 +14732,16 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
   };
   const openRowContextMenu = (e, row) => setRowContextMenu({ x: e.clientX, y: e.clientY, row });
   const closeRowContextMenu = () => setRowContextMenu(null);
+  const rowCtxMenuRef = React.useRef(null); // MARKER_VATWATCHLISTOPS_CTXMENU_FLIP_EDGE_V1
+  React.useLayoutEffect(() => { // MARKER_VATWATCHLISTOPS_CTXMENU_FLIP_EDGE_V1 -- วัดขนาดเมนูจริงหลัง Render ก่อน Paint: ล้นขอบล่าง -> พลิกขึ้นด้านบน / ล้นขอบขวา -> ชิดซ้ายเมาส์ | ไม่ล้น = ตำแหน่งเดิม
+    const el = rowCtxMenuRef.current;
+    if (!rowContextMenu || !el) return;
+    const edge = 8; const rc = el.getBoundingClientRect();
+    let topPx = rowContextMenu.y; let leftPx = rowContextMenu.x;
+    if (topPx + rc.height > window.innerHeight - edge) topPx = Math.max(edge, rowContextMenu.y - rc.height);
+    if (leftPx + rc.width > window.innerWidth - edge) leftPx = Math.max(edge, rowContextMenu.x - rc.width);
+    el.style.top = topPx + 'px'; el.style.left = leftPx + 'px';
+  }, [rowContextMenu]);
   React.useEffect(() => {
     if (!rowContextMenu) return;
     const handleClose = () => setRowContextMenu(null);
@@ -15162,7 +15227,7 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
                 username, fill_started_at: (quickActionFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                 status: prevMode ? 'draft' : vatDraftStatus(quickActionOverRef.current),
                 action: swapOpts ? 'Popvat_S' : ((popCode && popCode !== 'N') ? `Popvat_${popCode}` : 'Popvat'), // MARKER_VATWATCHLISTOPS_QA_SWAP_S_V2 -- S: Popvat_S ให้ Swap List ดึงจาก Draft (DB) ได้  // MARKER_VATWATCHLISTOPS_QUICK_ACTION_CANCEL_REASON_V1 MARKER_VATWATCHLISTOPS_QA_POPVAT_CODE_MENU_V1
-                menu_source: 'ap_vat', // MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- Quick Action Popvat Normal
+                menu_source: swapOpts ? 'ap_swap' : 'ap_vat', // MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_SWAP_V1 -- Swap (Popvat_S) ใช้ Source = ap_swap เพื่อ Tracking/ส่งออกแยกได้ ; MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_VAT_V1 -- Quick Action Popvat Normal
               }); // MARKER_VATWATCHLISTOPS_QA_POPVAT_BULK_V1 -- Payload Draft ต่อแถว (ใช้ร่วมทั้ง Bulk และโหมดทีละแถวเดิม)
     try {
       // MARKER_VATWATCHLISTOPS_QA_POPVAT_BULK_V1 -- ส่งทั้งชุดครั้งเดียวไป Backend (Transaction เดียว: สร้าง Draft + เปลี่ยนสถานะ Incomplete + อัปเดตเลข GRN)
@@ -15299,7 +15364,7 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
             batch_name: `APN-INPUT-${mmSw}${String(yySw || '').slice(-2)}-${cpSw[2] || ''}-IB-001`, batch_description: null,
             journal_name: `APN-SH15-${brSw}-IB-001`, journal_description: null,
             line_description: `${mmSw}-${yySw || ''} โอนภาษี VAT Swap|${bu?.bu || ''}-${row.vendor_name || ''}|${row.invoice_ref || ''}|${bu?.bu || ''}`,
-            line_dff: null, branch_indicator: null, username, fill_started_at: (quickActionFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_vat',
+            line_dff: null, branch_indicator: null, username, fill_started_at: (quickActionFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_swap' /* MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_SWAP_V1 */,
           };
           await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({ ...baseSw, acc: negSw ? accCrSw : accDrSw, debit: amtSw, credit: null }) });
           await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({ ...baseSw, acc: negSw ? accDrSw : accCrSw, debit: null, credit: amtSw }) });
@@ -15379,7 +15444,7 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
   const qaGlCleanTiv = (x) => qaGlTrimLead(x).replace(/[\s\u00A0\u200B\uFEFF]+$/, '');
   React.useEffect(() => { setQaGlBranchNoEdit(null); }, [qaGlSupplier, qaGlOpen]); // MARKER_VATCONTROLLER_QAGL_BRANCHNO_EDIT_V1 -- เปลี่ยน Supplier/เปิดใหม่ = กลับไปใช้ค่าจาก Supplier
   const qaGlBranchNo = qaGlBranchNoEdit != null ? qaGlBranchNoEdit : String(qaGlSupplier?.['Branch'] || '');
-  const qaGlPendingAmtNum = parseFloat(String(qaGlAmt || '').replace(/,/g, ''));
+  const qaGlPendingAmtNum = parseFloat(String(qaGlAmt || '').replace(/^\s*['\u2018\u2019`]+/, '').replace(/,/g, '')); // MARKER_QA_GL_AMOUNT_STRIP_QUOTE_V1
   const qaGlPendingMissing = (() => {
     if (!qaGlPendingTouched) return [];
     const m = [];
@@ -15596,7 +15661,7 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
     while (out.length < want) out.push(...qaGlMkGrid(1));
     return out;
   };
-  const qaGlCleanCell = (col, x) => { const s2 = qaGlCl(x); if (!s2) return ''; if (col === 'date') { const iso = qaGlParseDateAny(s2); return iso ? qaGlFmtDate(iso) : s2; } if (col === 'g' || col === 'v') { const n = qaGlNm(s2); return n == null ? s2 : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); } return s2; }; // จัด Format: ตัด ' / เวลา / พ.ศ.->ค.ศ. (วว/ดด/ปปปป) / ยอด 2 ตำแหน่ง มีคอมมา
+  const qaGlCleanCell = (col, x) => { if (col === 'tiv') return qaGlCleanTiv(x); /* MARKER_QA_GL_GRID_TIV_TRIM_V1 -- TIV ในตารางใช้กติกา Trim เดียวกับช่อง TIV number (ตัด ' ‘ ’ ` ช่องว่าง/NBSP/Zero-width ด้านหน้า + ช่องว่างด้านหลัง) */ const s2 = qaGlCl(x); if (!s2) return ''; if (col === 'date') { const iso = qaGlParseDateAny(s2); return iso ? qaGlFmtDate(iso) : s2; } if (col === 'g' || col === 'v') { const n = qaGlNm(s2); return n == null ? s2 : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); } return s2; }; // จัด Format: ตัด ' / เวลา / พ.ศ.->ค.ศ. (วว/ดด/ปปปป) / ยอด 2 ตำแหน่ง มีคอมมา
   const qaGlFmt2 = (n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); // MARKER_QA_GL_TAXGRID_V4
   const qaGlRowApply = (row, col, val) => { // กรอก Amount -> Vat ออโต้ (7%) | กรอก Vat -> Amount ออโต้ (x100/7) | ฝั่งที่ผู้ใช้กรอกเองไม่ถูกทับ | กรอกทั้งคู่แต่สลับ -> สลับให้ถูก
     const n = { ...row, [col]: val };
@@ -15638,6 +15703,16 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
       return qaGlGridFit(next);
     });
   };
+  const qaGlResolvePasteDates = async (matrix, c0, rc) => { // MARKER_QA_GL_PASTE_DATE_ASK_V1 -- วางวันที่กำกวมในตาราง Tax Invoice List -> ถามเหมือนช่อง Hybrid (ถามครั้งเดียวใช้กับทั้งชุด) | null = ยกเลิกการวาง
+    const dIdx = QA_GL_GRID_COLS.indexOf('date'); const wide = Math.max(...matrix.map((r) => r.length)) >= 3; const single = matrix.length === 1 && matrix[0].length === 1 && rc && (rc.r2 > rc.r1 || rc.c2 > rc.c1);
+    const isDateCell = (j) => wide || QA_GL_GRID_COLS[c0 + j] === 'date' || (single && rc.c1 <= dIdx && dIdx <= rc.c2);
+    let first = null;
+    matrix.forEach((cells) => cells.forEach((v, j) => { if (!first && isDateCell(j)) { const amb = getDateAmbiguity(String(v == null ? '' : v)); if (amb) first = { amb, text: String(v) }; } }));
+    if (!first) return matrix;
+    const pick = await askDateOrderPopup(first.amb, first.text);
+    if (!pick) return null;
+    return matrix.map((cells) => cells.map((v, j) => { if (!isDateCell(j)) return v; const amb = getDateAmbiguity(String(v == null ? '' : v)); return amb ? qaGlFmtDate(amb[pick]) : v; }));
+  };
   const qaGlBoxPaste = (e) => {
     const editing = e.target && e.target.tagName === 'INPUT';
     const m = qaGlClipMatrix(e);
@@ -15648,8 +15723,7 @@ function IncompleteBuOperationTest({ bu, onBack, hideBack, embedded, onGotoUploa
     const matrix = m || [[raw.replace(/[\r\n]+$/, '')]];
     const rc = qaGlSelRect(qaGlSel) || { r1: 0, r2: 0, c1: 0, c2: 0 };
     setQaGlEdit(null); qaGlEditRef.current = null;
-    qaGlGridPasteAt(matrix, rc.r1, rc.c1, rc);
-    setTimeout(() => qaGlBoxRef.current && qaGlBoxRef.current.focus(), 0);
+    (async () => { const mx = await qaGlResolvePasteDates(matrix, rc.c1, rc); if (mx) qaGlGridPasteAt(mx, rc.r1, rc.c1, rc); setTimeout(() => qaGlBoxRef.current && qaGlBoxRef.current.focus(), 0); })();
   };
   const qaGlBoxCopy = (e, cut) => {
     if (qaGlEditRef.current || !qaGlSel || (e.target && e.target.tagName === 'INPUT')) return;
@@ -15768,7 +15842,9 @@ let simpleReceiveDateFP;
       const adiPeriodFP = (adiPeriodMonthFP && adiPeriodYearFP) ? `${ADI_MONTH_ABBR_FP[adiPeriodMonthFP - 1]}-${String(adiPeriodYearFP).slice(-2)}` : '';
       const adiMmyyFP = (adiPeriodMonthFP && adiPeriodYearFP) ? `${String(adiPeriodMonthFP).padStart(2, '0')}${String(adiPeriodYearFP).slice(-2)}` : '';
       const adiBatchNameFP = `APN-INPUT-${adiMmyyFP}-${comSegFP}-IB-001`;
-      const supplierNameFP = qaGlSupplier['Company Name'] || '';
+      const catQaFP = await vatCategoryForSupplierCode(qaGlSupplier['Supplier Code']); // MARKER_SIMPLE_FROM_CATEGORY_V1
+      const supplierNameFP = (catQaFP && String(catQaFP['Supplier Name'] || '').trim()) ? String(catQaFP['Supplier Name']).trim() : (qaGlSupplier['Company Name'] || '');
+      const taxIdQaFP = (catQaFP && String(catQaFP['TAX ID'] || '').trim()) ? String(catQaFP['TAX ID']).trim() : (qaGlSupplier['Tax ID'] || null);
       const buRateForAdiFP = parseFloat(bu?.['VAT %']);
       const mmAdiFP = adiPeriodMonthFP ? String(adiPeriodMonthFP).padStart(2, '0') : '';
       // 1) Popvat Cancel ต่อ Invoice (แถวที่เลือกจาก Quick Action)
@@ -15861,7 +15937,8 @@ let simpleReceiveDateFP;
           cpc_special: isExpenseAverageSpecialFP ? '45700' : null,
           sub_account_special: isExpenseAverageSpecialFP ? '999999' : null,
           cpc_tax_special: null, supplier_code: null, sm_code: String(qaGlSupplierCode || '').trim() || null, /* MARKER_QA_GL_DRAFT_SMCODE_V1 -- เก็บ SM-Code ไว้เรียกใช้ซ้ำ (ซ่อน ไม่แสดง) */ supplier_name: supplierNameFP || null,
-          tax_id: qaGlSupplier['Tax ID'] || null,
+          tax_id: taxIdQaFP,
+          category_code: catQaFP ? (String(catQaFP['Code'] || '').trim() || null) : null, // MARKER_SIMPLE_FROM_CATEGORY_V1
           receive_date: formatQuickActionReceiveDateText(simpleReceiveDateFP),
           tax_invoice_number: grtCombinedFP,
           tax_invoice_date: formatQuickActionReceiveDateText(it.date),
@@ -16909,10 +16986,10 @@ let simpleReceiveDateFP;
     <div style={{ padding: embedded ? 0 : '24px', display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', minHeight: 0, boxSizing: 'border-box' }}>
       <style>{`.vwl-incomplete-row:hover { background-color: #dcebfa !important; } .vwl-fullpage-invoice-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; } .vwl-fullpage-invoice-scroll { scrollbar-width: none; -ms-overflow-style: none; } .vwl-fullpage-taxinvoice-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; } .vwl-fullpage-taxinvoice-scroll { scrollbar-width: none; -ms-overflow-style: none; }`}</style> {/* MARKER_VATWATCHLISTOPS_ROW_HOVER_HIGHLIGHT_V1 */} {/* MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_WIDTH60_THIN_SCROLL_V1 */} {/* MARKER_VATWATCHLISTOPS_ADDTAX_LIST_SCROLL_SELECT_V1 */}
       <div style={{ display: embedded ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}> {/* MARKER_GUEST_EMBED_HIDE_TOPROW_V1 -- แถวปุ่มบนว่างเมื่อฝัง (Export/Draft Monitor ย้ายแล้ว) */}
-        {!hideBack ? <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', cursor: 'pointer' }}>← Back</button> : <span />}
+        {!hideBack ? <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 16px', fontSize: '13px', fontWeight: 600, border: '1px solid #dde3e8', borderRadius: '999px', background: 'white', color: '#1a3a5c', cursor: 'pointer' }}>← Back</button> : <span />}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}> {/* MARKER_VATWATCHLISTOPS_TOPROW_SWAP_ORDER_V1 -- สลับ Full Page (ซ้าย) / Draft Monitor (ขวา) */}
-          {!isViewerRole && <button onClick={() => setShowConfigCc(true)} title="ตั้งค่าอีเมล CC ของฉันสำหรับ BU นี้ (ใช้ผ่าน {Config_CC})" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #ce93d8', borderRadius: '8px', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer', width: '168px' }}>Mail Manage</button>} {/* MARKER_VATWATCHLISTOPS_CONFIG_CC_V1 */}
-          <button onClick={openExportConfigModal} style={{ display: embedded ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #ffcc80', borderRadius: '8px', background: '#fff3e0', color: '#e65100', cursor: 'pointer', width: '168px' }}>Export</button> {/* MARKER_VATWATCHLISTOPS_EXPORT_CONFIG_COLUMNS_V1 */} {/* MARKER_VATWATCHLISTOPS_EXPORT_BUTTON_LEFT_STYLE_V1 -- ย้ายมาซ้ายสุด + ขนาดเท่า Full Page + สีส้มอ่อน */}
+          {!isViewerRole && <button onClick={() => setShowConfigCc(true)} title="ตั้งค่าอีเมล CC ของฉันสำหรับ BU นี้ (ใช้ผ่าน {Config_CC})" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', fontWeight: 600, border: '1px solid #dde3e8', borderRadius: '999px', background: 'white', color: '#374151', cursor: 'pointer', width: '168px' }}>Mail Manage</button>} {/* MARKER_VATWATCHLISTOPS_CONFIG_CC_V1 */}
+          <button onClick={openExportConfigModal} style={{ display: embedded ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', fontWeight: 600, border: '1px solid #dde3e8', borderRadius: '999px', background: 'white', color: '#374151', cursor: 'pointer', width: '168px' }}>Export</button> {/* MARKER_VATWATCHLISTOPS_EXPORT_CONFIG_COLUMNS_V1 */} {/* MARKER_VATWATCHLISTOPS_EXPORT_BUTTON_LEFT_STYLE_V1 -- ย้ายมาซ้ายสุด + ขนาดเท่า Full Page + สีส้มอ่อน */}
           {!isViewerRole && (<button
             onClick={() => { // MARKER_VATWATCHLISTOPS_FULLPAGE_VENDOR_GUARD_V1 -- ด่านสุดท้ายกัน Vendor ปนกันก่อนเปิด Full Page
               const supplierSetFP = new Set(Array.from(selectedNoteRows.values()).map((v) => v.supplier_code).filter(Boolean));
@@ -16927,13 +17004,13 @@ let simpleReceiveDateFP;
       fullPageFillStartedAtRef.current = selectionFillStartedAtRef.current || new Date(); // MARKER_VAT_SELECTION_FILLSTART_V1 -- มี Selection อยู่ก่อนเปิดแล้ว ใช้เวลาที่เริ่มเลือกจริง / ไม่มี ใช้เวลาที่กดเปิด Full Page เหมือนเดิม
             }}
             /* MARKER_VATWATCHLISTOPS_FULLPAGE_SEARCH_SYNC_V1 -- Copy ค่า Search จาก Incomplete Detail มาใส่ให้ตอนเปิด */
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #90caf9', borderRadius: '8px', background: '#e3f2fd', color: '#1565c0', cursor: 'pointer', width: '168px', position: 'relative' }}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', fontWeight: 600, border: '1.5px solid #0f7a6b', borderRadius: '999px', background: 'white', color: '#0f7a6b', cursor: 'pointer', width: '168px', position: 'relative' }}
           >Full Page - Popvat{(bucketCount + bucketTaxCount) > 0 && <span title="มีงานค้างใน Bucket" style={{ position: 'absolute', top: '-8px', right: '-8px', minWidth: '20px', height: '20px', lineHeight: '20px', padding: '0 5px', boxSizing: 'border-box', borderRadius: '10px', background: '#d32f2f', color: 'white', fontSize: '11px', fontWeight: 600, textAlign: 'center', boxShadow: '0 0 0 2px white' }}>{bucketCount + bucketTaxCount}</span>}</button>)} {/* MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_V1 MARKER_VATWATCHLISTOPS_FULLPAGE_BUCKET_BADGE_V1 -- เลขงานค้างใน Bucket */}
-          {(!isViewerRole || isGuestDetail) && !embedded && <button onClick={() => setShowDraftMonitor(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', border: '0.5px solid #a5d6a7', borderRadius: '8px', background: '#e8f5e9', color: '#2e7d32', cursor: 'pointer', width: '148px', marginRight: '20px' }}>Draft Monitor</button>} {/* MARKER_VATWATCHLISTOPS_DRAFT_MONITOR_ALIGN_EDGE_V1 -- ชดเชย Padding ขวาของการ์ด Config Columns (20px) ให้ขอบตรงกันเป๊ะ */} {/* MARKER_VATWATCHLISTOPS_DRAFT_MONITOR_REVERT_FIX_V1 -- ย้ายกลับมาแถวเดิม (Stage I รอบแรกย้ายผิดจุด) */}
+          {(!isViewerRole || isGuestDetail) && !embedded && <button onClick={() => setShowDraftMonitor(true)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '7px 12px', fontSize: '13px', fontWeight: 600, border: 'none', borderRadius: '999px', background: '#0f7a6b', color: 'white', cursor: 'pointer', width: '148px', marginRight: '20px' }}>Draft Monitor</button>} {/* MARKER_VATWATCHLISTOPS_DRAFT_MONITOR_ALIGN_EDGE_V1 -- ชดเชย Padding ขวาของการ์ด Config Columns (20px) ให้ขอบตรงกันเป๊ะ */} {/* MARKER_VATWATCHLISTOPS_DRAFT_MONITOR_REVERT_FIX_V1 -- ย้ายกลับมาแถวเดิม (Stage I รอบแรกย้ายผิดจุด) */}
         </div>
       </div>
 
-      <div style={{ background: 'white', borderRadius: '12px', border: '0.5px solid #e8e8e8', padding: '14px 20px', display: embedded ? 'none' : 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap' }}> {/* MARKER_GUEST_EMBED_HIDE_STRIP_V1 -- Guest ฝัง: ซ่อนแถบ Company info + All/Show/Hide */}
+      <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #e3e8ec', borderLeft: '4px solid #0f7a6b', boxShadow: '0 1px 3px rgba(15,40,60,.06)', padding: '14px 20px', display: embedded ? 'none' : 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap' }}> {/* MARKER_GUEST_EMBED_HIDE_STRIP_V1 -- Guest ฝัง: ซ่อนแถบ Company info + All/Show/Hide */}
         <div style={{ display: embedded ? 'none' : 'flex', alignItems: 'center', gap: '8px' }}> {/* MARKER_VAT_BU_CONFIG_GEAR_IN_DETAIL_V1 -- เฟืองเปิด Form Config BU ไว้หน้า "Company info" */}
           {!isViewerRole && <button onClick={openBuConfig} disabled={buConfigLoading} title="Config BU" style={{ width: '24px', height: '24px', padding: 0, border: '1px solid #888', borderRadius: '5px', background: 'white', cursor: buConfigLoading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: '14px', lineHeight: 1 }}>⚙</button>}
           <div style={{ fontSize: '12px', color: '#999' }}>Company info</div>
@@ -16948,7 +17025,7 @@ let simpleReceiveDateFP;
         <div style={{ fontSize: '13px', display: embedded ? 'none' : undefined }}><span style={{ color: '#888' }}>Tax ID </span><span>{bu?.['TAX ID'] || '—'}</span></div>
         <div style={{ fontSize: '13px', display: embedded ? 'none' : undefined }}><span style={{ color: '#888' }}>VAT % </span><span>{bu?.['VAT %'] || '—'}</span></div>
         {/* MARKER_VATWATCHLISTOPS_TYPE_ABF_V3 -- เอาปุ่ม Clear ด้านบนออก ใช้ปุ่ม Clear ทุกบรรทัดแทน */}
-        <div style={{ display: 'flex', marginLeft: 'auto', border: '0.5px solid #ccc', borderRadius: '8px', overflow: 'hidden', minWidth: '148px' }}> {/* MARKER_VATWATCHLISTOPS_SHOW_DETAIL_WIDTH_148PX_V1 -- ความกว้างรวมเท่ากับปุ่ม Config Columns เป๊ะ */}
+        <div style={{ display: 'flex', marginLeft: 'auto', background: '#f3f3f3', padding: '3px', gap: '2px', borderRadius: '999px', overflow: 'hidden', minWidth: '148px' }}> {/* MARKER_VATWATCHLISTOPS_SHOW_DETAIL_WIDTH_148PX_V1 -- ความกว้างรวมเท่ากับปุ่ม Config Columns เป๊ะ */}
           {[
             { key: 'all', label: 'All' },
             { key: 'show', label: 'Show' },
@@ -16975,9 +17052,9 @@ let simpleReceiveDateFP;
                 fontSize: '11px',
                 textAlign: 'center',
                 fontWeight: showDetailMode === opt.key ? '600' : '400',
-                border: 'none',
-                borderLeft: i > 0 ? '0.5px solid #ccc' : 'none',
-                background: showDetailMode === opt.key ? '#1a3a5c' : 'white',
+                border: 'none', borderRadius: '999px',
+                
+                background: showDetailMode === opt.key ? '#1a3a5c' : 'transparent',
                 color: showDetailMode === opt.key ? 'white' : '#333',
                 cursor: 'pointer',
               }}
@@ -17000,7 +17077,7 @@ let simpleReceiveDateFP;
                 }
               }}
               placeholder="Search"
-              style={{ width: '100%', padding: '6px 26px 6px 10px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px', outline: 'none', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '7px 28px 7px 14px', fontSize: '12px', border: '1px solid #dde3e8', background: '#f5f6f8', borderRadius: '999px', outline: 'none', boxSizing: 'border-box' }}
             />
             {detailSearch && (
               <button
@@ -17080,7 +17157,7 @@ let simpleReceiveDateFP;
               </div>
             )}
           </div>
-          <div style={{ display: 'flex', border: '0.5px solid #ccc', borderRadius: '8px', overflow: 'hidden', flexShrink: 0 }}>
+          <div style={{ display: 'flex', background: '#f3f3f3', padding: '3px', borderRadius: '999px', overflow: 'hidden', flexShrink: 0 }}>
             {AGING_BUCKETS.filter((b) => !b.sub).map((b) => { // MARKER_VATWATCHLISTOPS_AGING_6_5_CAPSULE_V1 -- 6-5 เป็นแคปซูลเดียว มีช่องย่อย 6 | 5 อยู่ด้านใน (เลือกทั้งกลุ่ม หรือเลือกแยก/เลือกคู่ได้)
               const active = selectedAgingBuckets.has(b.key);
               const cnt = agingBucketCounts[b.key];
@@ -17130,16 +17207,16 @@ let simpleReceiveDateFP;
           )}
           {isGuestDetail && embedded && <button type="button" onClick={() => setShowCoverPreview(true)} style={{ padding: '6px 12px', fontSize: '12px', border: '0.5px solid #b39ddb', borderRadius: '8px', background: '#f3e5f5', color: '#6a1b9a', cursor: 'pointer', flexShrink: 0, width: '148px', textAlign: 'center' }}>Cover Preview</button>} {/* MARKER_GUEST_COVER_PREVIEW_BUTTON_V1 -- ปุ่มสำหรับ Guest เลือกข้อมูลทำใบปะหน้า (ตัวฟอร์ม/ใบปะหน้า รอสเปคจากผู้ใช้) */}
           {embedded && <button onClick={openExportConfigModal} style={{ padding: '6px 12px', fontSize: '12px', border: '0.5px solid #ffcc80', borderRadius: '8px', background: '#fff3e0', color: '#e65100', cursor: 'pointer', flexShrink: 0, width: '148px', textAlign: 'center' }}>Export</button>} {/* MARKER_GUEST_EXPORT_BESIDE_CONFIG_COLUMNS_V1 */}
-          <button onClick={() => setShowConfigModal(true)} style={{ display: (showDetailMode === 'type' || showDetailMode === 'note') ? 'none' : undefined, padding: '6px 12px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', cursor: 'pointer', flexShrink: 0, width: '148px', textAlign: 'center' }}>⚙ Config Columns</button>
+          <button onClick={() => setShowConfigModal(true)} style={{ display: (showDetailMode === 'type' || showDetailMode === 'note') ? 'none' : undefined, padding: '6px 12px', fontSize: '12px', fontWeight: 600, border: '1px solid #dde3e8', borderRadius: '999px', background: 'white', color: '#374151', cursor: 'pointer', flexShrink: 0, width: '148px', textAlign: 'center' }}>⚙ Config Columns</button>
         </div>
         <div style={{ flex: 1, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12px', whiteSpace: 'nowrap' }}> {/* MARKER_VATWATCHLISTOPS_INCOMPLETE_STICKY_HEADER_FIX_V1 */}
               <thead> {/* MARKER_VATWATCHLISTOPS_INCOMPLETE_HEADER_ALWAYS_VISIBLE_V1 */}
                 <tr>
-                  <th style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 6px', background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'center', width: '34px' }}> {/* MARKER_VATWATCHLISTOPS_GROUP_NOTE_SELECT_V1 */}
+                  <th style={{ position: 'sticky', top: 0, zIndex: 1, padding: '8px 6px', background: '#0f7a6b', color: 'white', fontWeight: '500', textAlign: 'center', width: '34px' }}> {/* MARKER_VATWATCHLISTOPS_GROUP_NOTE_SELECT_V1 */}
                     <input type="checkbox" checked={detailRows.length > 0 && detailRows.every((r) => selectedNoteRows.has(getNoteKey(r)))} ref={(el) => { if (el) el.indeterminate = !detailRows.every((r) => selectedNoteRows.has(getNoteKey(r))) && detailRows.some((r) => selectedNoteRows.has(getNoteKey(r))); }} onChange={toggleSelectAllOnPage} />
                   </th>
-                  <th style={{ display: isGuestDetail ? 'none' : undefined, position: 'sticky', top: 0, zIndex: 1, padding: '8px 2px', background: '#1a3a5c', color: 'white', textAlign: 'center', width: '30px' }} title="มี Vendor Detail แล้ว"> {/* MARKER_VATWATCHLISTOPS_VENDOR_DETAIL_ICON_V1 */}
+                  <th style={{ display: isGuestDetail ? 'none' : undefined, position: 'sticky', top: 0, zIndex: 1, padding: '8px 2px', background: '#0f7a6b', color: 'white', textAlign: 'center', width: '30px' }} title="มี Vendor Detail แล้ว"> {/* MARKER_VATWATCHLISTOPS_VENDOR_DETAIL_ICON_V1 */}
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1" /></svg>
                   </th>
                   {activeCols.map((c) => {
@@ -17151,7 +17228,7 @@ let simpleReceiveDateFP;
                       <th
                         key={c.key}
                         onClick={(evt) => { if (c.key === 'note_image') return; openFilterDropdown(c.key, isOpen, evt); }} // MARKER_VATWATCHLISTOPS_NOTE_IMAGE_COLUMN_V1 -- คอลัมน์ Image ไม่มี Filter
-                        style={{ position: 'sticky', top: 0, zIndex: 1, padding: 0, background: '#1a3a5c', color: 'white', fontWeight: '500', textAlign: 'left', cursor: c.key === 'note_image' ? 'default' : 'pointer', width: c.key === 'vendor_name' ? '300px' : undefined }} // MARKER_VATWATCHLISTOPS_INCOMPLETE_VENDORNAME_FIXED_WIDTH_V1
+                        style={{ position: 'sticky', top: 0, zIndex: 1, padding: 0, background: '#0f7a6b', color: 'white', fontWeight: '500', textAlign: 'left', cursor: c.key === 'note_image' ? 'default' : 'pointer', width: c.key === 'vendor_name' ? '300px' : undefined }} // MARKER_VATWATCHLISTOPS_INCOMPLETE_VENDORNAME_FIXED_WIDTH_V1
                         title={c.key === 'note_image' ? undefined : 'กดเพื่อ Filter'}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', position: 'relative', padding: '8px 10px', width: '100%', boxSizing: 'border-box' }}>
@@ -17623,6 +17700,7 @@ let simpleReceiveDateFP;
       {/* MARKER_VATWATCHLISTOPS_ROW_CONTEXT_MENU_V1 -- เมนูคลิกขวา แทนปุ่ม Group Note/ล้างการเลือก/note เดิม */}
       {rowContextMenu && (
         <div
+          ref={rowCtxMenuRef} /* MARKER_VATWATCHLISTOPS_CTXMENU_FLIP_EDGE_V1 */
           onClick={(e) => e.stopPropagation()}
           style={{ position: 'fixed', top: rowContextMenu.y, left: rowContextMenu.x, background: 'white', border: '0.5px solid #ccc', borderRadius: '8px', boxShadow: '0 6px 16px rgba(0,0,0,0.18)', zIndex: 1000, minWidth: '210px', overflow: 'hidden', fontSize: '13px' }}
         >
@@ -18722,9 +18800,16 @@ let simpleReceiveDateFP;
                     value={addTaxInvoiceDate || ''}
                     onChange={(e) => {
                       const v = e.target.value;
+                      const dateElPK = e.target; // MARKER_VATWATCHLISTOPS_ADDTAX_DATE_PICK_FOCUS_DEFER_V1
                       if (addTaxInvoiceDateTextRef.current) addTaxInvoiceDateTextRef.current.value = formatDateDisplayMDY(v);
                       setAddTaxInvoiceDate(v);
-                      if (v && addTaxInvoiceNumberRef.current) addTaxInvoiceNumberRef.current.focus(); // MARKER_VATWATCHLISTOPS_HYBRID_TAXINVOICEDATE_AUTOFOCUS_V1 -- เลือกวันจาก Calendar แล้ว กระโดดไป Tax Invoice Number ทันที
+                      if (v) { // MARKER_VATWATCHLISTOPS_ADDTAX_DATE_PICK_FOCUS_DEFER_V1 -- เลือกวันจาก Calendar แล้ว Auto Focus ไป Tax Invoice Number | Browser คืน Focus ให้ช่อง Date หลัง Popup ปิด (ทับ Focus ที่สั่งทันที) จึงสั่งซ้ำแบบหน่วงหลัง Popup ปิดด้วย
+                        const focusNextPK = () => { if (addTaxInvoiceNumberRef.current) addTaxInvoiceNumberRef.current.focus(); };
+                        try { dateElPK.blur(); } catch (_) { /* ข้าม */ }
+                        focusNextPK();
+                        setTimeout(focusNextPK, 0);
+                        setTimeout(focusNextPK, 150);
+                      }
                     }}
                     style={{ position: 'absolute', right: 0, top: 0, width: '20px', height: '100%', opacity: 0, cursor: 'pointer', border: 'none', padding: 0 }}
                   />
@@ -19073,53 +19158,20 @@ let simpleReceiveDateFP;
                                 __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                               }
                             }
+                            const adiRowsFP = []; // MARKER_FULLPAGE_ADDDATA_BULK_V2 -- รวมแถว ADI ทั้งหมดไว้ก่อน แล้วส่งครั้งเดียว (Backend ตรวจ Dr.=Cr.) จากนั้นส่ง Popvat ทั้งชุดผ่าน popvat_bulk -> ผิดที่ใด ไม่มีอะไรค้างบันทึก
                             for (const row of rowsForSumFinal) { // Popvat Cancel -- 1 Record ต่อ 1 Invoice (Pattern เดียวกับ Quick Action Popvat Cancel)
-                              const cancelGrtFP = row.receive_doc_no || null;
-                              await apiFetch('/vat_upload_popvatdraft', {
-                                method: 'POST',
-                                body: JSON.stringify({
-                                  bu: bu?.bu,
-                                  book: bu?.BOOK || null,
-                                  period: periodTextFP,
-                                  draft_id: draftIdMultiFP,
-                                  branch: row.branch || null,
-                                  grt_number: cancelGrtFP,
-                                  original_invoice_number: row.invoice_ref || null,
-                                  receipt_date: formatQuickActionReceiveDateText(sentinelReceiveDateFP),
-                                  tax_invoice_number: cancelGrtFP,
-                                  tax_invoice_date: formatQuickActionReceiveDateText(row.payment_date || null),
-                                  vendor_tax_invoice_number: cancelGrtFP,
-                                  supplier_tax_id: null,
-                                  supplier_branch_number: null,
-                                  supplier_name: row.vendor_name || null, // MARKER_VATWATCHLISTOPS_POPVATDRAFT_NEWFIELDS_V1
-                                  check_no: row.check_no || null,
-                                  product_value: row.exp_amount || null,
-                                  vat_amount: row.exp_vat || null,
-                                  username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
-                                  status: vatDraftStatus(addTaxInvoiceOverRef.current),
-                                  action: ibOrAssetTriggeredFP ? 'Simple_NNN' : 'Simple_YNY', // MARKER_VATWATCHLISTOPS_FULLPAGE_POPVAT_ACTION_TRACKING_V1 -- MARKER_VATWATCHLISTOPS_POPVAT_ACTION_ASSET_NNN_FIX_V1 -- Asset (T/F) ต้องเป็น Simple_NNN เสมอ แม้ Branch จะตรงกันก็ตาม (สอดคล้องกับ type_sim ฝั่ง Simple Input)
-                                  menu_source: 'ap_vat',
-                                }),
-                              });
-                              __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
-                              const reportRowsFP = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu?.bu)}&eq_invoice_ref=${encodeURIComponent(row.invoice_ref)}`);
-                              const matchedReportFP = (Array.isArray(reportRowsFP) ? reportRowsFP : []).filter((r) => vatSameSupplierCode(r, row)); // MARKER_VATCONTROLLER_STATUS_KEY_SUPPLIER_V1
- // // MARKER_VATWATCHLISTOPS_ADDDATA_STATUS_FILTER_FIX_V1 -- ตัด .filter(status==='pending') ออก Update ทุก Record ที่ Match invoice_ref (Selection ชนะเสมอ)
-                              for (const r of matchedReportFP) {
-                                await apiFetch(`/vat_watchlist_report/${r.id}`, { method: 'PUT', body: JSON.stringify({ status: vatDraftStatus(addTaxInvoiceOverRef.current) }) });
-                              }
                               if (taxInvoiceMultiBranchFP) { // MARKER_VATWATCHLISTOPS_ADI_MULTIBRANCH_TAXINVOICE_V1 -- Case ใหม่: Tax Invoice หลาย Branch -> Cr. ต่อ Invoice (Dr. แยกไปทำหลัง Loop นี้)
                                 const [, creditAccMultiFP] = ADI_ACC_BY_CLS_FP[sharedClsFP] || ADI_ACC_BY_CLS_FP.N;
                                 const mmMultiCrFP = adiPeriodMonthFP ? String(adiPeriodMonthFP).padStart(2, '0') : '';
                                 const lineDescCrMultiFP = `${mmMultiCrFP}-${adiPeriodYearFP || ''} ยื่นภาษีซื้อ ${isAssetGroupFP ? 'Asset' : 'Expense'} ผ่าน Excel|${bu?.bu || ''}-${row.vendor_name || ''}|${row.invoice_ref || ''}|${bu?.bu || ''}`;
-                                await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({
+                                adiRowsFP.push({
                                   bu: bu?.bu, book: bu?.BOOK || null, period: periodTextFP, adi_period: adiPeriodFP, draft_id: draftIdMultiFP, batch_id: null,
                                   category: adiCategoryFP, source: 'Excel-APN', acc_date: simpleReceiveDateFP,
                                   bus: busSegFP, grp: grpSegFP, com: comSegFP, cpc: '99999', sub_acc: '999999',
                                   batch_name: adiBatchNameFP, batch_description: null, journal_name: sharedJournalNameFP, journal_description: null,
                                   line_description: lineDescCrMultiFP, line_dff: null, branch_indicator: null, username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_vat', // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   branch: String(row.branch || '').trim(), acc: creditAccMultiFP, debit: null, credit: Math.abs(Number(row.exp_vat) || 0), // MARKER_VATWATCHLISTOPS_ADI_CREDIT_USE_VAT_V1 -- ยืนยันแล้วว่าต้องเป็น Vat ไม่ใช่ Amount (Dr./Cr. ต้องเป็น Vat เหมือนกันทั้งคู่)
-                                }) });
+                                });
                                 __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                               } else if (ibOrAssetTriggeredFP) { // MARKER_VATWATCHLISTOPS_ADI_IB_INSERT_V1 -- ทุก Invoice ออก ADI 2 บรรทัด (Debit/Credit) เมื่อ IB Trigger หรือ Asset (ยกเว้น Average-IB ออก 3 บรรทัด -- ดู MARKER_VATWATCHLISTOPS_ADI_AVERAGE_IB_SPLIT3_V1) -- MARKER_VATWATCHLISTOPS_ASSET_FORCE_NNN_ADI_V1
                                 const clsInfoAdiFP = classifyVatWatchlistTaxType(row.tax_type);
@@ -19147,22 +19199,22 @@ let simpleReceiveDateFP;
                                     line_description: lineDescAvgAdiFP, line_dff: null, branch_indicator: null, username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_vat', // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   };
                                   // บรรทัด 1: 11610752 (ส่วนเครดิตได้) -- ปกติ Debit / ถ้ายอดติดลบ Credit
-                                  await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({
+                                  adiRowsFP.push({
                                     ...adiBaseFieldsAvgFP, branch: taxSideBranchAdiFP, acc: '11610752', cpc: '99999', sub_acc: '999999',
                                     debit: isNegAvgAdiFP ? null : recoverableAvgAdiFP, credit: isNegAvgAdiFP ? recoverableAvgAdiFP : null,
-                                  }) });
+                                  });
                                   __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                                   // บรรทัด 2: 63050000 (ส่วนเครดิตไม่ได้, CPC 45700) -- ปกติ Debit / ถ้ายอดติดลบ Credit
-                                  await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({
+                                  adiRowsFP.push({
                                     ...adiBaseFieldsAvgFP, branch: taxSideBranchAdiFP, acc: '63050000', cpc: '45700', sub_acc: '999999',
                                     debit: isNegAvgAdiFP ? null : nonRecoverableAvgAdiFP, credit: isNegAvgAdiFP ? nonRecoverableAvgAdiFP : null,
-                                  }) });
+                                  });
                                   __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                                   // บรรทัด 3: 11630052 (ฝั่ง Invoice เต็มยอดภาษี) -- ปกติ Credit / ถ้ายอดติดลบ Debit
-                                  await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({
+                                  adiRowsFP.push({
                                     ...adiBaseFieldsAvgFP, branch: invoiceSideBranchAdiFP, acc: '11630052', cpc: '99999', sub_acc: '999999',
                                     debit: isNegAvgAdiFP ? vatAbsAvgAdiFP : null, credit: isNegAvgAdiFP ? null : vatAbsAvgAdiFP,
-                                  }) });
+                                  });
                                   __vatFpCount++; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                                 } else {
                                   const isAssetAverageAdiFP = (clsKeyAdiFP === 'T' || clsKeyAdiFP === 'F') && buRateForAdiFP !== 100; // MARKER_VATWATCHLISTOPS_ADI_ASSET_AVERAGE_AMOUNT_V1 -- Asset-IB (A): Asset(T/F) + BU Rate != 100%
@@ -19185,18 +19237,33 @@ let simpleReceiveDateFP;
                                     batch_name: adiBatchNameFP, batch_description: null, journal_name: journalNameAdiFP, journal_description: null,
                                     line_description: lineDescAdiFP, line_dff: null, branch_indicator: null, username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), menu_source: 'ap_vat', // MARKER_VATDRAFT_FILLSTART_USERNAME_V1
                                   };
-                                  await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({ ...adiBaseFieldsFP, branch: debitBranchAdiFP, acc: debitAccFinalAdiFP, debit: amtAdiFP, credit: null }) });
-                                  await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify({ ...adiBaseFieldsFP, branch: creditBranchAdiFP, acc: creditAccFinalAdiFP, debit: null, credit: amtAdiFP }) });
+                                  adiRowsFP.push({ ...adiBaseFieldsFP, branch: debitBranchAdiFP, acc: debitAccFinalAdiFP, debit: amtAdiFP, credit: null });
+                                  adiRowsFP.push({ ...adiBaseFieldsFP, branch: creditBranchAdiFP, acc: creditAccFinalAdiFP, debit: null, credit: amtAdiFP });
                                   __vatFpCount += 2; // MARKER_VAT_FULLPAGE_TRANSACTION_TO_DASHBOARD_V2
                                 }
                               }
                             }
+                            // MARKER_FULLPAGE_ADDDATA_BULK_V2 -- (1) ADI ทั้งชุดครั้งเดียว (Backend ตรวจ Dr.=Cr.) (2) Popvat ทั้งชุดผ่าน popvat_bulk (Transaction เดียว + อัปเดตสถานะ Incomplete) | ถ้าขั้น (2) พลาด ลบ ADI ของ Draft นี้ทิ้งแล้วโยน Error
+                            if (adiRowsFP.length > 0) {
+                              try { await apiFetch('/vat_adi_transferdraft/bulk_insert', { method: 'POST', body: JSON.stringify({ bu: bu?.bu, draft_id: draftIdMultiFP, check_balance: true, items: adiRowsFP }) }); }
+                              catch (adiBulkErrFP) { if (String((adiBulkErrFP && adiBulkErrFP.message) || '') !== 'Request failed') throw adiBulkErrFP; for (const adiRowOneFP of adiRowsFP) { await apiFetch('/vat_adi_transferdraft', { method: 'POST', body: JSON.stringify(adiRowOneFP) }); } /* Backend ยังไม่มี Endpoint -> ทีละแถวแบบเดิม */ }
+                            }
+                            { const stBulkFP = vatDraftStatus(addTaxInvoiceOverRef.current);
+                              const itemsBulkFP = rowsForSumFinal.map((row) => { const cg = row.receive_doc_no || null; return {
+                                draft: { bu: bu?.bu, book: bu?.BOOK || null, period: periodTextFP, draft_id: draftIdMultiFP, branch: row.branch || null, grt_number: cg, original_invoice_number: row.invoice_ref || null, receipt_date: formatQuickActionReceiveDateText(sentinelReceiveDateFP), tax_invoice_number: cg, tax_invoice_date: formatQuickActionReceiveDateText(row.payment_date || null), vendor_tax_invoice_number: cg, supplier_tax_id: null, supplier_branch_number: null, supplier_name: row.vendor_name || null, check_no: row.check_no || null, product_value: row.exp_amount || null, vat_amount: row.exp_vat || null, username, fill_started_at: (fullPageFillStartedAtRef.current || new Date()).toISOString(), created_at: new Date().toISOString(), status: stBulkFP, action: ibOrAssetTriggeredFP ? 'Simple_NNN' : 'Simple_YNY', menu_source: 'ap_vat' },
+                                match: { invoice_ref: row.invoice_ref, supplier_code: row.supplier_code, any_status: true },
+                                report_put: { status: stBulkFP },
+                              }; });
+                              try { await apiFetch('/vat_watchlist_report/popvat_bulk', { method: 'POST', body: JSON.stringify({ bu: bu?.bu, draft_id: draftIdMultiFP, items: itemsBulkFP, grn: null }) }); __vatFpCount += rowsForSumFinal.length; }
+                              catch (popBulkErrFP) { try { await rollbackDraftId(draftIdMultiFP); } catch (_) { /* ignore */ } throw popBulkErrFP; } }
                             for (const t of addTaxInvoiceList) { // Simple Input Transfer -- 1 Record ต่อ 1 Tax Invoice
                               const matchedBranchFP = addTaxInvoiceBranchListData.find((b) => String(b['Branch Code'] || '').trim() === String(t.branch || '').trim());
                               const pctFP = matchedBranchFP ? String(matchedBranchFP['%'] || '').trim() : '';
                               const isExpenseAverageSpecialFP = !isAssetGroupFP && pctFP !== '' && pctFP !== '100'; // MARKER_VATWATCHLISTOPS_SIMPLEINPUT_EXPENSE_AVERAGE_SPECIAL_V1 -- Expense (ไม่ใช่ Asset T/F) + Average % (Branch % ไม่ใช่ 100) -> Override CPC (Special)/Sub Account (Special)/Expense Type
                               const checkNoFP = rowsForSumFinal[0]?.check_no || '';
-                              const supplierNameFP = matchedSupplierFP ? (matchedSupplierFP['Company Name'] || '') : '';
+                              const catFP = await vatCategoryForSupplierCode(matchedSupplierFP ? matchedSupplierFP['Supplier Code'] : ''); // MARKER_SIMPLE_FROM_CATEGORY_V1
+                              const supplierNameFP = (catFP && String(catFP['Supplier Name'] || '').trim()) ? String(catFP['Supplier Name']).trim() : (matchedSupplierFP ? (matchedSupplierFP['Company Name'] || '') : '');
+                              const taxIdSimpleFP = (catFP && String(catFP['TAX ID'] || '').trim()) ? String(catFP['TAX ID']).trim() : (matchedSupplierFP ? (matchedSupplierFP['Tax ID'] || null) : null);
                               const descPeriodFP = periodTextFP ? periodTextFP.replace('-', '.') : ''; // MARKER_VATWATCHLISTOPS_DESCPERIOD_FORMAT_MMDOTYYYY_V1 -- ตามที่แจ้ง: Format ต้องเป็น MM.YYYY (เดิม Reverse+Slash กลายเป็น YYYY/MM ผิด) -- periodTextFP เป็น 'MM-YYYY' อยู่แล้ว แค่เปลี่ยน - เป็น . พอ
                               await apiFetch('/vat_simpleinputdraft', {
                                 method: 'POST',
@@ -19215,7 +19282,8 @@ let simpleReceiveDateFP;
                                   cpc_tax_special: null, // MARKER_VATWATCHLISTOPS_SIMPLEINPUT_DR_PENDING_V1 -- รอ Confirm เงื่อนไขเพิ่มเติม (ผูกกับ % VAT + Asset/Expense)
                                   supplier_code: null, // MARKER_VATWATCHLISTOPS_SIMPLEINPUT_SUPPLIER_CODE_ALWAYS_NULL_V1 -- Confirm แล้วว่าไม่ต้อง Match Supplier Code เลย ให้เป็น null เสมอ (ย้อนกลับจาก MARKER_VATWATCHLISTOPS_SIMPLEINPUT_SUPPLIER_CODE_FIX_V1)
                                   supplier_name: supplierNameFP || null,
-                                  tax_id: matchedSupplierFP ? (matchedSupplierFP['Tax ID'] || null) : null,
+                                  tax_id: taxIdSimpleFP,
+                                  category_code: catFP ? (String(catFP['Code'] || '').trim() || null) : null, // MARKER_SIMPLE_FROM_CATEGORY_V1
                                   receive_date: formatQuickActionReceiveDateText(simpleReceiveDateFP),
                                   tax_invoice_number: t.grn, // MARKER_VATWATCHLISTOPS_SIMPLEINPUT_TAXINVOICENUMBER_USE_GRN_V1 -- ใช้ GRN ไม่ใช่ Tax Invoice No. ที่พิมพ์เอง (ยืนยันแล้ว)
                                   tax_invoice_date: formatQuickActionReceiveDateText(t.taxInvoiceDate),
@@ -20078,6 +20146,8 @@ let simpleReceiveDateFP;
       {qaGlOpen && showQuickAction && (() => { // MARKER_VATWATCHLISTOPS_QA_GLTRANSFER_TABS_MULTI_TIV_V1 -- Popup GL-TransferVat 2 Tab (บันทึกครั้งเดียว)
         const rowsGl = quickActionRows || [];
         const listGl = qaGlAllItems;
+        const qaGlSelKeys = [...listGl.filter((it) => !String(it.id).startsWith('grid-') && !it.pending).map((it) => it.id), ...qaGlGrid.filter((gr) => gr.date || gr.tiv || gr.g || gr.v).map((gr) => `g:${gr.id}`)];
+        const qaGlAllChk = qaGlSelKeys.length > 0 && qaGlSelKeys.every((k) => qaGlChk.has(k));
         const hasGl = listGl.length > 0;
         const tGl = qaGlTotals;
         const fm2 = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -20115,12 +20185,12 @@ let simpleReceiveDateFP;
         const needMoreGl = !!qaGlPendingItem; // MARKER_QA_GL_ADD_ALLOWED_WHEN_OVER_V1 -- กด + Add ได้ทุกกรณีที่กรอกใบกำกับครบ แม้ยอดเกิน Invoice (มีกรณีต้องเพิ่มใบลดหนี้มาหักลบ)
         const addHintGl = qaGlPendingMissing.length > 0 ? `ยังกรอกไม่ครบ: ${qaGlPendingMissing.join(', ')}`
           : (!qaGlPendingItem ? (hasGl ? (tGl.ok ? (overGl ? 'ยื่นเกิน Invoice (Vat ' + fm2(remV) + ') — บันทึกได้เลย หรือกรอกใบถัดไป/ใบลดหนี้แล้วกด + Add (หรือใช้ Adjust Diff by ADI ปรับส่วนต่าง)' : 'ยอดครบแล้ว — บันทึกได้เลย') : `ยังเหลือ Gross ${fm2(remG)} / Vat ${fm2(remV)} → กรอกใบกำกับถัดไป`) : 'กรอกใบกำกับภาษี ระบบเทียบยอดกับ Invoice ให้อัตโนมัติ')
-            : (tGl.ok ? (overGl ? 'ยื่นเกิน Invoice (Vat ' + fm2(remV) + ') — บันทึกได้เลย หรือกด + Add เพื่อเพิ่มใบกำกับ/ใบลดหนี้ (หรือใช้ Adjust Diff by ADI ปรับส่วนต่าง)' : 'ยอดตรงกับ Invoice แล้ว (±1 บาท) — บันทึกได้เลย ไม่ต้อง Add') : (overGl ? 'ยอดไม่ตรง: เกินบางรายการแต่ยังขาด (Gross ' + fm2(remG) + ' / Vat ' + fm2(remV) + ') — ยื่นเกินได้ แต่ห้ามขาด' : `ยอดยังไม่ครบ เหลือ Gross ${fm2(remG)} / Vat ${fm2(remV)} → กด + Add เพื่อเพิ่มใบกำกับถัดไป`)));
+            : (tGl.ok ? (overGl ? 'ยื่นเกิน Invoice (Vat ' + fm2(remV) + ') — บันทึกได้เลย หรือกด + Add เพื่อเพิ่มใบกำกับ/ใบลดหนี้ (หรือใช้ Adjust Diff by ADI ปรับส่วนต่าง)' : 'ยอดตรงกับ Invoice แล้ว (±1 บาท) — บันทึกได้เลย ไม่ต้อง Add') : (overGl ? 'ยอดไม่ตรง: เกินบางรายการแต่ยังขาด (Gross ' + fm2(remG) + ' / Vat ' + fm2(remV) + ') — ยื่นเกินได้ แต่ห้ามขาด' : '' /* MARKER_QA_GL_HIDE_REMAIN_HINT_V1 -- ไม่แสดงข้อความ "ยอดยังไม่ครบ เหลือ Gross/Vat → กด + Add" ข้างปุ่ม + Add (ส่วนต่างแสดงที่แถบล่างอยู่แล้ว) */)));
         const addHintColorGl = tGl.ok ? (overGl ? '#b26a00' : '#2e7d32') : ((overGl || qaGlPendingMissing.length > 0) ? '#e5484d' : '#b26a00');
         const diffOkV = (listGl.length > 0 || !!qaGlAdj) && Math.abs(qaGlAdj ? roundMoney2(tGl.dv - qaGlAdj.cover) : tGl.dv) <= 1;
         const simOnGl = hasGl && qaGlSimpleCond !== 'standby';
         const simPillGl = `Simple ${nNnnGl === 0 ? 'YNY' : (nYnyGl === 0 ? 'NNN' : 'YNY/NNN')}${adiOnGl ? ' + ADI' : ''}`;
-        const prevAmtGl = qaGlSplitAmt(qaGlAmtType, parseFloat(String(qaGlAmt || '').replace(/,/g, '')) || 0);
+        const prevAmtGl = qaGlSplitAmt(qaGlAmtType, parseFloat(String(qaGlAmt || '').replace(/^\s*['\u2018\u2019`]+/, '').replace(/,/g, '')) || 0);
         if (qaGlShowSmSearch) { // สลับ View: ค้นหา Supplier (+ Add/Edit Form) ในกรอบเดียวกับ GL-TransferVat ไม่เปิดหน้าต่างซ้อน
           return (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1150 }}>
@@ -20189,7 +20259,7 @@ let simpleReceiveDateFP;
                   <div style={{ flex: '16 1 0%', minWidth: 0 }}>
                     <label style={lblS}>Code</label>
                     <div style={{ display: 'flex', position: 'relative' }}>
-                      <input type="text" value={qaGlSupplierCode} onChange={(e) => setQaGlSupplierCode(e.target.value)} onContextMenu={qaGlOpenDraftMenu} onKeyDown={(ev) => { if (ev.key === 'ArrowDown' && !qaGlDrMenu) { qaGlOpenDraftMenu(ev); } else if (ev.key === 'Escape' && qaGlDrMenu) { ev.stopPropagation(); ev.preventDefault(); setQaGlDrMenu(null); } }} title="คลิกขวา / ลูกศรลง = เลือก Vendor จาก Draft Monitor (พิมพ์เพื่อกรอง)" style={{ ...yInS, flex: 1, minWidth: 0, width: 'auto', borderRight: 'none', borderRadius: '8px 0 0 8px' }} />
+                      <input ref={qaGlCodeInputRef} type="text" value={qaGlSupplierCode} onChange={(e) => setQaGlSupplierCode(e.target.value)} onContextMenu={qaGlOpenDraftMenu} onKeyDown={(ev) => { if (ev.key === 'ArrowDown' && !qaGlDrMenu) { qaGlOpenDraftMenu(ev); } else if (ev.key === 'Escape' && qaGlDrMenu) { ev.stopPropagation(); ev.preventDefault(); setQaGlDrMenu(null); } }} title="คลิกขวา / ลูกศรลง = เลือก Vendor จาก Draft Monitor (พิมพ์เพื่อกรอง)" style={{ ...yInS, flex: 1, minWidth: 0, width: 'auto', borderRight: 'none', borderRadius: '8px 0 0 8px' }} />
                       <button type="button" title="ค้นหา / เพิ่ม Supplier" tabIndex={-1} onClick={() => setQaGlShowSmSearch(true)} style={{ width: '34px', flexShrink: 0, boxSizing: 'border-box', height: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #d1d5db', borderRadius: '0 8px 8px 0', background: '#f9fafb', cursor: 'pointer', padding: 0 }}>
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6b7280" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                       </button>
@@ -20213,7 +20283,7 @@ let simpleReceiveDateFP;
                   <div style={{ flex: '13 1 0%', minWidth: 0 }}>
                     <label style={lblS}>Tax invoice Date</label>
                     <div style={{ position: 'relative' }}>
-                      <input key={`qgd${qaGlFormKey}`} type="text" defaultValue={formatDateDisplayMDY(qaGlDate)} placeholder="MM/DD/YYYY" onContextMenu={qaGlOpenDateMenu} title="คลิกขวา / ลูกศรลง = วันที่ใบกำกับของ Vendor นี้ใน Draft Monitor"
+                      <input key={`qgd${qaGlFormKey}`} type="text" defaultValue={formatDateDisplayMDY(qaGlDate)} placeholder="MM/DD/YYYY" onPaste={(e) => handleDatePasteAskNow(e, () => qaGlDate, (iso) => setQaGlDate(iso))} /* MARKER_QA_GL_DATE_PASTE_ASK_NOW_V1 -- วางวันที่กำกวมในช่อง Tax invoice Date (GL-TransferVat) -> ถามทันที */ onContextMenu={qaGlOpenDateMenu} title="คลิกขวา / ลูกศรลง = วันที่ใบกำกับของ Vendor นี้ใน Draft Monitor"
                         onKeyDown={(ev) => { if (ev.key === 'ArrowDown' && !qaGlDtMenu) { qaGlOpenDateMenu(ev); } else if (ev.key === 'Escape' && qaGlDtMenu) { ev.stopPropagation(); ev.preventDefault(); setQaGlDtMenu(false); } }}
                         onChange={(e) => { if (e.target.value.trim() === '*' && qaGlLastDateRef.current) { e.target.value = formatDateDisplayMDY(qaGlLastDateRef.current); setQaGlDate(qaGlLastDateRef.current); } }} /* MARKER_VATWATCHLISTOPS_QA_GL_STAR_RECALL_DATE_V1 */
                         onBlur={async (e) => { const parsed = await resolveFlexibleDateInput(e.target); if (parsed) { e.target.value = formatDateDisplayMDY(parsed); setQaGlDate(parsed); } else if (!e.target.value.trim()) { setQaGlDate(''); } else { e.target.value = formatDateDisplayMDY(qaGlDate); } }}
@@ -20244,8 +20314,8 @@ let simpleReceiveDateFP;
                   <div style={{ flex: '22 1 0%', minWidth: 0 }}>
                     <label style={lblS}>Amount</label>{/* MARKER_QA_GL_INVOICE_CREDIT_KIND_V1 -- ระบบแยก Invoice/Credit เองจากเครื่องหมายยอด (บวก = ใบกำกับ, ลบ = ใบลดหนี้) ไม่แสดงป้ายหน้า Input */}
                     <div style={{ display: 'flex' }}>
-                      <input type="text" value={qaGlAmt} onChange={(e) => setQaGlAmt(e.target.value)} onPaste={handleQaGlPasteRows}
-                        onBlur={(e) => { const num = parseFloat(String(e.target.value || '').replace(/,/g, '').trim()); if (!isNaN(num)) setQaGlAmt(num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })); }}
+                      <input type="text" value={qaGlAmt} onChange={(e) => setQaGlAmt(e.target.value.replace(/^\s*['\u2018\u2019`]+/, ''))} /* MARKER_QA_GL_AMOUNT_STRIP_QUOTE_V1 -- วางยอดจาก Excel ที่มี ' นำหน้า (เช่น '248763.6200): ตัด ' ออกทันที */ onPaste={handleQaGlPasteRows}
+                        onBlur={(e) => { const num = parseFloat(String(e.target.value || '').replace(/^\s*['\u2018\u2019`]+/, '').replace(/,/g, '').trim()); if (!isNaN(num)) setQaGlAmt(roundMoney2(num).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })); }} /* MARKER_QA_GL_AMOUNT_STRIP_QUOTE_V1 -- Round 2: ปัดเป็น 2 ตำแหน่ง */
                         onKeyDown={(e) => { if (e.key === 'Enter') handleQaGlAdd(); }}
                         style={{ ...yInS, flex: 1, minWidth: 0, width: 'auto', borderRight: 'none', borderRadius: '8px 0 0 8px', textAlign: 'right' }} />
                       <select value={qaGlAmtType} onChange={(e) => setQaGlAmtType(e.target.value)} style={{ width: '92px', flexShrink: 0, boxSizing: 'border-box', height: '34px', fontSize: '12px', fontWeight: 500, padding: '0 6px', border: '1px solid #d1d5db', borderRadius: '0 8px 8px 0', outline: 'none', background: '#f9fafb' }}>
@@ -20330,13 +20400,14 @@ let simpleReceiveDateFP;
                 <div style={mhS}>Tax Invoice List <small style={{ fontWeight: 400, opacity: 0.8 }}>{listGl.length} ใบ</small></div>
                 <div ref={qaGlBoxRef} tabIndex={0} onKeyDown={qaGlBoxKey} onPaste={qaGlBoxPaste} onCopy={(ev) => qaGlBoxCopy(ev, false)} onCut={(ev) => qaGlBoxCopy(ev, true)} className="qa-hide-sb" style={{ minHeight: 0, maxHeight: '292px', overflowY: 'auto', outline: 'none' }}> {/* MARKER_QA_GL_TAXLIST_TALLER_V1 -- กรอบสูงขึ้น รองรับหลายใบ */}
                 <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, tableLayout: 'fixed' }}>
-                  <colgroup><col style={{ width: '5%' }} /><col style={{ width: '13%' }} /><col style={{ width: '15%' }} /><col style={{ width: '16%' }} /><col style={{ width: '22%' }} /><col style={{ width: '15%' }} /><col style={{ width: '14%' }} /></colgroup>
-                  <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}><tr><th style={{ ...thS, textAlign: 'center' }}>#</th><th style={thS}>Branch Dr.</th><th style={thS}>GRN</th><th style={thS}>Tax Invoice Date</th><th style={thS}>TIV number</th><th style={{ ...thS, textAlign: 'right' }}>Amount</th><th style={{ ...thS, textAlign: 'right' }}>Vat</th></tr></thead>
+                  <colgroup><col style={{ width: '4%' }} /><col style={{ width: '4%' }} /><col style={{ width: '10%' }} /><col style={{ width: '15%' }} /><col style={{ width: '16%' }} /><col style={{ width: '22%' }} /><col style={{ width: '15%' }} /><col style={{ width: '14%' }} /></colgroup>
+                  <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}><tr><th style={{ ...thS, textAlign: 'center', padding: '0 4px' }}><input type="checkbox" title="เลือกทั้งหมด" disabled={qaGlSelKeys.length === 0} checked={qaGlAllChk} onChange={(ev) => setQaGlChk(ev.target.checked ? new Set(qaGlSelKeys) : new Set())} style={{ cursor: 'pointer' }} /></th><th style={{ ...thS, textAlign: 'center' }}>#</th><th style={thS}>Branch Dr.</th><th style={thS}>GRN</th><th style={thS}>Tax Invoice Date</th><th style={thS}>TIV number</th><th style={{ ...thS, textAlign: 'right' }}>Amount</th><th style={{ ...thS, textAlign: 'right' }}>Vat</th></tr></thead>
                   <tbody>
                     {listGl.map((it, i) => (String(it.id).startsWith('grid-') ? null : (
                       <tr key={it.id}>
+                        <td style={{ ...tdS, textAlign: 'center', padding: '0 4px' }}>{!it.pending && <input type="checkbox" checked={qaGlChk.has(it.id)} onChange={(ev) => setQaGlChk((prev) => { const n = new Set(prev); if (ev.target.checked) n.add(it.id); else n.delete(it.id); return n; })} style={{ cursor: 'pointer' }} />}</td>
                         <td style={{ ...tdS, textAlign: 'center' }}>{i + 1}</td><td style={tdS}>{it.brDr}{qaGlItemIb(it) && <span style={{ marginLeft: '6px', padding: '0 7px', borderRadius: '9px', background: '#fff4e0', color: '#b26a00', fontSize: '10px' }} title={`Cr. ${it.brCr}`}>IB</span>}</td>
-                        <td style={tdS}>{grnOfGl(i) || '—'}</td><td style={tdS}>{formatQuickActionReceiveDateText(it.date)}</td><td style={tdS} title={it.tiv}>{it.tiv}{it.kind === 'CR' && <span style={{ marginLeft: '6px', padding: '0 7px', borderRadius: '9px', background: '#fff4e0', color: '#b26a00', fontSize: '10px' }}>Credit</span>}{it.pending && <span style={{ marginLeft: '6px', fontSize: '10px', color: '#b26a00' }}>(กำลังกรอก — บันทึกพร้อมกัน)</span>}</td>
+                        <td style={tdS}>{grnOfGl(i) || '—'}</td><td style={{ ...tdS, position: 'relative', paddingRight: '32px' }}>{formatQuickActionReceiveDateText(it.date)}<span onMouseDown={(ev) => ev.stopPropagation()} onClick={(ev) => { const inp = ev.currentTarget.querySelector('input'); if (!inp) return; try { inp.showPicker(); } catch (e) { inp.focus(); inp.click(); } }} title="เลือกวันที่จาก Calendar" style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', cursor: 'pointer', color: '#888', borderLeft: '1px solid #e3e7eb', background: '#f7f9fb' }}>📅<input type="date" tabIndex={-1} value={/^\d{4}-\d{2}-\d{2}/.test(String(it.date || '')) ? String(it.date).slice(0, 10) : ''} onChange={(ev) => { const v = ev.target.value; if (!v) return; setQaGlTivList((prev) => prev.map((x) => (x.id === it.id ? { ...x, date: v } : x))); }} style={{ position: 'absolute', right: 0, bottom: 0, width: '250px', height: '100%', opacity: 0, pointerEvents: 'none', border: 'none', padding: 0 }} /></span>{/* MARKER_QA_GL_TAXLIST_CALENDAR_V1 */}</td><td style={tdS} title={it.tiv}>{it.tiv}{it.kind === 'CR' && <span style={{ marginLeft: '6px', padding: '0 7px', borderRadius: '9px', background: '#fff4e0', color: '#b26a00', fontSize: '10px' }}>Credit</span>}{it.pending && <span style={{ marginLeft: '6px', fontSize: '10px', color: '#b26a00' }}>(กำลังกรอก — บันทึกพร้อมกัน)</span>}</td>
                         <td style={{ ...tdS, textAlign: 'right' }}>{fm2(it.g)}</td>
                         <td style={{ ...tdS, textAlign: 'right' }}>{fm2(it.v)} <button type="button" title={it.pending ? 'ล้างใบที่กำลังกรอก' : 'ลบ'} onClick={() => { if (it.pending) { setQaGlTiv(''); setQaGlAmt(''); setQaGlDate(''); setTimeout(() => qaGlTivInputRef.current?.focus(), 0); } else setQaGlTivList((prev) => prev.filter((x) => x.id !== it.id)); }} style={{ border: 'none', background: 'none', color: '#c0392b', cursor: 'pointer' }}>✕</button>{/* MARKER_VATCONTROLLER_QAGL_PENDING_DELETE_V1 -- แถวที่กำลังกรอก (ใบสุดท้าย) มี ✕ เหมือนแถวอื่น: กด = ล้าง TIV/Amount/Date ที่กรอกค้าง */}</td>
                       </tr>
@@ -20357,18 +20428,21 @@ let simpleReceiveDateFP;
                             onMouseEnter={() => { if (qaGlDragRef.current) setQaGlSel((s) => (s ? { ...s, fr: gi, fc: c } : s)); }}
                             onDoubleClick={() => setQaGlEdit({ r: gi, c, val })}
                             title={k === 'tiv' && tivDup ? 'TIV ซ้ำ' : undefined}
-                            style={{ ...tdS, position: 'relative', cursor: 'cell', userSelect: 'none', padding: '0 8px', height: '28px', textAlign: right ? 'right' : 'left', background: inSel && !act ? '#dcebfb' : (ok ? '#f1faf3' : '#fff'), outline: act ? '2px solid #1a73e8' : (k === 'tiv' && tivDup ? '1px solid #e5484d' : 'none'), outlineOffset: '-2px', borderRight: '0.5px solid #eef0f2', color: val ? (k === 'tiv' && tivDup ? '#e5484d' : '#222') : '#c4c9d0' }}>
+                            style={{ ...tdS, position: 'relative', cursor: 'cell', userSelect: 'none', padding: k === 'date' ? '0 32px 0 8px' : '0 8px', height: '28px', textAlign: right ? 'right' : 'left', background: inSel && !act ? '#dcebfb' : (ok ? '#f1faf3' : '#fff'), outline: act ? '2px solid #1a73e8' : (k === 'tiv' && tivDup ? '1px solid #e5484d' : 'none'), outlineOffset: '-2px', borderRight: '0.5px solid #eef0f2', color: val ? (k === 'tiv' && tivDup ? '#e5484d' : '#222') : '#c4c9d0' }}>
                             {editing
                               ? (<input autoFocus value={qaGlEdit.val} onChange={(ev) => setQaGlEdit((x) => (x ? { ...x, val: ev.target.value } : x))}
+                                  onPaste={k === 'date' ? (ev) => { const el = ev.target; setTimeout(async () => { const txt = el.value; const amb = getDateAmbiguity(txt); if (!amb) return; const pick = await askDateOrderPopup(amb, txt); if (pick) setQaGlGrid((prev) => qaGlGridFit(prev.map((x) => (x.id === gr.id ? qaGlRowApply(x, 'date', qaGlFmtDate(amb[pick])) : x)))); }, 0); } : undefined}
                                   onKeyDown={(ev) => { if (ev.key === 'Enter') { ev.preventDefault(); ev.stopPropagation(); qaGlCommitEdit(qaGlEditRef.current, [ev.shiftKey ? -1 : 1, 0]); } else if (ev.key === 'Tab') { ev.preventDefault(); ev.stopPropagation(); qaGlCommitEdit(qaGlEditRef.current, [0, ev.shiftKey ? -1 : 1]); } else if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); qaGlEditRef.current = null; setQaGlEdit(null); qaGlRefocusBox(); } else ev.stopPropagation(); }}
                                   onBlur={() => { if (qaGlEditRef.current) qaGlCommitEdit(qaGlEditRef.current, null); }}
                                   style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', boxSizing: 'border-box', border: 'none', outline: '2px solid #1a73e8', outlineOffset: '-2px', padding: '0 8px', fontSize: '12px', background: 'white', textAlign: right ? 'right' : 'left' }} />)
                               : (val || ph)}
+                            {k === 'date' && !editing && (<span onMouseDown={(ev) => ev.stopPropagation()} onClick={(ev) => { const inp = ev.currentTarget.querySelector('input'); if (!inp) return; try { inp.showPicker(); } catch (e) { inp.focus(); inp.click(); } }} title="เลือกวันที่จาก Calendar" style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', cursor: 'pointer', color: '#888', borderLeft: '1px solid #e3e7eb', background: '#f7f9fb' }}>📅<input type="date" tabIndex={-1} value={qaGlParseDateAny(val) || ''} onChange={(ev) => { const v = ev.target.value; if (!v) return; setQaGlGrid((prev) => qaGlGridFit(prev.map((x) => (x.id === gr.id ? qaGlRowApply(x, 'date', qaGlFmtDate(v)) : x)))); }} style={{ position: 'absolute', right: 0, bottom: 0, width: '250px', height: '100%', opacity: 0, pointerEvents: 'none', border: 'none', padding: 0 }} /></span>)}{/* MARKER_QA_GL_TAXLIST_CALENDAR_V1 */}
                           </td>
                         );
                       };
                       return (
                         <tr key={gr.id}>
+                          <td style={{ ...tdS, textAlign: 'center', padding: '0 4px' }}><input type="checkbox" disabled={!filled} checked={filled && qaGlChk.has(`g:${gr.id}`)} onChange={(ev) => setQaGlChk((prev) => { const n = new Set(prev); if (ev.target.checked) n.add(`g:${gr.id}`); else n.delete(`g:${gr.id}`); return n; })} style={{ cursor: filled ? 'pointer' : 'not-allowed', opacity: filled ? 1 : 0.45 }} /></td>
                           <td style={{ ...tdS, textAlign: 'center', color: ok ? '#2e7d32' : '#bbb' }}>{ok ? itIdx + 1 : '·'}</td>
                           {cell(0, String(qaGlBranchDr || '') || 'auto')}
                           <td style={{ ...tdS, color: ok ? '#1a3a5c' : '#bbb' }}>{ok ? (grnOfGl(itIdx) || '—') : '—'}{filled && <button type="button" title="ล้างแถวนี้" onClick={() => qaGlGridClearRow(gr.id)} style={{ marginLeft: '6px', border: 'none', background: 'none', color: '#c0392b', cursor: 'pointer' }}>✕</button>}</td>
@@ -20380,6 +20454,7 @@ let simpleReceiveDateFP;
                 </table>
                 </div>
                 <div style={sumS}>
+                  {(qaGlAllItems.length > 0 || qaGlSelKeys.length > 0) && (<button type="button" onClick={async () => { const chkKeys = qaGlSelKeys.filter((k) => qaGlChk.has(k)); const onlyChk = chkKeys.length > 0; const nClr = onlyChk ? chkKeys.length : qaGlAllItems.length; const okClr = await confirmDialog.confirm(onlyChk ? `ล้างใบกำกับภาษีที่เลือก ${nClr} ใบ ?` : `ล้างใบกำกับภาษีทั้งหมด ${nClr} ใบ ?`, { title: 'Clear', variant: 'danger' }); if (!okClr) return; if (onlyChk) { setQaGlTivList((prev) => prev.filter((x) => !qaGlChk.has(x.id))); setQaGlGrid((prev) => qaGlGridFit(prev.map((x) => (qaGlChk.has(`g:${x.id}`) ? { ...x, date: '', tiv: '', br: '', g: '', v: '', gm: false, vm: false } : x)))); } else { setQaGlTivList([]); setQaGlGrid(qaGlMkGrid(8)); } setQaGlChk(new Set()); setQaGlSel(null); setQaGlEdit(null); }} style={{ marginRight: 'auto', height: '24px', padding: '0 12px', fontSize: '12px', border: 'none', borderRadius: '6px', background: '#f5a623', color: 'white', cursor: 'pointer' }}>{qaGlSelKeys.some((k) => qaGlChk.has(k)) ? `Clear (${qaGlSelKeys.filter((k) => qaGlChk.has(k)).length})` : 'Clear'}</button>)}{/* MARKER_QA_GL_CLEAR_TIV_LIST_V1 -- ปุ่ม Clear ล้าง Tax Invoice List ทั้งหมดก่อนบันทึก (มุมซ้ายล่างของตาราง) */}
                   <span>รวมใบกำกับ Gross <b style={{ color: '#1a3a5c' }}>{fm2(tGl.sg)}</b></span><span>Vat <b style={{ color: '#1a3a5c' }}>{fm2(tGl.sv)}</b></span>
                   <span>ส่วนต่างกับ Invoice <b style={{ color: tGl.ok ? '#2e7d32' : '#e5484d' }}>{fm2(tGl.dg)} / {fm2(tGl.dv)}</b></span>
                 </div>
@@ -20939,6 +21014,16 @@ const arPopvatReceiveIso = (effYm, over) => {
 };
 // MARKER_RECEIPT_FOLLOW_PERIOD_V1 -- Receipt Date ต้องยึด Period ของแถวเสมอ (ทุกจุดที่สร้าง Popvat Draft เรียกฟังก์ชันนี้ก่อนบันทึก): ถ้าวันที่ที่ส่งมาอยู่ในเดือนของ Period ใช้ตามนั้น | ไม่ใช่ -> เดือนปัจจุบัน = วันนี้ / เดือนที่ผ่านมาแล้ว = วันสุดท้ายของเดือน Period / เดือนอนาคต = วันที่ 1 ของเดือน Period (Cancel ใช้ Sentinel 1989 แยก ไม่ผ่านฟังก์ชันนี้)
 // MARKER_VAT_DUP_GUARD_V1 -- เช็คซ้ำก่อน Submit ทุกจุดที่บันทึกยื่นภาษี : เลขที่ใบกำกับ + ยอด VAT (ค่าสัมบูรณ์ ±0.015) เทียบ Simple ทุกสถานะ (vat_simpleinputdraft) / Tax Invoice Backup / Popvat Draft
+// MARKER_SIMPLE_FROM_CATEGORY_V1 -- Simple Draft ให้อิงชื่อ/Tax ID จาก Vendor Category (ตาม Supplier Code) + เก็บ category_code ไว้ผูกกลับ ให้ Backend Sync ตอนแก้ Category | ไม่พบ Category -> Fallback ค่าจาก SM-Code เหมือนเดิม
+const __vatCatCache = new Map();
+const vatCategoryForSupplierCode = async (code) => {
+  const c = String(code || '').trim(); if (!c || /^[\s\-_.\/\\]*$/.test(c)) return null; // MARKER_SIMPLE_FROM_CATEGORY_V1 -- Code เป็นขีด/ตัวแทน (เช่น '-') ไม่ใช่รหัส Supplier จริง -> ไม่ใช้ Category (กันจับผิดตัว)
+  const hit = __vatCatCache.get(c); if (hit && Date.now() - hit.t < 30000) return hit.v;
+  let v = null;
+  try { const r = await apiFetch(`/vendor_category?eq_Code=${encodeURIComponent(c)}`); const okRows = (Array.isArray(r) ? r : []).filter((x) => x && !x.deleted); v = okRows.length === 1 ? okRows[0] : null; /* ซ้ำหลายแถว = จับไม่ชัด -> ไม่ใช้ */ } catch (e) { v = null; }
+  __vatCatCache.set(c, { t: Date.now(), v });
+  return v;
+};
 const vatDupFindExisting = async (items) => { // items: [{ bu, inv, vat }] -> [{ inv, where }]
   const out = []; const live = (items || []).filter((x) => x && String(x.inv || '').trim());
   if (!live.length) return out;
@@ -23252,7 +23337,7 @@ function VatWatchlistAgingOverviewZone({ search, baseFilter, setSearch, chartFoc
     {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_BOOKING_CLAIM_TOGGLE_V1 -- สวิตช์ Booking / Claim (มีผลเฉพาะ Donut + กราฟด้านขวา) */}
     <div
       title={vatValueMode === 'claim' ? 'ยอดตาม Rate (avg_vat)' : 'ยอดเต็ม 100% (exp_vat)'}
-      style={{ position: 'absolute', top: '10px', right: matchedBu ? '10px' : '124px', zIndex: 20, display: 'flex', alignItems: 'center', border: '0.5px solid #d0d5dd', borderRadius: '12px', padding: '1px', background: '#f0f0f0' }}
+      style={{ position: 'absolute', top: '10px', right: matchedBu ? '10px' : '124px', zIndex: 20, display: 'flex', alignItems: 'center', border: 'none', borderRadius: '999px', padding: '3px', background: '#f3f3f3' }}
     >
       {[{ k: 'booking', label: 'Booking', on: '#1a3a5c' }, { k: 'claim', label: 'Claim', on: '#0f7a6b' }].map((o) => (
         <button
@@ -23260,7 +23345,7 @@ function VatWatchlistAgingOverviewZone({ search, baseFilter, setSearch, chartFoc
           type="button"
           disabled={isViewerRole}
           onClick={() => { if (!isViewerRole) setVatValueMode(o.k); }}
-          style={{ opacity: isViewerRole ? 0.5 : 1, padding: '2px 9px', fontSize: '10px', fontWeight: 600, borderRadius: '10px', border: 'none', cursor: isViewerRole ? 'not-allowed' : 'pointer', background: vatValueMode === o.k ? o.on : 'transparent', color: vatValueMode === o.k ? '#fff' : '#666' }}
+          style={{ opacity: isViewerRole ? 0.5 : 1, padding: '2px 10px', fontSize: '10px', fontWeight: 600, borderRadius: '999px', border: 'none', cursor: isViewerRole ? 'not-allowed' : 'pointer', background: vatValueMode === o.k ? o.on : 'transparent', color: vatValueMode === o.k ? '#fff' : '#666' }}
         >{o.label}</button>
       ))}
     </div>
@@ -23269,7 +23354,7 @@ function VatWatchlistAgingOverviewZone({ search, baseFilter, setSearch, chartFoc
         <button
           disabled={isViewerRole}
           onClick={() => { if (isViewerRole) return; setDetailOverviewSearch(''); setDetailBase(baseFilter || ''); setShowDetailOverview(true); }}
-          style={{ opacity: isViewerRole ? 0.45 : 1, position: 'absolute', top: '10px', right: '10px', zIndex: 20, fontSize: '11px', padding: '3px 12px', border: '0.5px solid #1a3a5c', borderRadius: '10px', background: '#1a3a5c', color: 'white', cursor: isViewerRole ? 'not-allowed' : 'pointer' }}
+          style={{ opacity: isViewerRole ? 0.45 : 1, position: 'absolute', top: '10px', right: '10px', zIndex: 20, fontSize: '11px', padding: '4px 14px', fontWeight: 600, border: 'none', borderRadius: '999px', background: '#0f7a6b', color: 'white', cursor: isViewerRole ? 'not-allowed' : 'pointer' }}
         >Detail Overview</button>
       )}
       {showDetailOverview && !matchedBu && (
@@ -23353,7 +23438,7 @@ function VatWatchlistAgingOverviewZone({ search, baseFilter, setSearch, chartFoc
       {matchedBu && selectedAgingPoint != null && (
         <button
           onClick={() => setShowPopvatPreview(true)}
-          style={{ position: 'absolute', top: '10px', right: '10px', zIndex: 20, fontSize: '11px', padding: '3px 12px', border: '0.5px solid #1a3a5c', borderRadius: '10px', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}
+          style={{ position: 'absolute', top: '10px', right: '10px', zIndex: 20, fontSize: '11px', padding: '4px 14px', fontWeight: 600, border: 'none', borderRadius: '999px', background: '#0f7a6b', color: 'white', cursor: 'pointer' }}
         >Popvat Preview · Aging {selectedAgingPoint === 'expired' ? 'Expired' : selectedAgingPoint}</button>
       )}
       {showPopvatPreview && matchedBu && selectedAgingPoint != null && (
@@ -23694,7 +23779,7 @@ function VatWatchlistOpsLobby({ onSubTabChange, pendingCrossBu, setPendingCrossB
   }
 
   return (
-    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', boxSizing: 'border-box', overflow: guestOnlyRow ? 'hidden' : undefined }} onScroll={(e) => { if (e.currentTarget.scrollTop || e.currentTarget.scrollLeft) { e.currentTarget.scrollTop = 0; e.currentTarget.scrollLeft = 0; } }}> {/* MARKER_GUEST_EMBED_CLIP_NO_SHIFT_V2 -- ใช้ hidden + รีเซ็ต scroll (clip ทำให้ min-height:auto ดัน Layout ล้นจนตารางไม่เลื่อน) */}
+    <div style={{ padding: '24px', background: '#fff', display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', boxSizing: 'border-box', overflow: guestOnlyRow ? 'hidden' : undefined }} onScroll={(e) => { if (e.currentTarget.scrollTop || e.currentTarget.scrollLeft) { e.currentTarget.scrollTop = 0; e.currentTarget.scrollLeft = 0; } }}> {/* MARKER_GUEST_EMBED_CLIP_NO_SHIFT_V2 -- ใช้ hidden + รีเซ็ต scroll (clip ทำให้ min-height:auto ดัน Layout ล้นจนตารางไม่เลื่อน) */}
       <div style={{ display: 'flex', gap: '12px', flex: guestOnlyRow ? '27 1 0%' : '35 1 0%', minHeight: guestOnlyRow ? '250px' : undefined }}> {/* MARKER_GUEST_TOP_ZONE_HEIGHT_V1 -- Guest BU เดียว: ลดสัดส่วนโซนบน */}
         <div style={{ flex: '65 1 0%' }}><VatWatchlistAgingOverviewZone search={monitorSearch} baseFilter={monitorBaseFilter} setSearch={setMonitorSearch} chartFocusBu={chartFocusBu} setChartFocusBu={setChartFocusBu} /></div> {/* MARKER_VATWATCHLISTOPS_AGING_OVERVIEW_ZONE_V1 -- แทนที่ Placeholder 65% เดิม */}
         <div style={{ flex: '35 1 0%' }}><VatWatchlistRightZone /></div>
@@ -23952,7 +24037,7 @@ function VatUploadFileLobby({ onSubTabChange, pendingCrossBu, setPendingCrossBu,
     );
   }
   return (
-    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', minHeight: 0, overflowY: 'auto', boxSizing: 'border-box' }}> {/* MARKER_VATCONTROLLER_HISTORY_TABLE_INNER_SCROLL_V1 */}
+    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', minHeight: 0, overflowY: 'auto', boxSizing: 'border-box', background: 'white' }}> {/* MARKER_VATCONTROLLER_HISTORY_TABLE_INNER_SCROLL_V1 -- MARKER_UPLOAD_FILE_WHITE_BG_V1 พื้นหลังขาว */}
         <div style={{ flexShrink: 0, paddingBottom: '10px', borderBottom: '0.5px solid #e8e8e8' }}> {/* MARKER_VATCONTROLLER_UPLOAD_FILE_HEADER_V2 -- Header ใหม่ สไตล์เดียวกับ I-Expense (Layout ด้านล่างไม่เปลี่ยน) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             <div style={{ borderLeft: '4px solid #2fb58a', paddingLeft: '14px' }}>
@@ -23965,16 +24050,7 @@ function VatUploadFileLobby({ onSubTabChange, pendingCrossBu, setPendingCrossBu,
               <div style={{ fontSize: '12px', fontWeight: 700, color: '#1a3a5c', background: '#eaf1fb', padding: '4px 14px', borderRadius: '99px', whiteSpace: 'nowrap' }} title="Period ปัจจุบันของระบบ">Period: {currentPeriodDisplay}</div>
             )}
           </div>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '10px', flexWrap: 'wrap' }}>
-            {[['1', 'เลือก BU'], ['2', 'Operation Zone'], ['3', 'Generate file'], ['4', 'Bucket / Backup']].map(([n, t], i) => (
-              <React.Fragment key={n}>
-                {i > 0 && <span style={{ color: '#b6bcc6', fontSize: '12px' }}>›</span>}
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', border: '1px solid ' + (n === '1' ? '#1a3a5c' : '#d9dde3'), borderRadius: '99px', padding: '4px 14px 4px 5px', fontSize: '12px', fontWeight: n === '1' ? 700 : 400, color: n === '1' ? '#fff' : '#5b6572', background: n === '1' ? '#1a3a5c' : '#fff' }}>
-                  <i style={{ width: '20px', height: '20px', borderRadius: '50%', background: n === '1' ? '#2fb58a' : '#eef0f4', color: n === '1' ? '#fff' : '#6b7480', display: 'grid', placeItems: 'center', fontStyle: 'normal', fontSize: '11px', fontWeight: 700 }}>{n}</i>{t}
-                </span>
-              </React.Fragment>
-            ))}
-          </div>
+          {/* MARKER_UPLOAD_FILE_NO_STEPS_V1 -- ตัดแถบ Step 1-4 (เลือก BU › Operation Zone › Generate file › Bucket / Backup) ออก */}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, minHeight: 0 }}> {/* MARKER_VATWATCHLISTOPS_UPLOAD_FILE_LAYOUT_V3 -- คืน Zone ซ้าย/ขวาแยกกัน */}
           <div style={{ display: 'flex', gap: '12px', height: '330px', flexShrink: 0 }}> {/* MARKER_VATWATCHLISTOPS_UPLOAD_FILE_LAYOUT_V5 -- คำนวณใหม่จาก maxHeight คงที่ของ Grid */}
@@ -24127,7 +24203,7 @@ function VatPopvatReportPanel({ bu }) {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="ค้นหา..."
-          style={{ padding: '6px 12px', fontSize: '12.5px', border: '0.5px solid #ccc', borderRadius: '8px', width: '280px' }}
+          style={{ padding: '6px 14px', fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', width: '300px', outline: 'none' }}
         />
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, border: '0.5px solid #e8e8e8', borderRadius: '10px', overflow: 'auto' }}> {/* MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1 -- ใช้ ExcelStyleGrid แทน Table เดิม */}
@@ -24135,7 +24211,9 @@ function VatPopvatReportPanel({ bu }) {
           <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>กำลังโหลด...</div>
         ) : (
           <ExcelStyleGrid
+            headerTheme="teal"
             columns={VAT_POPVAT_REPORT_COLUMNS}
+            dateColumns={['receipt_date', 'tax_invoice_date']} /* MARKER_GRID_DATE_RIGHTCLICK_V1 */
             rows={filteredRows}
             emptyText="ไม่มีข้อมูล"
             onCommitCell={(row, key, value) => {
@@ -24245,6 +24323,7 @@ function VatGenerateFileModal({ bu, onClose, categoryCounts, onSubTabChange, onG
         const q = `/vat_upload_popvatdraft?eq_status=draft&limit=50000${scope === 'book' ? `&eq_book=${encodeURIComponent(book.trim())}` : `&eq_bu=${encodeURIComponent(bu)}`}${menuSource ? `&eq_menu_source=${encodeURIComponent(menuSource)}` : ''}`;
         const pr = await apiFetch(q); const MON = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
         const bad = (Array.isArray(pr) ? pr : []).filter((r) => {
+          if (String(r.menu_source || '') === 'ap_swap') return false; // MARKER_VATWATCHLISTOPS_MENU_SOURCE_AP_SWAP_V1 -- Swap ตั้งใจใช้ Receipt Date ย้อน Period (ต้องปรับให้ย้อนก่อนกด Swap) จึงไม่ถูกบล็อกด้วยการตรวจ Receipt Date ย้อน
           const mm = String(r.receipt_date || '').match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2})$/); const pm = String(r.period || '').match(/^(\d{2})-(\d{4})$/);
           if (!mm || !pm) return false;
           const yy = Number(mm[3]); const y = yy >= 70 ? 1900 + yy : 2000 + yy; if (y < 2000) return false; // 1989 = Cancel
@@ -24536,7 +24615,7 @@ const VAT_EXPORT_HISTORY_COLOR_MAP = {
 };
 
 function VatExportHistoryRow({ batch, tlMyBus, onRefresh, onDataChanged, hideRestore, onView, onViewBucket }) {
-  const { isOwner, isAdmin } = useUserRole(); // MARKER_VATWATCHLISTOPS_EXPORT_HISTORY_RESTORE_V1 -- ปุ่ม Restore เฉพาะ Owner/Admin
+  const { isOwner, isAdmin, isEditor } = useUserRole(); // MARKER_VATWATCHLISTOPS_EXPORT_HISTORY_RESTORE_V1 -- ปุ่ม Restore เฉพาะ Owner/Admin // MARKER_BATCH_RESTORE_EDITOR_V1 -- เพิ่ม Editor (isEditor รวม Admin/Owner อยู่แล้ว)
   const batchRef = React.useRef(batch); batchRef.current = batch; // MARKER_VATCONTROLLER_EXPORT_POLL_UNTIL_TICK_V1
   const stopPollRef = React.useRef(null);
   React.useEffect(() => () => { if (stopPollRef.current) stopPollRef.current(); }, []);
@@ -24640,13 +24719,13 @@ function VatExportHistoryRow({ batch, tlMyBus, onRefresh, onDataChanged, hideRes
       <td style={{ padding: '10px 12px', borderBottom: '0.5px solid #eee', color: otherDownloadedAt ? '#666' : '#ccc', fontSize: '12px', whiteSpace: 'nowrap' }}>{otherDownloadedAt ? formatVatExportDateTime(otherDownloadedAt) : '—'}</td>
       <td style={{ padding: '10px 12px', borderBottom: '0.5px solid #eee', textAlign: 'right', whiteSpace: 'nowrap' }}> {/* MARKER_VATCONTROLLER_EXPORT_OPEN_ALLUPLOAD_FOLDER_V1 */}{(() => { /* MARKER_VATCONTROLLER_BUCKET_TIMELINE_ICON_V1 -- ไอคอนไป Timeline ของ BU นี้ : ขึ้นทุกแถว แต่กดได้เฉพาะ BU ที่อยู่ใน My Job ของ User นี้ */ const tlBu = String(batch.bu || '').toUpperCase(); const tlOk = !!tlBu && !!tlMyBus && tlMyBus.has(tlBu); return (<button type="button" disabled={!tlOk} onClick={() => { try { sessionStorage.setItem('timeline_jump', JSON.stringify({ bu: batch.bu, t: Date.now() })); sessionStorage.setItem('timeline_return', JSON.stringify({ tab: window.__vatActiveTab || 'vat-upload-file', label: 'VAT Resource from Operation', t: Date.now() })); /* MARKER_TIMELINE_RETURN_TO_ORIGIN_V1 */ } catch (e) { /* no-op */ } if (typeof window.__vatGoSubTab === 'function') window.__vatGoSubTab('vat-timeline'); }} title={tlOk ? `ไปหน้า Timeline ของ ${batch.bu}` : (tlMyBus ? `BU ${batch.bu || ''} ไม่ได้อยู่ใน My Job ของคุณ (ตั้ง Config BU / ติ๊กดู Progress ใน Timeline ก่อน)` : 'กำลังโหลด...')} aria-label="Timeline" style={{ width: '32px', height: '32px', padding: 0, marginRight: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', border: '0.5px solid #1a3a5c', borderRadius: '8px', background: 'white', color: '#1a3a5c', cursor: tlOk ? 'pointer' : 'not-allowed', opacity: tlOk ? 1 : 0.35 }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="3" x2="12" y2="21" /><circle cx="12" cy="7" r="2.2" fill="white" /><circle cx="12" cy="17" r="2.2" fill="white" /><line x1="14.5" y1="7" x2="20" y2="7" /><line x1="4" y1="17" x2="9.5" y2="17" /></svg></button>); })()}<button type="button" disabled={!vatSpFolderOk(batch)} onClick={() => { if (!launchVatExportSpOpen(batch)) confirmDialog.alert('ไม่พบเลข BU (SEGMENT3) / งวดของ Batch นี้ จึงเปิดโฟลเดอร์ All_Upload ไม่ได้', { title: 'เปิดโฟลเดอร์ไม่สำเร็จ', variant: 'danger' }); }} title={vatSpFolderOk(batch) ? `เปิดโฟลเดอร์ปลายทาง All_Upload: Z_AllSystemUpload\\${batch.spBu}\\${batch.spPeriod}` : 'ไม่มีเลข BU / งวด -> เปิดโฟลเดอร์ไม่ได้'} style={{ width: '32px', height: '32px', padding: 0, marginRight: '6px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', border: '0.5px solid #1a3a5c', borderRadius: '8px', background: 'white', color: '#1a3a5c', cursor: vatSpFolderOk(batch) ? 'pointer' : 'not-allowed', opacity: vatSpFolderOk(batch) ? 1 : 0.35, fontSize: '15px' }}>📂</button>
         {onView && (
-          <button type="button" onClick={() => onView(batch)} title="View ข้อมูล Transaction (Popvat / Simple / ADI) ของ Batch นี้" style={{ padding: '6px 14px', fontSize: '12px', border: '0.5px solid #1a3a5c', borderRadius: '8px', background: 'white', color: '#1a3a5c', cursor: 'pointer', marginRight: '6px' }}>View</button> // MARKER_VATWATCHLISTOPS_EXPORT_HISTORY_BACKUP_VIEW_V1
+          <button type="button" onClick={() => onView(batch)} title="View ข้อมูล Transaction (Popvat / Simple / ADI) ของ Batch นี้" aria-label="View" style={{ width: '30px', height: '30px', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', borderRadius: '8px', border: '0.5px solid #1a3a5c', background: 'white', color: '#1a3a5c', cursor: 'pointer', marginRight: '6px' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg></button> // MARKER_VATWATCHLISTOPS_EXPORT_HISTORY_BACKUP_VIEW_V1
         )}
-        {(isOwner || isAdmin) && !hideRestore && (
+        {(isOwner || isAdmin || isEditor) && !hideRestore && (
           <button type="button" onClick={handleRestore} title="Restore: ลบไฟล์ + ดึงข้อมูลกลับเป็น Draft" aria-label="Restore" style={{ width: '30px', height: '30px', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', borderRadius: '8px', background: 'white', cursor: 'pointer', border: '0.5px solid #dc2626', color: '#dc2626', marginRight: '6px' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><polyline points="3 3 3 9 9 9" /></svg></button> // MARKER_VATWATCHLISTOPS_EXPORT_HISTORY_ICON_BTNS_V1 // MARKER_VATWATCHLISTOPS_EXPORT_HISTORY_RESTORE_V1
         )}
         {batch.status === 'pv-backup' ? (
-          <span title={batch.finishedAt ? `Finish ${formatVatExportDateTime(batch.finishedAt)}` : ''} style={{ marginLeft: '6px', padding: '6px 12px', fontSize: '12px', border: '0.5px solid #10b981', borderRadius: '8px', background: '#ecfdf5', color: '#047857', whiteSpace: 'nowrap' }}>PV-Backup{batch.expireAt ? ` · หมดอายุ ${formatVatExportDateOnly(batch.expireAt)}` : ''}</span>
+          <span title={`PV-Backup${batch.finishedAt ? ` · Finish ${formatVatExportDateTime(batch.finishedAt)}` : ''}${batch.expireAt ? ` · หมดอายุ ${formatVatExportDateOnly(batch.expireAt)}` : ''}`} aria-label="PV-Backup" style={{ marginLeft: '6px', width: '30px', height: '30px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', border: '0.5px solid #10b981', borderRadius: '8px', background: '#ecfdf5', color: '#047857' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg></span>
         ) : (
           <button type="button" onClick={handleFinish} title="Finish" aria-label="Finish" style={{ width: '30px', height: '30px', padding: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', verticalAlign: 'middle', borderRadius: '8px', background: 'white', cursor: 'pointer', border: '0.5px solid #10b981', color: '#047857' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg></button>
         )} {/* MARKER_VATWATCHLISTOPS_EXPORT_HISTORY_FINISH_BTN_V1 -- ยังไม่ผูก Logic ตามที่ Confirm ไว้ */}
@@ -24723,27 +24802,8 @@ function VatExportHistoryTable({ refreshKey, onDataChanged }) {
   }, []);
 
   React.useEffect(() => { load(); }, [load, refreshKey]);
-  // MARKER_VATWATCHLISTOPS_AUTO_FINISH_3D_V1 -- Auto Finish: Batch ที่โหลดไฟล์ครบทุกไฟล์แล้ว และผ่านมา >= 3 วัน (นับจากเวลาโหลดไฟล์สุดท้าย) -> Finish ให้เอง (status -> pv-backup) แบบเงียบ ๆ | ทำงานตอนมีคนเปิดหน้านี้ / รายการโหลดใหม่
-  const autoFinishTried = React.useRef(new Set());
-  React.useEffect(() => {
-    const AUTO_MS = 3 * 24 * 3600 * 1000;
-    const due = allBatches.filter((b) => {
-      if (!b || b.status === 'pv-backup' || autoFinishTried.current.has(b.batchId)) return false;
-      const fs = b.files || [];
-      if (!fs.length || !fs.every((f) => f.downloadedAt)) return false;
-      const last = Math.max(...fs.map((f) => new Date(f.downloadedAt).getTime()));
-      return Number.isFinite(last) && Date.now() - last >= AUTO_MS;
-    });
-    if (!due.length) return;
-    due.forEach((b) => autoFinishTried.current.add(b.batchId));
-    (async () => {
-      let any = false;
-      for (const b of due) {
-        try { await apiFetch(`/vat-export/batch/${encodeURIComponent(b.batchId)}/finish`, { method: 'POST' }); any = true; } catch (_) { /* ข้าม: ลองใหม่ตอนเปิดหน้าครั้งหน้า */ }
-      }
-      if (any) { load(); if (onDataChanged) onDataChanged(); }
-    })();
-  }, [allBatches, load, onDataChanged]);
+  // MARKER_VATEXPORT_AUTO_FINISH_MIDNIGHT_V1 -- เดิม Auto Finish 3 วันฝั่งหน้าเว็บ (ตอนเปิดหน้า) -> ย้ายไปทำที่ Backend ทุกเที่ยงคืน (เวลาไทย) สำหรับ Batch ที่โหลดไฟล์ครบแล้ว
+
   React.useEffect(() => { // MARKER_VATWATCHLISTOPS_WS_SYNC_GAPS_V1 -- Sync ข้าม Session ตามที่ Comment ด้านบนตั้งใจไว้ ("ทุกคนต้องเห็นเหมือนกันหมด") แต่เดิมไม่เคย Subscribe WS จริง
     const unsubscribe = subscribeWs(['vat_export_updated'], () => load());
     return unsubscribe;
@@ -24804,41 +24864,42 @@ function VatUploadFileDetail({ bu, onBack, categoryCounts, onGotoIncomplete, onS
   const [detailTab, setDetailTab] = React.useState(VAT_UPLOAD_FILE_TABS[0].id);
   const [showGenerateFileModalInner, setShowGenerateFileModalInner] = React.useState(false); // MARKER_VATWATCHLISTOPS_GENERATE_FILE_MODAL_V1
   return (
-    <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: '8px', height: '100%', boxSizing: 'border-box' }}> {/* MARKER_VATWATCHLISTOPS_UPLOADFILE_HEADER_COMPACT_V2 -- ลด Padding หน้า 24px->16px (แนวตั้ง) + Gap 12px->8px */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', borderBottom: '0.5px solid #e8e8e8', paddingBottom: '4px' }}> {/* MARKER_VATWATCHLISTOPS_UPLOADFILE_HEADER_COMPACT_V2 -- รวม Back+Title+BU (ชิดซ้าย) กับ Tab หลัก (ชิดขวา) เป็นแถวเดียว */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button type="button" onClick={onBack} style={{ padding: '4px 10px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px', background: 'white', cursor: 'pointer' }}>← Back</button>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', whiteSpace: 'nowrap' }}>
-            <span style={{ fontSize: '14px', fontWeight: '500' }}>VAT Resource from Operation</span>
-            <span style={{ fontSize: '11px', color: '#666' }}>{bu}</span>
+    <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', boxSizing: 'border-box', background: 'white' }}> {/* MARKER_VATWATCHLISTOPS_UPLOADFILE_HEADER_COMPACT_V2 -- ลด Padding หน้า 24px->16px (แนวตั้ง) + Gap 12px->8px */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', padding: '12px 18px', borderLeft: '4px solid #0f7a6b', background: 'white', borderRadius: '4px 12px 12px 4px', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', border: '1px solid #eef1f4', borderLeftWidth: '4px', borderLeftColor: '#0f7a6b' }}> {/* MARKER_UPLOADFILE_DETAIL_PRETTY_V1 -- หัวสไตล์เดียวกับ Transaction Backup */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <button type="button" onClick={onBack} title="กลับ" aria-label="Back" style={{ width: '32px', height: '32px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #dde3e8', borderRadius: '999px', background: '#f5f6f8', cursor: 'pointer', color: '#1a3a5c', padding: 0 }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', color: '#0f7a6b' }}>VAT CONTROLLER</div>
+            <div style={{ fontSize: '20px', fontWeight: 700, color: '#1a3a5c', lineHeight: 1.25, whiteSpace: 'nowrap' }}>VAT Resource <span style={{ color: '#0f7a6b' }}>{bu}</span></div>
+            <div style={{ fontSize: '12px', color: '#7a8696' }}>VAT Resource from Operation</div>
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ display: 'flex', gap: '2px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', gap: '2px', padding: '3px', background: '#f3f3f3', border: '1px solid #e5e5e5', borderRadius: '999px' }}>
             {VAT_UPLOAD_FILE_TABS.map((t) => (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setDetailTab(t.id)}
-                style={{ padding: '8px 16px', fontSize: '12.5px', border: 'none', borderRadius: '8px 8px 0 0', borderBottom: detailTab === t.id ? '3px solid #1a3a5c' : '3px solid transparent', background: detailTab === t.id ? '#eaf0f6' : 'transparent', cursor: 'pointer', color: detailTab === t.id ? '#1a3a5c' : '#888', fontWeight: detailTab === t.id ? '500' : '400' }} // MARKER_VATWATCHLISTOPS_ZONEBN_LABEL_REMOVE_TAB_COLORB_V1
+                style={{ padding: '6px 16px', fontSize: '12.5px', border: 'none', borderRadius: '999px', background: detailTab === t.id ? '#0f7a6b' : 'transparent', cursor: 'pointer', color: detailTab === t.id ? 'white' : '#666', fontWeight: detailTab === t.id ? 600 : 500, whiteSpace: 'nowrap' }}
               >{t.label}{(() => { // MARKER_VATCONTROLLER_UPLOADFILE_TAB_COUNT_BADGE_V1 -- แสดงจำนวนรายการบน Tab ถ้ามีข้อมูล
                 const _lb = String(t.label || '').toLowerCase();
                 const _k = _lb.includes('popvat') ? 'popvat' : _lb.includes('simple') ? 'simple' : _lb.includes('adi') ? 'adi' : null;
                 const _n = _k ? Number((categoryCounts || {})[_k] || 0) : 0;
-                return _n > 0 ? <span style={{ marginLeft: '6px', minWidth: '18px', padding: '1px 6px', borderRadius: '10px', background: detailTab === t.id ? '#1a3a5c' : '#9aa7b5', color: 'white', fontSize: '10.5px', fontWeight: '600', display: 'inline-block', textAlign: 'center' }}>{_n.toLocaleString()}</span> : null;
+                return _n > 0 ? <span style={{ marginLeft: '6px', minWidth: '18px', padding: '1px 6px', borderRadius: '10px', background: detailTab === t.id ? 'rgba(255,255,255,0.25)' : '#9aa7b5', color: 'white', fontSize: '10.5px', fontWeight: '600', display: 'inline-block', textAlign: 'center' }}>{_n.toLocaleString()}</span> : null;
               })()}</button>
             ))}
           </div>
           {onBackToOrigin && ( // MARKER_VATCONTROLLER_SIMPLEOPS_GOTO_OPERATION_ZONE_V1 -- Back กลับหน้าต้นทาง (Simple Input Ops) พร้อม BU เดิม
-            <button type="button" onClick={onBackToOrigin} style={{ padding: '8px 16px', fontSize: '12.5px', border: '0.5px solid #fb923c', borderRadius: '8px', background: '#fff7ed', color: '#c2410c', cursor: 'pointer', fontWeight: '500' }}>← Back</button>
+            <button type="button" onClick={onBackToOrigin} style={{ padding: '6px 16px', fontSize: '12.5px', border: '1px solid #fb923c', borderRadius: '999px', background: '#fff7ed', color: '#c2410c', cursor: 'pointer', fontWeight: 600 }}>← Back</button>
           )}
           {onGotoIncomplete && ( // MARKER_VATWATCHLISTOPS_CROSS_PAGE_BU_NAVIGATION_V1 -- Incomp. -> กลับไปหน้า VAT Watchlist Ops ของ BU นี้
-            <button type="button" onClick={onGotoIncomplete} style={{ padding: '8px 16px', fontSize: '12.5px', border: '0.5px solid #1a3a5c', borderRadius: '8px', background: 'white', color: '#1a3a5c', cursor: 'pointer', fontWeight: '500' }}>Incomp.</button>
+            <button type="button" onClick={onGotoIncomplete} style={{ padding: '6px 18px', fontSize: '12.5px', border: '1px solid #0f7a6b', borderRadius: '999px', background: 'white', color: '#0f7a6b', cursor: 'pointer', fontWeight: 600 }}>Incomp.</button>
           )}
           <button
             type="button"
             onClick={() => setShowGenerateFileModalInner(true)}
-            style={{ padding: '8px 16px', fontSize: '12.5px', border: '0.5px solid #1a3a5c', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: 'pointer', fontWeight: '500' }} // MARKER_VATWATCHLISTOPS_GENERATE_FILE_MODAL_V1 -- ปุ่ม Generate File ด้านใน (รู้ BU อยู่แล้ว กดได้เสมอ)
+            style={{ padding: '6px 18px', fontSize: '12.5px', border: 'none', borderRadius: '999px', background: '#0f7a6b', color: 'white', cursor: 'pointer', fontWeight: 600 }} // MARKER_VATWATCHLISTOPS_GENERATE_FILE_MODAL_V1 -- ปุ่ม Generate File ด้านใน (รู้ BU อยู่แล้ว
           >Generate file</button>
         </div>
       </div>
@@ -24957,7 +25018,7 @@ function evaluateVatWatchlistSimpleFormula(expr) { // MARKER_VATWATCHLISTOPS_EXC
   return result;
 }
 
-function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, formatCell, columnWidths, rightAlignKeys, cellContextMenuKey, cellContextMenuOptions, cellContextMenuLabel, cellContextMenus, columnGroups, rowFallbackContextMenu }) { // MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1 -- MARKER_VATWATCHLIST_MULTI_CONTEXTMENU_V1 -- MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1 เพิ่ม columnGroups (Optional)
+function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, formatCell, columnWidths, rightAlignKeys, cellContextMenuKey, cellContextMenuOptions, cellContextMenuLabel, cellContextMenus, columnGroups, rowFallbackContextMenu, headerTheme, dateColumns }) { // MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1 -- MARKER_VATWATCHLIST_MULTI_CONTEXTMENU_V1 -- MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1 เพิ่ม columnGroups (Optional)
   const isRightAlign = (key) => (rightAlignKeys ? rightAlignKeys.has(key) : false);
   const displayValueOf = (row, col) => (formatCell ? formatCell(row, col) : (row[col.key] ?? ''));
   const widthOf = (key) => (columnWidths && columnWidths[key]) || undefined;
@@ -24974,6 +25035,20 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
   const [cellCtxMenu, setCellCtxMenu] = React.useState(null);
   const [cellCtxPopupOpen, setCellCtxPopupOpen] = React.useState(false);
   const [cellCtxPopupSearch, setCellCtxPopupSearch] = React.useState('');
+  const [dateEditOpen, setDateEditOpen] = React.useState(false); // MARKER_GRID_DATE_RIGHTCLICK_V1 -- คลิกขวา > เปลี่ยนวันที่ (ทุกแถวที่เลือก)
+  const [dateEditVal, setDateEditVal] = React.useState('');
+  const applyDateToSelection = () => {
+    if (!dateEditVal || !cellCtxMenu) { setDateEditOpen(false); setCellCtxMenu(null); return; }
+    const [yy, mm, dd] = dateEditVal.split('-');
+    const MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const text = `${dd}-${MONS[Number(mm) - 1]}-${yy.slice(2)}`;
+    const ci = columns.findIndex((x) => x.key === cellCtxMenu.key);
+    const n = normRange(selection) || { r1: cellCtxMenu.r, r2: cellCtxMenu.r };
+    const lo = (selection && inSelection(cellCtxMenu.r, cellCtxMenu.c)) ? n.r1 : cellCtxMenu.r;
+    const hi = (selection && inSelection(cellCtxMenu.r, cellCtxMenu.c)) ? n.r2 : cellCtxMenu.r;
+    if (ci >= 0) { for (let rr = lo; rr <= hi; rr += 1) commitEdit(rr, ci, text); }
+    setDateEditOpen(false); setCellCtxMenu(null);
+  };
   const [editValue, setEditValue] = React.useState('');
   const isSelectingRef = React.useRef(false);
   const rowIdOf = getRowId || ((row) => row.id);
@@ -25111,17 +25186,34 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
     e.clipboardData.setData('text/plain', lines.join('\n'));
   };
 
+  const normDateText = (key, v) => { // MARKER_GRID_DATE_PASTE_V1 -- คอลัมน์วันที่: แปลงรูปแบบที่วางมา (2026-10-31 / 31/10/2026 / 31-10-2026) เป็น DD-MMM-YY ; รูปแบบอื่นปล่อยตามเดิม
+    if (!(dateColumns || []).includes(key)) return v;
+    const t = String(v == null ? '' : v).trim();
+    const MONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    let m = t.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    let y; let mo; let d;
+    if (m) { y = Number(m[1]); mo = Number(m[2]); d = Number(m[3]); } else { m = t.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/); if (m) { d = Number(m[1]); mo = Number(m[2]); y = Number(m[3]); } }
+    if (!m) return v;
+    if (y > 2400) y -= 543;
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return v;
+    return `${String(d).padStart(2, '0')}-${MONS[mo - 1]}-${String(y).slice(2)}`;
+  };
   const applyPasteText = (text) => { // MARKER_VATWATCHLIST_EXCELGRID_CTRLV_RELIABLE_V1 -- แยกตัววาง Text ลง Grid ออกมา ใช้ได้ทั้ง Native onPaste และ Ctrl+V ผ่าน Keydown
     if (!selection || !text) return;
     const gridLines = text.replace(/\r/g, '').split('\n');
     if (gridLines.length > 0 && gridLines[gridLines.length - 1] === '') gridLines.pop();
     const gridCells = gridLines.map((line) => line.split('\t'));
+    const n0 = normRange(selection);
+    if (gridCells.length === 1 && gridCells[0].length === 1 && (n0.r2 > n0.r1 || n0.c2 > n0.c1)) { // MARKER_GRID_PASTE_FILL_V1 -- Copy ค่าเดียวแล้วเลือกหลายช่อง Ctrl+V = เติมทุกช่องที่เลือก (เหมือน Excel)
+      for (let r = n0.r1; r <= n0.r2; r += 1) for (let c = n0.c1; c <= n0.c2; c += 1) { if (r < rows.length && c < columns.length) commitEdit(r, c, normDateText(columns[c].key, gridCells[0][0])); }
+      return;
+    }
     const startR = Math.min(selection.r1, selection.r2);
     const startC = Math.min(selection.c1, selection.c2);
     gridCells.forEach((lineCells, ri) => {
       lineCells.forEach((val, ci) => {
         const r = startR + ri, c = startC + ci;
-        if (r < rows.length && c < columns.length) commitEdit(r, c, val);
+        if (r < rows.length && c < columns.length) commitEdit(r, c, normDateText(columns[c].key, val));
       });
     });
     setSelection({ r1: startR, c1: startC, r2: Math.min(rows.length - 1, startR + gridCells.length - 1), c2: Math.min(columns.length - 1, startC + ((gridCells[0] && gridCells[0].length) || 1) - 1) });
@@ -25175,13 +25267,13 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
         {columnGroups && ( // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1 -- Header ชั้นบน แบ่ง Zone สีตามหมวด
           <tr>
             {columnGroups.map((g, gi) => (
-              <th key={gi} colSpan={g.span} style={{ padding: '6px 10px', color: '#333', fontWeight: '600', fontSize: '11px', textAlign: 'left', position: 'sticky', top: 0, zIndex: 3, height: '28px', boxSizing: 'border-box', background: g.color || '#f0f0f0', borderRight: '2px solid white' }}>{g.label}</th>
+              <th key={gi} colSpan={g.span} style={{ padding: '6px 10px', color: headerTheme === 'teal' ? 'rgba(255,255,255,0.92)' : '#333', fontWeight: '600', fontSize: '11px', textAlign: 'left', position: 'sticky', top: 0, zIndex: 3, height: '28px', boxSizing: 'border-box', background: headerTheme === 'teal' ? '#0c6357' : (g.color || '#f0f0f0'), borderRight: headerTheme === 'teal' ? '1px solid rgba(255,255,255,0.35)' : '2px solid white' }}>{g.label}</th>
             ))}
           </tr>
         )}
-        <tr style={{ background: '#1a3a5c' }}>
+        <tr style={{ background: headerTheme === 'teal' ? '#0f7a6b' : '#1a3a5c' }}> {/* MARKER_GRID_HEADER_TEAL_V1 */}
           {columns.map((col, c) => ( // MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1 MARKER_VATWATCHLISTOPS_EXCEL_GRID_NAV_V1 -- คลิก Header เลือกทั้ง Column
-            <th key={col.key} onClick={() => setSelection({ r1: 0, c1: c, r2: rows.length - 1, c2: c })} style={{ padding: '8px 10px', color: 'white', fontWeight: '500', textAlign: isRightAlign(col.key) ? 'right' : 'left', position: 'sticky', top: columnGroups ? '28px' : 0, zIndex: 3, boxShadow: '0 1px 0 #1a3a5c', background: '#1a3a5c', width: widthOf(col.key), whiteSpace: 'nowrap', cursor: 'pointer' }}>{col.label}</th>
+            <th key={col.key} onClick={() => setSelection({ r1: 0, c1: c, r2: rows.length - 1, c2: c })} style={{ padding: '8px 10px', color: 'white', fontWeight: '500', textAlign: isRightAlign(col.key) ? 'right' : 'left', position: 'sticky', top: columnGroups ? '28px' : 0, zIndex: 3, boxShadow: headerTheme === 'teal' ? '0 1px 0 #0f7a6b' : '0 1px 0 #1a3a5c', background: headerTheme === 'teal' ? '#0f7a6b' : '#1a3a5c', width: widthOf(col.key), whiteSpace: 'nowrap', cursor: 'pointer' }}>{col.label}</th>
           ))}
         </tr>
       </thead>
@@ -25232,10 +25324,11 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
                     <input
                       autoFocus
                       type="text"
+                      size={1} /* MARKER_GRID_EDIT_NO_SHIFT_V1 -- ความกว้างของ input ต้องไม่ดันคอลัมน์ (เดิม input กว้างตามค่าเริ่มต้นทำให้ตารางขยับตอนคลิกเข้าแก้) */
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}
                       onBlur={() => stopEdit(true)}
-                      style={{ width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'white', fontSize: '12px', fontFamily: 'inherit' }}
+                      style={{ width: '100%', minWidth: 0, boxSizing: 'border-box', border: 'none', outline: 'none', background: 'white', fontSize: '12px', fontFamily: 'inherit', padding: 0 }}
                     />
                   ) : displayValueOf(row, col)}
                 </td>
@@ -25249,12 +25342,22 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
       <div onMouseDown={(e) => e.stopPropagation()} style={{ position: 'fixed', top: cellCtxMenu.y, left: cellCtxMenu.x, background: 'white', border: '0.5px solid #ccc', borderRadius: '8px', boxShadow: '0 6px 16px rgba(0,0,0,0.18)', zIndex: 2000, minWidth: '190px', overflow: 'hidden', fontSize: '13px' }}>
         <div // MARKER_VATWATCHLIST_EXCELGRID_RIGHTCLICK_COPY_V1 -- ตัวเลือก "Copy" เพิ่มใหม่ โชว์เสมอไม่ว่า Column จะมี Dropdown พิเศษหรือไม่ -- Copy ทั้ง Range ที่เลือกไว้ (รองรับ Drag Select หลาย Cell)
           onClick={handleContextCopy}
-          style={{ padding: '9px 14px', cursor: 'pointer', color: '#1a3a5c', borderBottom: (cellCtxMenu.options || cellCtxMenu.tableColumns) ? '0.5px solid #eee' : 'none' }}
+          style={{ padding: '9px 14px', cursor: 'pointer', color: '#1a3a5c', borderBottom: (cellCtxMenu.options || cellCtxMenu.tableColumns || (dateColumns || []).includes(cellCtxMenu.key)) ? '0.5px solid #eee' : 'none' }}
           onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f4fa'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
         >
           Copy
         </div>
+        {(dateColumns || []).includes(cellCtxMenu.key) && (
+          <div
+            onClick={() => { setDateEditVal(''); setDateEditOpen(true); }}
+            style={{ padding: '9px 14px', cursor: 'pointer', color: '#1a3a5c', borderBottom: (cellCtxMenu.options || cellCtxMenu.tableColumns) ? '0.5px solid #eee' : 'none' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f4fa'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
+          >
+            Change date…
+          </div>
+        )}
         {(cellCtxMenu.options || cellCtxMenu.tableColumns) && (
           <div
             onClick={() => { if (cellCtxMenu.onPick) { const tr = rows[cellCtxMenu.r]; setCellCtxMenu(null); if (tr) cellCtxMenu.onPick(tr); return; } setCellCtxPopupOpen(true); setCellCtxPopupSearch(''); }} /* MARKER_VATWATCHLISTOPS_SIMPLEINPUT_ADJUST_TYPE_MODAL_V1 -- onPick เปิด Popup เฉพาะของหน้านั้น */
@@ -25267,8 +25370,24 @@ function ExcelStyleGrid({ columns, rows, onCommitCell, emptyText, getRowId, form
         )}
       </div>
     )}
-    {cellCtxMenu && !cellCtxPopupOpen && (
+    {cellCtxMenu && !cellCtxPopupOpen && !dateEditOpen && (
       <div style={{ position: 'fixed', inset: 0, zIndex: 1999 }} onMouseDown={() => setCellCtxMenu(null)} />
+    )}
+    {dateEditOpen && cellCtxMenu && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 2001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        onMouseDown={(e) => { if (e.target === e.currentTarget) { setDateEditOpen(false); setCellCtxMenu(null); } }}>
+        <div style={{ background: 'white', borderRadius: '10px', width: '340px', boxShadow: '0 10px 40px rgba(0,0,0,0.25)', padding: '16px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#1a3a5c', marginBottom: '4px' }}>Change date</div>
+          <div style={{ fontSize: '12px', color: '#7a8696', marginBottom: '12px' }}>
+            {(() => { const n = normRange(selection); const multi = selection && inSelection(cellCtxMenu.r, cellCtxMenu.c) && n; const cnt = multi ? (n.r2 - n.r1 + 1) : 1; return `ใช้กับ ${cnt.toLocaleString()} แถวที่เลือกในคอลัมน์นี้`; })()}
+          </div>
+          <input type="date" autoFocus value={dateEditVal} onChange={(e) => setDateEditVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') applyDateToSelection(); }} style={{ width: '100%', boxSizing: 'border-box', height: '34px', border: '1px solid #dde3e8', borderRadius: '8px', padding: '0 10px', fontSize: '13px' }} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '14px' }}>
+            <button type="button" onClick={() => { setDateEditOpen(false); setCellCtxMenu(null); }} style={{ padding: '6px 16px', fontSize: '12.5px', borderRadius: '999px', border: '1px solid #dde3e8', background: 'white', cursor: 'pointer' }}>ยกเลิก</button>
+            <button type="button" disabled={!dateEditVal} onClick={applyDateToSelection} style={{ padding: '6px 18px', fontSize: '12.5px', fontWeight: 600, borderRadius: '999px', border: 'none', background: dateEditVal ? '#0f7a6b' : '#b8c4c2', color: 'white', cursor: dateEditVal ? 'pointer' : 'default' }}>ตกลง</button>
+          </div>
+        </div>
+      </div>
     )}
     {cellCtxPopupOpen && cellCtxMenu && (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 2001, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -25623,6 +25742,7 @@ function VatSimpleInputReportPanel({ bu }) {
       <div style={{ flex: '1 1 0%', border: '0.5px solid #e8e8e8', borderRadius: '10px', overflow: 'auto', display: 'flex', flexDirection: 'column' }}> {/* MARKER_VATWATCHLISTOPS_SIMPLEINPUT_ZONEBN_AUTOHEIGHT_V1 -- เดิม 65% คงที่ เปลี่ยนเป็นรับพื้นที่ที่เหลือทั้งหมดแทน Zone บนที่ Auto-Height แล้ว */}
         <div style={{ overflow: 'auto', flex: 1 }}> {/* MARKER_VATWATCHLISTOPS_EXCEL_STYLE_GRID_V1 -- ใช้ ExcelStyleGrid แทน Table เดิม */}
           <ExcelStyleGrid
+            headerTheme="teal"
             rowFallbackContextMenu={{ key: 'adjust_type', label: 'Adjust Type', options: ['-'], onPick: (r) => setAdjustRow({ row: r, ir: r.invoice_ref || 'Invoice', ts: r.type_sim || 'NNN' }) }} /* MARKER_VATWATCHLISTOPS_SIMPLEINPUT_ADJUST_TYPE_BOTH_V1 -- เลือกครั้งเดียวเปลี่ยนทั้ง Invoice Type และ Sim Type ของแถว */
             columns={VAT_SIMPLE_INPUT_COLUMNS} // ไม่แสดงคอลัมน์ Invoice Type / Sim Type ในตาราง เปลี่ยนผ่านคลิกขวาที่แถว (rowFallbackContextMenu) หรือกรอบ Metadata ด้านบน
             rows={displayRows}
@@ -25844,12 +25964,13 @@ function VatAdiUploadReportPanel({ bu }) { // MARKER_VATCONTROLLER_SILENT_REFRES
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="ค้นหา..."
-          style={{ padding: '6px 12px', fontSize: '12.5px', border: '0.5px solid #ccc', borderRadius: '8px', width: '280px' }}
+          style={{ padding: '6px 14px', fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', width: '300px', outline: 'none' }}
         />
       </div>
       <div style={{ flex: '1 1 0%', width: '100%', border: '0.5px solid #e8e8e8', borderRadius: '10px', overflow: 'auto', display: 'flex', flexDirection: 'column' }}> {/* MARKER_VATWATCHLISTOPS_ADI_UPLOAD_FULLWIDTH_WRAPPER_V1 -- บังคับ width 100% กันไม่ยืดเต็ม Container */}
         <div style={{ overflow: 'auto', flex: 1, width: '100%' }}> {/* MARKER_VATWATCHLISTOPS_EXCEL_GRID_EXTEND_WIRE_V1 -- ใช้ ExcelStyleGrid แทน Table เดิม (คง Format/Width/Alignment เดิมไว้ครบ) */}
           <ExcelStyleGrid
+            headerTheme="teal"
             columns={VAT_ADI_UPLOAD_TABLE_COLUMNS}
             rows={filteredRows}
             emptyText="ยังไม่มีข้อมูล"
@@ -25923,7 +26044,7 @@ const VAT_TAX_INVOICE_ONEBOX_MAP = { // Excel Header -> DB Column (Onebox Format
   'BU BRANCH': 'bu_branch',
 };
 
-function VatTaxInvoiceManualFormModal({ onClose, onSaved, username }) {
+function VatTaxInvoiceManualFormModal({ onClose, onSaved, username, forceFields, table }) { // MARKER_AP0105_AMAGNO_TAB_V1 -- forceFields = ค่าที่บังคับ (แท็บ Amagno: status/source_type/period)
   const emptyForm = { bu: '', business_name: '', bu_tax_id: '', bu_branch: '', supplier_name: '', tax_id_supplier: '', branch_supplier: '', merchant_id: '', doc_date: '', tax_invoice_number: '', gross_value: '', vat_value: '', total_value: '', doc_type: '', invoice_ref: '' }; // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1
   const [form, setForm] = React.useState(emptyForm);
   const [saving, setSaving] = React.useState(false);
@@ -25931,7 +26052,7 @@ function VatTaxInvoiceManualFormModal({ onClose, onSaved, username }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await apiFetch('/vat_backup_tax_invoice', { method: 'POST', body: JSON.stringify({
+      const body = {
         ...form,
         gross_value: form.gross_value === '' ? null : Number(form.gross_value),
         vat_value: form.vat_value === '' ? null : Number(form.vat_value),
@@ -25940,7 +26061,14 @@ function VatTaxInvoiceManualFormModal({ onClose, onSaved, username }) {
         status: 'pending',
         source_type: 'manual_form',
         uploaded_by: username,
-      }) });
+        ...(forceFields || {}),
+      };
+      if (table) { // แท็บ Amagno: ตาราง vat_amagno_ap0105 ไม่มี status/source_type
+        delete body.status; delete body.source_type;
+        const ap = String(form.doc_type || '').trim().toUpperCase(); body.ap_set = AP01_SETS.includes(ap) ? ap : 'AP01'; body.doc_type = body.ap_set; body.bu_state = 'active';
+        if (!body.period) throw new Error('ยังไม่ได้เลือก Period');
+      }
+      await apiFetch(table ? `/${table}` : '/vat_backup_tax_invoice', { method: 'POST', body: JSON.stringify(body) });
       onSaved();
       onClose();
     } catch (err) {
@@ -26111,7 +26239,7 @@ function VatTaxInvoicePurgeModal({ onClose, onDone }) {
   );
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1400 }}>
-      <div style={{ background: 'white', borderRadius: '12px', width: '560px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', padding: '22px 24px', boxSizing: 'border-box' }}>
+      <div style={{ background: 'white', borderRadius: '12px', width: '980px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', padding: '22px 24px', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
           <div style={{ fontSize: '15px', fontWeight: 500, color: '#b3261e' }}>ล้างข้อมูล Tax Invoice (Owner)</div>
           <button type="button" onClick={onClose} disabled={busy} style={{ width: '28px', height: '28px', padding: 0, border: 'none', borderRadius: '50%', background: '#f0f0f0', cursor: 'pointer', color: '#666' }}>×</button>
@@ -26185,7 +26313,7 @@ function VatTaxInvoicePurgeModal({ onClose, onDone }) {
                 <tbody>
                   {previewSample.map((r, i) => (
                     <tr key={i} style={{ borderTop: i ? '0.5px solid #eee' : 'none' }}>
-                      <td style={{ padding: '5px 8px', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.supplier_name || '-'}</td>
+                      <td style={{ padding: '5px 8px', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.supplier_name || '-'}</td>
                       <td style={{ padding: '5px 8px' }}>{r.tax_invoice_number || '-'}</td>
                       <td style={{ padding: '5px 8px' }}>{r.doc_date ? String(r.doc_date).slice(0, 10) : '-'}</td>
                       <td style={{ padding: '5px 8px', textAlign: 'right' }}>{r.gross_value != null ? Number(r.gross_value).toLocaleString() : '-'}</td>
@@ -26259,33 +26387,1077 @@ function VatTaxInvoiceTabPlaceholder({ title, note, columns }) {
 }
 function VatTaxInvoicePage() {
   const [tiTab, setTiTab] = React.useState('tax');
-  const tabs = [['tax', 'Tax Invoice'], ['amagno', 'Amagno - Tax Invoice']];
+  const tabs = [['tax', 'AR Collection'], ['amagno', 'Amagno - Tax Invoice']]; // MARKER_VATTAXINVOICE_TAB_AR_COLLECTION_V1 -- แท็บแรกเปลี่ยนชื่อเป็น AR Collection
+  const headerTabs = (
+    <div style={{ display: 'inline-flex', gap: '2px', padding: '3px', background: '#f3f3f3', border: '1px solid #e5e5e5', borderRadius: '999px' }}>
+          {tabs.map(([k, label]) => (
+            <button key={k} type="button" onClick={() => setTiTab(k)} style={{ padding: '6px 16px', fontSize: '12.5px', border: 'none', borderRadius: '999px', background: tiTab === k ? '#0f7a6b' : 'transparent', cursor: 'pointer', color: tiTab === k ? 'white' : '#666', fontWeight: tiTab === k ? 600 : 500, whiteSpace: 'nowrap' }}>{label}</button>
+          ))}
+        </div>
+  ); // MARKER_TAXINV_TABS_IN_CARD_V1 -- แท็บย้ายเข้าไปอยู่ในการ์ดหัว
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', gap: '4px', padding: '12px 24px 0', borderBottom: '0.5px solid #e0e0e0' }}>
-        {tabs.map(([k, label]) => (
-          <button key={k} type="button" onClick={() => setTiTab(k)} style={{ padding: '8px 16px', fontSize: '13px', border: 'none', background: 'transparent', cursor: 'pointer', color: tiTab === k ? '#1a3a5c' : '#888', fontWeight: tiTab === k ? 600 : 400, borderBottom: tiTab === k ? '2px solid #1a3a5c' : '2px solid transparent', marginBottom: '-1px' }}>{label}</button>
-        ))}
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#f5f6f8' }}>
       <div style={{ flex: 1, minHeight: 0 }}>
-        {tiTab === 'tax' && <VatTaxInvoiceTab />}
-        {tiTab === 'amagno' && <VatTaxInvoiceTabPlaceholder title="Amagno - Tax Invoice" note="Report AP01-05 จาก Amagno (เก็บชั่วคราว) -- รอกำหนดระยะเวลาเก็บ/Upload" columns={VAT_AMAGNO_TAX_INVOICE_COLUMNS} />}
+        {tiTab === 'tax' && <VatTaxInvoiceTab headerTabs={headerTabs} />}
+        {tiTab === 'amagno' && <VatTaxInvoiceTab scope="ap0105" headerTabs={headerTabs} />} {/* MARKER_AP0105_AMAGNO_TAB_V1 -- ข้อมูล AP01-AP05 (source_type='ap01_05') แยก Period · ลบอัตโนมัติ 45 วันหลังปิด Period */}
       </div>
     </div>
   );
 }
-// MARKER_VATRECONCILE_AP0105_TWOZONE_V3 -- หน้า "VAT Reconcile AP01-AP05" โครงเปล่า 2 Zone (รอกำหนดเนื้อหา)
-function VatReconcileAp0105Page() {
-  const zS = { background: '#fff', border: '0.5px solid #ddd', borderRadius: 12, boxSizing: 'border-box', padding: '14px 16px', display: 'flex', flexDirection: 'column' };
-  const tS = { fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '0.03em' };
+// MARKER_AP0105_REAL_PAGE_V1 -- หน้า "VAT Reconcile AP01-AP05" (Lobby จุดโยนเดียว + My Job/All Job + หน้า Reconcile) และข้อมูล AP01-AP05 ที่เก็บใน Backup > Tax Invoice > Amagno - Tax Invoice
+// -- AP01-AP05: Reformat ตามกติกา Macro เดิม -> เก็บ vat_backup_tax_invoice (source_type='ap01_05', status='ap_recon' แยกจาก Tax Invoice/Bucket เดิม) แยกตาม Period · Active BU เท่านั้น
+// -- หา BU: Group Range (ตาม Digit ที่ตั้ง) -> Segment 3 (4 หลักแรก) -> Branch list ; ไม่พบ = แสดงรายการ "ไม่พบ BU/Branch" ไม่ทิ้งเงียบ
+// -- Incomplete = ส่งเข้าฟังก์ชัน Upload Incomplete เดิม (VatWatchlistUploadModal) · Input Vat Reconcile = VatReconcileSystem ตัวเดียวกับหน้า Input Vat Rec.
+const AP01_RETENTION_DAYS = 30; // MARKER_AP0105_RETENTION_30D_V1 -- ข้อมูล Period เก่า (ปิดแล้ว) เก็บ 30 วันนับจากวันที่โยนไฟล์ · Period ล่าสุดไม่ลบ (ตรงกับ Backend)
+const AP01_TABLE = 'vat_amagno_ap0105'; // MARKER_AP0105_OWN_TABLE_V1 -- ตารางแยกของ AP01-AP05 (ไม่ใช้ vat_backup_tax_invoice ร่วมกับ AR Collection แล้ว)
+const AP01_SETS = ['AP01', 'AP02', 'AP03', 'AP04', 'AP05'];
+const AP01_NEED = ['AP01', 'AP05']; // MARKER_AP0105_NEED_2SETS_V1 -- Amagno มีใช้จริงแค่ AP01 กับ AP05 : ความพร้อม/Status ดูเฉพาะ 2 ชุดนี้
+const AP01_TT = ['N', 'M', 'A', 'T', 'F'];
+const ap01Clean = (v) => String(v == null ? '' : v).replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\u00A0/g, ' ').trim().replace(/^['\u2018\u2019`\u00B4]+/, '').trim(); // MARKER_AP0105_CLEAN_V2 -- ตัดอักขระล่องหน/NBSP, เครื่องหมาย ' นำหน้า (รวม ’ ‘ `) แล้ว Trim ซ้ำ
+const ap01Num = (v) => { const n = Number(String(v == null ? '' : v).replace(/,/g, '').trim()); return Number.isFinite(n) ? n : 0; };
+const ap01Fmt = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const ap01Int = (n) => Number(n || 0).toLocaleString('en-US');
+// วันที่ในไฟล์เป็น พ.ศ. (เช่น 2569) -> ค.ศ. ; รับ Date / เลข Serial / ข้อความ yyyy-mm-dd หรือ dd/mm/yyyy
+function ap01Iso(v, ord) { // ord: 'mdy' = เดือน/วัน/ปี (ตรวจพบจากทั้งคอลัมน์) ; ไม่ระบุ = วัน/เดือน/ปี
+  if (v == null || v === '') return null;
+  let y; let m; let d;
+  if (v instanceof Date) { if (Number.isNaN(v.getTime())) return null; const t = new Date(v.getTime() + 120000); /* SheetJS ให้วันที่เศษวินาทีก่อนเที่ยงคืน (23:59:5x) -> +2 นาทีกันถอยไป 1 วัน */ y = t.getFullYear(); m = t.getMonth() + 1; d = t.getDate(); }
+  else if (typeof v === 'number') { const t = new Date(Math.round((v - 25569) * 86400000)); y = t.getUTCFullYear(); m = t.getUTCMonth() + 1; d = t.getUTCDate(); }
+  else {
+    let s = ap01Clean(v).replace(/[\u0E50-\u0E59]/g, (ch) => String(ch.charCodeAt(0) - 0x0E50)); // MARKER_AP0105_DATE_V2 -- ล้าง ' นำหน้า/ช่องว่าง + เลขไทย -> เลขอารบิก ก่อนแปลงวันที่
+    let x = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+    if (x) { y = +x[1]; m = +x[2]; d = +x[3]; }
+    else if ((x = /^(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4})(?!\d)/.exec(s))) { if (ord === 'mdy') { m = +x[1]; d = +x[2]; } else { d = +x[1]; m = +x[2]; } y = +x[3]; } // dd/mm/yyyy หรือ mm/dd/yyyy (พ.ศ. หรือ ค.ศ.)
+    else if ((x = /^(\d{4})(\d{2})(\d{2})$/.exec(s))) { y = +x[1]; m = +x[2]; d = +x[3]; } // yyyymmdd
+    else if ((x = /^(\d{1,2})\s+(\S+?)\.?\s+(\d{4})(?!\d)/.exec(s))) { // 1 ต.ค. 2569 / 1 ตุลาคม 2569 / 1 Oct 2026
+      const MN = [['ม.ค.', 'มกราคม', 'jan'], ['ก.พ.', 'กุมภาพันธ์', 'feb'], ['มี.ค.', 'มีนาคม', 'mar'], ['เม.ย.', 'เมษายน', 'apr'], ['พ.ค.', 'พฤษภาคม', 'may'], ['มิ.ย.', 'มิถุนายน', 'jun'], ['ก.ค.', 'กรกฎาคม', 'jul'], ['ส.ค.', 'สิงหาคม', 'aug'], ['ก.ย.', 'กันยายน', 'sep'], ['ต.ค.', 'ตุลาคม', 'oct'], ['พ.ย.', 'พฤศจิกายน', 'nov'], ['ธ.ค.', 'ธันวาคม', 'dec']];
+      const w = x[2].toLowerCase().replace(/\.$/, ''); const mi = MN.findIndex((t) => t.some((n) => n.replace(/\.$/, '').toLowerCase() === w || (n.length === 3 && w.startsWith(n))));
+      if (mi < 0) return null; d = +x[1]; m = mi + 1; y = +x[3];
+    } else return null;
+  }
+  if (y > 2400) y -= 543;
+  if (!y || m < 1 || m > 12 || d < 1 || d > 31) return null;
+  { const t = new Date(Date.UTC(y, m - 1, d)); if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d || y < 1990 || y > 2100) return null; } // MARKER_AP0105_SAFE_VALUES_V1 -- วันที่ไม่มีจริง (เช่น 31 ก.พ.) หรือปีผิดปกติ -> ว่าง กัน DB ปฏิเสธทั้งชุด
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+// อ่านแถวไฟล์ AP (หัวคอลัมน์ตามชื่อ ไม่ตามลำดับ/ตัวพิมพ์ — AP01 กับ AP05 หัวไม่เหมือนกัน) -> แถวที่ Reformat แล้ว
+// MARKER_AP0105_FIX_AMOUNT_VAT_V1 -- ตรวจ/แก้ยอดสลับ: ใช้ vatTaxNormalizeAmounts (กฎ VAT = 7% ของยอดก่อน VAT, คลาดเคลื่อนได้ไม่เกิน 1 บาท)
+// -- flag: 'swapped' = ยอดกับ VAT สลับกัน (สลับให้แล้ว) | 'incl_vat' = ช่องยอดรวม VAT แล้ว (หัก VAT ออกให้) | 'check' = VAT ไม่เข้ากฎ 7% (ไม่แก้ ให้ตรวจเอง) | '' = ปกติ (รวม VAT 0)
+function ap01FixAmounts(gross, vat) {
+  if (!gross && !vat) return { amount: 0, vat: 0, flag: '' };
+  if (!vat) return { amount: gross, vat: 0, flag: '' };
+  const r = vatTaxNormalizeAmounts({ gross_value: gross, vat_value: vat });
+
+  // MARKER_AP0105_SWAP_ONLY_V1 (เลิกใช้: ไม่แก้ตัวเลขแล้ว) -- เดิมแก้เฉพาะกรณี "ยอดก่อน VAT" กับ "VAT" สลับช่องกันล้วนๆ (สลับกลับ) ; กรณีอื่นที่ไม่ตรงกฎ 7% (เช่น ยอดรวม VAT แล้ว) ไม่หัก/ไม่ปรับเอง ยึดไฟล์ต้นฉบับ แล้วแจ้ง "ควรตรวจ"
+  if (r.swapped) return { amount: gross, vat: vat, flag: 'check' }; // MARKER_AP0105_NEVER_CHANGE_V1 -- ตรวจพิสูจน์อย่างเดียว ไม่เปลี่ยนตัวเลข (รวมกรณีสลับช่อง) เก็บตามไฟล์ต้นฉบับ แล้วแจ้ง "ควรตรวจ"
+  return { amount: gross, vat: vat, flag: r.suspicious ? 'check' : '' };
+}
+// MARKER_AP0105_DATE_ORDER_V1 -- ตรวจลำดับ วัน/เดือน ของวันที่แบบข้อความทั้งคอลัมน์ : ตัวหน้า>12 => dmy ; ตัวกลาง>12 => mdy ; ไม่มีตัวชี้ขาด => dmy
+function ap01DetectOrder(vals) {
+  let dmy = 0; let mdy = 0;
+  vals.forEach((v) => { if (typeof v === 'number' || v instanceof Date || v == null) return; const x = /^(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*\d{4}/.exec(ap01Clean(v).replace(/[\u0E50-\u0E59]/g, (ch) => String(ch.charCodeAt(0) - 0x0E50))); if (!x) return; if (+x[1] > 12) dmy += 1; if (+x[2] > 12) mdy += 1; });
+  return mdy > dmy ? 'mdy' : 'dmy';
+}
+const ap01DT = (v) => (v == null || v === '' ? null : (ap01Iso(v) || ap01Clean(v) || null));
+function ap01ParseAoa(aoa, fileName) {
+  const head = (aoa[0] || []).map((h) => ap01Clean(h).toLowerCase()); // MARKER_AP0105_HEAD_CLEAN_V1
+  const ix = (n) => head.indexOf(n);
+  const c = { name: ix('name'), br: ix('bubranchcode'), bu: ix('bucode'), vc: ix('vendorcode'), vn: ix('vendorname'), no: ix('ocr_taxinvoiceno'), dt: ix('ocr_taxinvoicedate'), vat: ix('ocr_vat'), ex: ix('ocr_total_exclvat'), dty: ix('documenttype'), idx: ix('indexinvoice'), ofin: ix('ofin'), vu: ix('verify_user'), vd: ix('verify_date'), ir2: ix('indexreserve2'), cd: ix('creationdate'), lm: ix('lastmodifieddate'), ou: ix('ocr_user'), od: ix('ocr_date') };
+  if (c.br < 0 || c.no < 0) throw new Error('ไม่ใช่รูปแบบไฟล์ AP01-AP05 (ไม่พบคอลัมน์ BUBranchCode / OCR_TaxInvoiceNo)');
+  const fm = /^AP0([1-5])_/i.exec(String(fileName || ''));
+  const dOrd = c.dt >= 0 ? ap01DetectOrder(aoa.slice(1).map((r) => (r ? r[c.dt] : null))) : 'dmy';
+  const rows = [];
+  for (let i = 1; i < aoa.length; i += 1) {
+    const r = aoa[i]; if (!r || !r.some((x) => x !== null && x !== '')) continue;
+    const g = (k) => (c[k] >= 0 ? r[c[k]] : null);
+    const ap = String(g('dty') || '').trim().toUpperCase().replace(/\s+/g, '') || (fm ? `AP0${fm[1]}` : '');
+    const branch = ap01Clean(g('br')).replace(/\D/g, '');
+    const exRaw = ap01Num(g('ex')); const vatRaw = ap01Num(g('vat'));
+    const nz = ap01FixAmounts(exRaw, vatRaw); // MARKER_AP0105_FIX_AMOUNT_VAT_V1 -- บางไฟล์ VAT กับยอดก่อน VAT สลับกัน: ตรวจกฎ VAT = 7% ของยอด แล้วสลับให้ถูก (ใช้ตัวจัดยอดเดียวกับ Bucket)
+    rows.push({ name: ap01Clean(g('name')), ap: /^AP0[1-5]$/.test(ap) ? ap : (fm ? `AP0${fm[1]}` : ''), branch, buCode: ap01Clean(g('bu')).toUpperCase(), vendorCode: ap01Clean(g('vc')), vendorName: ap01Clean(g('vn')), invNo: ap01Clean(g('no')), invDate: ap01Iso(g('dt'), dOrd), vat: nz.vat, gross: nz.amount, valFlag: nz.flag, grossRaw: exRaw, vatRaw, ir2: ap01Clean(g('ir2')).toUpperCase(), createdAt: ap01DT(g('cd')), modifiedAt: ap01DT(g('lm')), ocrUser: ap01Clean(g('ou')), ocrDate: ap01DT(g('od')), indexInvoice: ap01Clean(g('idx')), ofin: ap01Clean(g('ofin')).toUpperCase(), verifyUser: ap01Clean(g('vu')), verifyDate: ap01DT(g('vd')) });
+  }
+  return rows;
+}
+// โหลดข้อมูลอ้างอิง (Cache 60 วินาที)
+const ap01CtxCache = { at: 0, p: null };
+// MARKER_AP0105_FAST_LOAD_V1 -- Lobby โหลดเร็ว: ctx เบา (company_list/range/period) ไม่รอ branch_list ทั้งระบบ ; รายชื่อสาขาโหลดแยก (อุ่นไว้เบื้องหลัง + ใช้ตอนโยนไฟล์)
+const ap01BrCache = { p: null, at: 0 };
+async function ap01LoadBranches(force) {
+  if (!force && ap01BrCache.p && Date.now() - ap01BrCache.at < 60000) return ap01BrCache.p;
+  const p = (async () => { const branches = await apiFetch('/branch_list'); const brBu = {}; (Array.isArray(branches) ? branches : []).forEach((b) => { const k = String(b['Branch Code'] || '').trim(); if (k && b.bu && !brBu[k]) brBu[k] = b.bu; }); return brBu; })();
+  ap01BrCache.p = p; ap01BrCache.at = Date.now();
+  p.catch(() => { ap01BrCache.p = null; });
+  return p;
+}
+async function ap01LoadCtx(force, withBranches) {
+  const base = await ap01LoadCtxBase(force);
+  if (!withBranches) return base;
+  const brBu = await ap01LoadBranches(force);
+  return { ...base, brBu };
+}
+async function ap01LoadCtxBase(force) {
+  if (!force && ap01CtxCache.p && Date.now() - ap01CtxCache.at < 60000) return ap01CtxCache.p;
+  const p = (async () => {
+    const [companies, ranges, ps] = await Promise.all([apiFetch('/company_list'), apiFetch('/vat_watchlist_bu_group_range').catch(() => []), apiFetch('/vat/period/status').catch(() => null)]);
+    const comps = (Array.isArray(companies) ? companies : []).filter((x) => x && x.bu && !x.deleted);
+    const byBu = {}; const seg3 = {};
+    comps.forEach((x) => { byBu[x.bu] = x; const s = String(x.SEGMENT3 || '').trim(); if (s && !seg3[s]) seg3[s] = x.bu; });
+    const brBu = {};
+    const cur = ps ? vatPeriodKey(ps.vat_period_current_month) : ''; const last = ps ? vatPeriodKey(ps.vat_period_month) : '';
+    return { comps, byBu, seg3, brBu, ranges: Array.isArray(ranges) ? ranges : [], cur, last, periods: [cur, ...(last && last !== cur ? [last] : [])].filter(Boolean) };
+  })();
+  ap01CtxCache.p = p; ap01CtxCache.at = Date.now();
+  p.catch(() => { ap01CtxCache.p = null; });
+  return p;
+}
+// หา BU: Group Range -> Segment 3 (4 หลักแรก) -> Branch list ; BU ต้อง Active (อยู่ใน company_list และไม่ถูกลบ)
+function ap01ResolveBu(branch, ctx) {
+  const b = String(branch || '').trim(); if (!b) return null;
+  const g = matchBuGroupRange(b, ctx.ranges); if (g && ctx.byBu[g]) return { bu: g, via: 'Group Range' };
+  const s = ctx.seg3[b.slice(0, 4)]; if (s) return { bu: s, via: 'Segment 3' };
+  const l = ctx.brBu[b]; if (l && ctx.byBu[l]) return { bu: l, via: 'Branch list' };
+  return null;
+}
+// MARKER_AP0105_BU_FROM_INDEXRESERVE2_V1 -- หา BU ตาม Macro Option_Modify_AP01_AP05_Report: IndexReserve2 "500"->CRG, "SFF"->SF, "ODP"->หาจากสาขา, อื่นๆ = ค่าใน IndexReserve2 เป็น BU ; ไม่เข้า -> BUcode -> สาขา
+// -- ไม่ทิ้งแถว: BU ไม่อยู่ใน company_list = state 'unknown' · อยู่แต่ไม่ Active = 'inactive'
+function ap01ResolveRow(r, ctx) {
+  const stateOf = (bu) => { const c = ctx.byBu[bu]; if (!c) return 'unknown'; return getVatWatchlistEffectiveStatus(c) === 'active' ? 'active' : 'inactive'; };
+  const ir = String(r.ir2 || '').trim().toUpperCase(); let cand = ''; let via = '';
+  if (ir === '500') { cand = 'CRG'; via = 'IndexReserve2 500→CRG'; }
+  else if (ir === 'SFF') { cand = 'SF'; via = 'IndexReserve2 SFF→SF'; }
+  else if (ir && ir !== 'ODP') { cand = ir; via = 'IndexReserve2'; }
+  if (cand && ctx.byBu[cand]) return { bu: cand, via, state: stateOf(cand) };
+  const br = ap01ResolveBu(r.branch, ctx);
+  if (br) return { bu: br.bu, via: `${ir === 'ODP' ? 'IndexReserve2 ODP→สาขา' : 'สาขา'} · ${br.via}`, state: stateOf(br.bu) };
+  const bc = String(r.buCode || '').trim().toUpperCase();
+  if (bc && ctx.byBu[bc]) return { bu: bc, via: 'BUcode', state: stateOf(bc) };
+  const raw = cand || bc; return { bu: raw, via: raw ? (cand ? via : 'BUcode') : '', state: 'unknown' };
+}
+function ap01Allowed(comp) {
+  const raw = String((comp && comp.allowed_tax_type) || '').trim(); if (!raw) return [];
+  if (raw.toLowerCase() === 'all type') return ['N', 'A', 'T', 'F'];
+  return raw.split(',').map((x) => x.trim().toUpperCase()).filter((x) => AP01_TT.includes(x));
+}
+// ประเภทที่นับจริงตาม Tax Type ที่ BU ได้รับอนุญาต (คู่ N<->A, T<->F ตามกติกาเดิม) ; ไม่อยู่ในที่อนุญาต = null
+function ap01EffType(cls, comp) {
+  if (cls === 'M') return 'M'; // MARKER_AP0105_MER_V1 -- M นับเสมอตามที่พบจริง (ไม่ขึ้นกับ Allowed Tax Type)
+  const al = ap01Allowed(comp); if (!cls || !al.length) return null;
+  if (al.includes(cls)) return cls;
+  const pair = { A: 'N', N: 'A', F: 'T', T: 'F' }[cls];
+  return pair && al.includes(pair) ? pair : null;
+}
+// Tax Type ของแต่ละ Branch: อ่านจาก vat_watchlist_report (tax_type ต่อ Branch) ; ไม่เคยพบ -> ใช้ Type เดียวที่ BU ได้รับอนุญาต (ถ้ามีเดียว) ; ไม่ได้ -> ''
+const ap01TtCache = {};
+// eslint-disable-next-line no-unused-vars
+async function ap01TaxTypeMap(bu) {
+  const c = ap01TtCache[bu]; if (c && Date.now() - c.at < 300000) return c.p;
+  const p = (async () => {
+  const map = new Map();
+  try {
+    const res = await apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu)}&select=branch,tax_type&limit=100000`);
+    (Array.isArray(res) ? res : []).forEach((r) => {
+      const cl = classifyVatWatchlistTaxType(r.tax_type); if (!cl) return;
+      const k = String(r.branch || '').replace(/^[ATF]/i, '').replace(/\D/g, ''); if (!k) return;
+      if (!map.has(k)) map.set(k, new Set()); map.get(k).add(cl.cls);
+    });
+  } catch (_) { /* ใช้ Fallback */ }
+  return map;
+  })(); // MARKER_AP0105_FAST_IMPORT_V1 -- Cache เป็น Promise: หลายกลุ่ม (AP01/AP05) ของ BU เดียวกันไม่ดึงซ้ำ
+  ap01TtCache[bu] = { at: Date.now(), p }; return p;
+}
+// eslint-disable-next-line no-unused-vars
+function ap01RowType(branch, map, comp) {
+  const s = map.get(branch);
+  if (s && s.size) return ['N', 'A', 'T', 'F', 'M'].find((x) => s.has(x)) || '';
+  const al = ap01Allowed(comp).filter((x) => x !== 'M'); return al.length === 1 ? al[0] : '';
+}
+// ตรวจไฟล์/ข้อความที่โยนเข้ามา -> แยก 3 ชนิด: AP01-AP05 / Incomplete / Input Vat Reconcile
+function ap01Kind(name, text) {
+  const n = String(name || '');
+  if (/^AP0[1-5]_/i.test(n)) return 'ap';
+  if (/incomplete/i.test(n)) return 'inc';
+  if (/input.?vat/i.test(n)) return 'inp';
+  if (text != null) { const h = String(text).split(/\r?\n/, 1)[0].toLowerCase(); if (h.includes('bubranchcode') && h.includes('ocr_taxinvoiceno')) return 'ap'; return (suspenseLooksLikeTb(text) || /End Receive Date|Merchandise|APCRC201|Input VAT Reconciliation|CRC_AP_I_VAT_RECONCILE/.test(String(text).slice(0, 4000))) ? 'inp' : 'inc'; /* MARKER_AP0105_INPUT_RECONCILE_REPORT_V1 -- รายงาน "Input VAT Reconciliation Report (Custom)" โปรแกรม CRC_AP_I_VAT_RECONCILE (ไฟล์ .out ชื่อเป็นเลข) = Input Reconcile ตัวจริง มีคอลัมน์ Tax Code */ /* MARKER_AP0105_OUT_INPUT_SUMMARY_V1 -- ไฟล์ .out ของ Input Vat Reconcile (Input Summary APCRC201) ชื่อไฟล์เป็นเลข เช่น o131853054 : ตรวจจากหัวไฟล์แบบเดียวกับหน้า VatReconcileSystem */ }
+  if (/\.(txt|out|tsv)$/i.test(n)) return 'text';
+  return 'inp';
+}
+// แปลงไฟล์ AP -> กลุ่ม (BU x ชุด AP) พร้อมแถวสำหรับ Backup
+async function ap01Stage(file, text, period, ctx) {
+  const name = file ? file.name : 'pasted-AP.txt';
+  let aoa;
+  if (file) { const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true }); aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null }); }
+  else aoa = String(text || '').replace(/\r/g, '').split('\n').filter((l) => l.trim() !== '').map((l) => l.split('\t'));
+  const fp = /Y(\d{4})M(\d{2})/i.exec(name); const filePeriod = fp ? `${fp[1]}-${fp[2]}` : '';
+  if (filePeriod && filePeriod !== period) throw new Error(`ไฟล์เป็นงวด ${filePeriod.replace('-', '.')} ไม่ตรงกับงวดที่เลือก (${period.replace('-', '.')})`);
+  const rows = ap01ParseAoa(aoa, name);
+  if (!rows.length) throw new Error('ไม่พบข้อมูลในไฟล์');
+  const groups = new Map(); const okM = new Map(); const badM = new Map(); let noSet = 0;
+  rows.forEach((r) => {
+    if (!r.ap) { noSet += 1; return; }
+    const res = ap01ResolveRow(r, ctx); const bu = res.bu || '(ไม่ระบุ)';
+    const k = `${r.ap}|${bu}`; if (!groups.has(k)) groups.set(k, { ap: r.ap, bu, via: res.via, state: res.state, rows: [] });
+    groups.get(k).rows.push(r);
+    if (res.state === 'active') { const o = okM.get(bu) || { bu, via: new Set(), n: 0 }; o.via.add(res.via); o.n += 1; okM.set(bu, o); }
+    else {
+      const buFile = r.ir2 || r.buCode || ''; const kk = `${r.branch}|${buFile}|${bu}|${res.state}`;
+      const reason = res.state === 'inactive' ? `BU ${bu} ไม่ Active` : (res.bu ? `BU "${bu}" ไม่อยู่ใน company_list` : 'ไม่พบ BU (IndexReserve2 / BUcode / สาขา ไม่ตรง BU ใดเลย)');
+      const o = badM.get(kk) || { file: name, branch: r.branch, buFile, bu, state: res.state, reason, n: 0 }; o.n += 1; badM.set(kk, o);
+    }
+  });
+  const items = await Promise.all([...groups.values()].map(async (g) => {
+    const comp = ctx.byBu[g.bu]; // MARKER_AP0105_NO_TAXTYPE_GUESS_V1 -- ไฟล์ AP01-AP05 ไม่มีข้อมูลแยก A/N : ไม่เดา Tax Type จากสาขาอีก แยกตาม BU เท่านั้น
+    return ({ file: name, period, ap: g.ap, bu: g.bu, via: g.via, state: g.state, comp, n: g.rows.length, dbRows: g.rows.map((r) => ({ ...r, tax_type: '' })) });
+  }));
+  return { file: name, items, ok: [...okM.values()], bad: [...badM.values()], noSet, total: rows.length, fixedN: rows.filter((r) => r.valFlag === 'swapped' || r.valFlag === 'incl_vat').length, checkN: rows.filter((r) => r.valFlag === 'check').length };
+}
+// MARKER_AP0105_INPUT_VAT_RECON_V1 -- รายงาน "Input VAT Reconciliation Report (Custom)" (CRC_AP_I_VAT_RECONCILE, .out) = Input Reconcile ตัวจริง (มีคอลัมน์ Tax Code)
+// -- เก็บตามคอลัมน์ในไฟล์ลงตารางแยก vat_input_vat_recon (ชั่วคราว มีกำหนดลบ) · เก็บเฉพาะแถวที่ Tax Type ตรงกับที่ BU ใช้ (Allowed Tax Type ของ BU) · ไม่แก้ตัวเลข
+const IVR_TABLE = 'vat_input_vat_recon';
+const IVR_PAIR = { A: 'N', N: 'A', F: 'T', T: 'F' };
+const IVR_MON = { JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12 };
+const ivrSniff = (t) => /Input VAT Reconciliation|CRC_AP_I_VAT_RECONCILE/.test(String(t || '').slice(0, 4000));
+const ivrUn = (v) => String(v == null ? '' : v).replace(/^="?|"$/g, '').trim();
+const ivrNum = (v) => { const s = ivrUn(v).replace(/,/g, ''); if (s === '') return null; const n = Number(s); return Number.isFinite(n) ? n : null; };
+const ivrDate = (v) => { const m = /^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/.exec(ivrUn(v)); if (!m) return null; const mo = IVR_MON[m[2].toUpperCase()]; if (!mo) return null; let y = Number(m[3]); if (y < 100) y += 2000; return `${y}-${String(mo).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`; };
+function ivrHash(s) { let h1 = 0xdeadbeef; let h2 = 0x41c6ce57; for (let i = 0; i < s.length; i += 1) { const ch = s.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); } h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909); h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909); return `${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16)}-${s.length}`; }
+// Tax Type ที่ BU ใช้ (Allowed Tax Type) · All Type = N,A,T,F (ไม่รวม M · ต้องระบุ M เองถึงจะรับ) · ไม่ได้ตั้งค่า = null
+function ivrAllowed(comp) { const raw = String((comp && comp.allowed_tax_type) || '').trim(); if (!raw) return null; if (raw.toLowerCase() === 'all type') return new Set(['N', 'A', 'T', 'F']); return new Set(raw.split(',').map((x) => x.trim().toUpperCase()).filter((x) => AP01_TT.includes(x))); }
+// เก็บแถวนี้ไหม: Tax Type ตรงกับที่ BU ใช้ (คู่ N<->A, T<->F ตามกติกาเดิม) · อ่าน Tax Code ไม่ได้ = เก็บไว้ (ไม่ทิ้งเงียบๆ) · BU ไม่ได้ตั้ง Allowed = เก็บทุกประเภทยกเว้น M
+function ivrKeep(cls, comp) { if (!cls) return true; const al = ivrAllowed(comp); if (!al || !al.size) return cls !== 'M'; return al.has(cls) || (cls !== 'M' && !!IVR_PAIR[cls] && al.has(IVR_PAIR[cls])); }
+async function ivrParse(file) {
+  const t = new TextDecoder(file.__utf8 ? 'utf-8' : 'windows-874').decode(await file.arrayBuffer());
+  const lines = t.replace(/\r/g, '').split('\n'); let hi = -1;
+  for (let i = 0; i < Math.min(lines.length, 40); i += 1) { const c = lines[i].split('\t').map(ivrUn); if (c[7] === 'Tax Running Number' && c[26] === 'Tax Code') { hi = i; break; } }
+  if (hi < 0) throw new Error('ไม่ใช่รายงาน Input VAT Reconciliation (ไม่พบหัวคอลัมน์ Tax Running Number / Tax Code ตามตำแหน่งที่คาด)');
+  const requestId = (/Request ID\s*:\s*(\d+)/.exec(t.slice(0, 3000)) || [])[1] || '';
+  const rows = []; const seq = new Map();
+  for (let i = hi + 1; i < lines.length; i += 1) {
+    const raw = lines[i]; if (!raw.trim()) continue; const c = raw.split('\t'); if (c.length < 27) continue; const taxCode = ivrUn(c[26]); if (!taxCode) continue;
+    const h = ivrHash(raw); const dq = seq.get(h) || 0; seq.set(h, dq + 1); const cl = classifyVatWatchlistTaxType(taxCode); const g = (k) => ivrUn(c[k]) || null;
+    rows.push({ _branch: ivrUn(c[1]).replace(/\D/g, ''), _cls: cl ? cl.cls : '', tax_code: taxCode, tax_type: cl ? cl.cls : null, source: g(0), branch: g(1), tax_cost_center: g(2), receive_date: ivrDate(c[3]), grt_no: g(4), tax_invoice_date: ivrDate(c[5]), tax_invoice_no: g(6), tax_running_number: g(7), vendor_name: g(8), item_detail: g(9),
+      purchase_amount: ivrNum(c[10]), purchase_vat: ivrNum(c[11]), claim100_amount: ivrNum(c[12]), claim100_vat: ivrNum(c[13]), average_rate: ivrNum(c[14]), avg_amount: ivrNum(c[15]), avg_vat: ivrNum(c[16]), claim100b_amount: ivrNum(c[17]), claim100b_vat: ivrNum(c[18]), exam50_amount: ivrNum(c[19]), exam50_vat: ivrNum(c[20]), calculate_tax: ivrNum(c[21]),
+      vendor_number: g(22), ap_invoice_no: g(23), ap_invoice_amount: ivrNum(c[24]), ap_invoice_vat: ivrNum(c[25]), journal_batch: g(27), journal_name: g(28), journal_line: g(29), journal_amount: ivrNum(c[30]), gl_line_amount: ivrNum(c[31]), gl_date: ivrDate(c[32]), posting_status: g(33), posting_date: ivrDate(c[34]), ap_invoice_status: g(35), message: g(36), svat_info: g(37), is_this_tax: g(38),
+      line_no: i + 1, row_hash: h, dup_seq: dq });
+  }
+  return { requestId, rows };
+}
+// แยกตาม BU (จากสาขา) + กรอง Tax Type ที่ BU ใช้ -> { per:[{bu,total,kept,dropped,types:{N:{keep,drop}},rows}], noBu:{...} }
+async function ivrStage(file, period, ctx, user) {
+  const P = await ivrParse(file); const per = new Map(); const noBu = {};
+  P.rows.forEach((r) => {
+    const res = ap01ResolveBu(r._branch, ctx); const bu = res && res.bu; const comp = bu ? ctx.byBu[bu] : null;
+    if (!bu || !comp || getVatWatchlistEffectiveStatus(comp) !== 'active') { const k = bu ? `${bu} (ไม่ Active)` : `สาขา ${r._branch || '(ว่าง)'} หา BU ไม่ได้`; noBu[k] = (noBu[k] || 0) + 1; return; }
+    const o = per.get(bu) || { bu, file: file.name, f: file, requestId: P.requestId, total: 0, kept: 0, dropped: 0, types: {}, rows: [] }; per.set(bu, o);
+    const ty = r._cls || '?'; const tt = o.types[ty] || (o.types[ty] = { keep: 0, drop: 0 }); o.total += 1;
+    if (!ivrKeep(r._cls, comp)) { tt.drop += 1; o.dropped += 1; return; }
+    tt.keep += 1; o.kept += 1;
+    const row = { ...r, bu, period, bu_state: 'active', source_file: file.name, report_request_id: P.requestId || null, uploaded_by: user || null };
+    delete row._branch; delete row._cls; o.rows.push(row);
+  });
+  return { file: file.name, total: P.rows.length, per: [...per.values()], noBu };
+}
+function Ap0105InputReconModal({ pop, onConfirm, onClose }) {
+  const th = { padding: '6px 10px', background: '#eef3f9', fontSize: 12, textAlign: 'left', borderBottom: '1px solid #d5dce6', whiteSpace: 'nowrap', position: 'sticky', top: 0 };
+  const td = { padding: '6px 10px', fontSize: 12.5, borderBottom: '1px solid #eef0f3', whiteSpace: 'nowrap' };
+  const chip = (t, n, on) => <span key={`${t}${on}`} style={{ display: 'inline-block', margin: '0 4px 2px 0', padding: '1px 8px', borderRadius: 10, fontSize: 11.5, fontWeight: 700, background: on ? '#e3f1e8' : '#f3f4f6', color: on ? '#1a7f37' : '#9aa5b1', textDecoration: on ? 'none' : 'line-through' }}>{t} {ap01Int(n)}</span>;
+  const kept = pop.per.reduce((a, x) => a + x.kept, 0); const dropped = pop.per.reduce((a, x) => a + x.dropped, 0);
+  const exp = new Date(Date.now() + (pop.days || 30) * 86400000).toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric' });
+  const noBuList = Object.entries(pop.noBu || {}); const noBuN = noBuList.reduce((a, [, n]) => a + n, 0); const saving = pop.mode === 'saving'; const done = pop.mode === 'done';
   return (
-    <div style={{ padding: 24, height: '100%', boxSizing: 'border-box', overflow: 'hidden', background: '#f5f7fa', display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ ...zS, height: '35vh', flexShrink: 0 }}><div style={tS}>Zone A</div></div>
-      <div style={{ ...zS, flex: 1, minHeight: 0 }}><div style={tS}>Zone B</div></div>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+      <div style={{ background: '#fff', borderRadius: 12, width: 'min(1100px, 96vw)', maxHeight: '90vh', overflow: 'auto', padding: 16 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: AP01_NAVY }}>Input VAT Reconciliation · งวด {String(pop.period || '').replace('-', '.')}</div>
+        <div style={{ fontSize: 12, color: '#6b778c', margin: '2px 0 10px' }}>{pop.files.join(' · ')} · เก็บเฉพาะแถวที่ Tax Type ตรงกับที่ BU ใช้ · เก็บตามคอลัมน์ในไฟล์ ไม่แก้ตัวเลข</div>
+        <div style={{ border: '1px solid #e3e6ea', borderRadius: 8, maxHeight: '46vh', overflow: 'auto', scrollbarWidth: 'thin' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr><th style={th}>BU</th><th style={th}>Request ID</th><th style={{ ...th, textAlign: 'right' }}>แถวในไฟล์</th><th style={th}>Tax Type (เก็บ / ไม่เก็บ)</th><th style={{ ...th, textAlign: 'right' }}>จะบันทึก</th><th style={{ ...th, textAlign: 'right' }}>ของเดิมที่จะถูกแทนที่</th></tr></thead>
+            <tbody>{pop.per.map((x) => (
+              <tr key={x.bu}>
+                <td style={{ ...td, fontWeight: 700 }}>{x.bu}</td><td style={td}>{x.requestId || '-'}</td><td style={{ ...td, textAlign: 'right' }}>{ap01Int(x.total)}</td>
+                <td style={td}>{['N', 'A', 'T', 'F', 'M', '?'].filter((t) => x.types[t]).map((t) => [x.types[t].keep > 0 ? chip(t, x.types[t].keep, true) : null, x.types[t].drop > 0 ? chip(t, x.types[t].drop, false) : null])}</td>
+                <td style={{ ...td, textAlign: 'right', fontWeight: 700, color: '#1a7f37' }}>{ap01Int(x.kept)}</td><td style={{ ...td, textAlign: 'right', color: x.existing ? '#9a6700' : '#9aa5b1' }}>{ap01Int(x.existing || 0)}</td>
+              </tr>))}
+            </tbody>
+            <tfoot><tr><td style={{ ...td, fontWeight: 700, background: '#eef3f9' }} colSpan={4}>รวม · ไม่เก็บ {ap01Int(dropped)} แถว</td><td style={{ ...td, textAlign: 'right', fontWeight: 700, background: '#eef3f9' }}>{ap01Int(kept)}</td><td style={{ ...td, background: '#eef3f9' }} /></tr></tfoot>
+          </table>
+        </div>
+        {noBuN > 0 && <div style={{ marginTop: 8, padding: '6px 10px', borderRadius: 8, background: '#fff4d6', color: '#9a6700', fontSize: 12.5 }}>ไม่ได้บันทึก {ap01Int(noBuN)} แถว: {noBuList.slice(0, 6).map(([k, n]) => `${k} (${ap01Int(n)})`).join(' · ')}{noBuList.length > 6 ? ' …' : ''}</div>}
+        <div style={{ marginTop: 8, fontSize: 12, color: '#6b778c' }}>รายงานนี้ใช้ชั่วคราว — ข้อมูลจะถูกลบอัตโนมัติ {pop.days || 30} วันหลังโยนไฟล์ (ประมาณ {exp}) · โยนซ้ำ = แทนที่ของเดิมของ BU + งวดนั้น ไม่เบิ้ล</div>
+        {saving && <div style={{ marginTop: 8, fontSize: 12.5, color: AP01_NAVY }}>กำลังบันทึก {ap01Int(pop.done || 0)} / {ap01Int(pop.total || 0)} แถว …</div>}
+        {done && <div style={{ marginTop: 8, fontSize: 12.5, color: pop.fails && pop.fails.length ? '#cf222e' : '#1a7f37' }}>{pop.fails && pop.fails.length ? `บันทึกไม่สำเร็จ ${pop.fails.map((f) => f.bu).join(', ')} — ดูรายละเอียดใน Log` : `บันทึกเรียบร้อย ${ap01Int(pop.total || 0)} แถว`}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+          {!done && <button type="button" style={ap01Btn(!saving)} disabled={saving} onClick={onClose}>ยกเลิก</button>}
+          {!done && <button type="button" style={{ ...ap01Btn(!saving && kept > 0), background: AP01_NAVY, color: '#fff' }} disabled={saving || kept === 0} onClick={onConfirm}>ยืนยันบันทึก {ap01Int(kept)} แถว</button>}
+          {done && <button type="button" style={ap01Btn()} onClick={onClose}>ปิด</button>}
+        </div>
+      </div>
     </div>
   );
 }
-function VatTaxInvoiceTab() {
+// MARKER_AP0105_CLEAR_CONFIRM_V1 -- โยน Input Reconcile แล้ว: อ่าน Tax Code ในไฟล์ว่า BU นั้นใช้ประเภทไหน -> แถว AP ของ BU/Period นั้นที่เป็นประเภทที่ "ไม่ได้ใช้" ขึ้นมาให้ยืนยันลบ (ไม่ลบเอง)
+async function ap01InputTypes(file, fallbackBu, ctx) {
+  let rows;
+  if (/\.xlsx?$/i.test(file.name)) { const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' }); rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null }); }
+  else { const t = new TextDecoder(file.__utf8 ? 'utf-8' : 'windows-874').decode(await file.arrayBuffer()); rows = t.replace(/\r/g, '').split('\n').map((l) => l.split('\t')); }
+  const un = (v) => String(v == null ? '' : v).replace(/^="?|"$/g, '').trim();
+  let hi = -1; let tc = -1; let sc = -1;
+  for (let i = 0; i < Math.min(rows.length, 30); i += 1) { const j = (rows[i] || []).findIndex((c) => un(c) === 'Tax Code'); if (j >= 0) { hi = i; tc = j; sc = (rows[i] || []).findIndex((c) => un(c) === 'Source'); break; } }
+  const out = new Map(); if (hi < 0) return out;
+  const pair = { A: 'N', N: 'A', F: 'T', T: 'F' };
+  for (let i = hi + 1; i < rows.length; i += 1) {
+    const r = rows[i]; if (!r) continue; const cl = classifyVatWatchlistTaxType(un(r[tc])); if (!cl) continue;
+    const res = ctx ? ap01ResolveBu(un(r[1]).replace(/\D/g, ''), ctx) : null; const bu = (res && res.bu) || fallbackBu || ''; if (!bu) continue; // BU จากสาขา (คอลัมน์ที่ 2) ไม่ใช่คอลัมน์ Source ซึ่งเป็นแหล่งที่มาของรายการ (APN/DOC/ITC ...)
+    const st = out.get(bu) || new Set(); st.add(cl.cls); if (pair[cl.cls]) st.add(pair[cl.cls]); out.set(bu, st);
+  }
+  return out;
+}
+async function ap01BuildClearPlan(file, data, period) {
+  const ctx = await ap01LoadCtx(false, true); const used = await ap01InputTypes(file, data && data.bu, ctx); if (!used.size) return [];
+  const bus = [...new Set([...(data && Array.isArray(data.bus) ? data.bus : []), ...(data && data.bu ? [data.bu] : []), ...used.keys()])].filter((b) => used.has(b));
+  const pr = data && data.period ? String(data.period).replace('.', '-').slice(0, 7) : ''; const per = /^\d{4}-\d{2}$/.test(pr) ? pr : period;
+  let vc = {}; try { (await apiFetch('/vendor_category') || []).forEach((v) => { const c = String(v['Code'] || '').trim(); if (c) vc[c] = v; }); } catch (_) { /* ไม่มี Vendor Category -> แสดงโดยไม่มีหมวด */ }
+  const plan = [];
+  for (const bu of bus) {
+    const res = await apiFetch(`/${AP01_TABLE}?eq_period=${encodeURIComponent(per)}&eq_bu=${encodeURIComponent(bu)}&select=id,tax_type,supplier_code,supplier_name&limit=500000`);
+    const g = {}; (Array.isArray(res) ? res : []).forEach((r) => { const t = r.tax_type; if (!t || used.get(bu).has(t)) return; const o = g[t] || (g[t] = { n: 0, v: {}, idsIn: [], idsOut: [] }); o.n += 1; (vc[r.supplier_code] ? o.idsIn : o.idsOut).push(r.id); const k = r.supplier_code || '(ไม่ระบุ)'; const x = o.v[k] || (o.v[k] = { name: r.supplier_name || '', n: 0, cat: vc[k] ? [vc[k]['TYPE'], vc[k]['SUB TYPE']].filter(Boolean).join(' / ') : '' }); x.n += 1; });
+    Object.entries(g).forEach(([t, o]) => plan.push({ bu, type: t, period: per, n: o.n, idsIn: o.idsIn, idsOut: o.idsOut, used: [...used.get(bu)].sort().join(' '), vendors: Object.entries(o.v).map(([code, x]) => ({ code, ...x })).sort((a, b) => b.n - a.n) }));
+  }
+  return plan;
+}
+function Ap0105ClearModal({ plan, onClose, onConfirm }) {
+  const [sel, setSel] = React.useState(() => new Set(plan.filter((p) => p.type === 'M').map((p) => `${p.bu}|${p.type}`)));
+  const [incIn, setIncIn] = React.useState(() => new Set()); // กลุ่มที่ให้ลบรวม Vendor ที่ไม่พบใน Vendor Category ด้วย (ค่าเริ่มต้นลบเฉพาะที่ค้นเจอใน Vendor Category)
+  const tog = (k) => setSel((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const togIn = (k) => setIncIn((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const th = { textAlign: 'left', padding: '5px 8px', fontSize: 11.5, color: AP01_NAVY, background: '#e8f0fb', whiteSpace: 'nowrap' }; const td = { padding: '4px 8px', fontSize: 12, borderTop: '1px solid #eef0f3' };
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+      <div style={{ background: '#fff', borderRadius: 12, width: 'min(820px, 94vw)', maxHeight: '86vh', display: 'flex', flexDirection: 'column', padding: 16, gap: 10 }}>
+        <b style={{ color: AP01_NAVY, fontSize: 15 }}>Cleansing Step 1 · Unmatch</b> <span style={{ fontSize: 12, color: '#6b778c' }}>แถว AP ที่ไม่ตรงกับ Input Reconcile — ทำก่อนกด Reconcile</span>
+        <div style={{ fontSize: 12, color: '#6b778c' }}>Input Reconcile ของ BU เหล่านี้ไม่มี Tax Code ประเภทด้านล่างเลย จึงมีแถว AP01-AP05 ของประเภทนั้นค้างอยู่ — ติ๊กกลุ่มที่ต้องการลบ (ติ๊กไว้ให้เฉพาะ M) · รายการที่จะลบ = แถวที่ Vendor Code ค้นเจอใน Vendor Category (ส่วนมากเป็น Vendor APN) · ข้อมูลที่ลบแล้วกู้คืนไม่ได้</div>
+        <div style={{ flex: 1, minHeight: 120, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: 8 }}>
+          {plan.map((p) => { const k = `${p.bu}|${p.type}`; return (
+            <div key={k} style={{ borderTop: '1px solid #e3e6ea' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#f6f9fd', cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={sel.has(k)} onChange={() => tog(k)} />
+                <b style={{ color: AP01_NAVY }}>{p.bu}</b><span>ประเภท <b>{p.type}</b></span><span style={{ color: '#cf222e', fontWeight: 600 }}>{ap01Int(p.n)} แถว</span><span style={{ color: '#6b778c', fontSize: 11.5 }}>Input ใช้: {p.used || '—'} · งวด {p.period.replace('-', '.')}</span>
+              </label>
+              <div style={{ padding: '4px 12px', fontSize: 12, display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}><span>ค้นเจอใน Vendor Category: <b>{ap01Int(p.idsIn.length)}</b> แถว <span style={{ color: '#6b778c' }}>(จะลบ)</span></span><span>ไม่พบใน Vendor Category: <b>{ap01Int(p.idsOut.length)}</b> แถว</span>{p.idsOut.length > 0 && <label style={{ cursor: 'pointer', color: '#cf222e' }}><input type="checkbox" checked={incIn.has(k)} onChange={() => togIn(k)} /> ลบกลุ่มที่ไม่พบใน Vendor Category ด้วย</label>}</div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr><th style={th}>Vendor Code</th><th style={th}>Vendor Name</th><th style={th}>Vendor Category</th><th style={{ ...th, textAlign: 'right' }}>แถว</th></tr></thead>
+                <tbody>{p.vendors.slice(0, 8).map((v) => <tr key={v.code}><td style={td}>{v.code}</td><td style={td}>{v.name}</td><td style={{ ...td, color: v.cat ? '#222' : '#c0c8d3' }}>{v.cat || 'ไม่พบใน Vendor Category'}</td><td style={{ ...td, textAlign: 'right' }}>{ap01Int(v.n)}</td></tr>)}</tbody></table>
+              {p.vendors.length > 8 && <div style={{ padding: '2px 12px 6px', fontSize: 11.5, color: '#8b95a1' }}>และอีก {ap01Int(p.vendors.length - 8)} Vendor</div>}
+            </div>); })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button type="button" style={ap01Btn()} onClick={onClose}>ข้าม (ไม่ลบ)</button>
+          <button type="button" disabled={!sel.size} style={{ ...ap01Btn(sel.size > 0), background: sel.size ? '#cf222e' : '#fff', color: sel.size ? '#fff' : AP01_NAVY, border: sel.size ? 'none' : undefined }} onClick={() => onConfirm(plan.filter((p) => sel.has(`${p.bu}|${p.type}`)).map((p) => ({ ...p, ids: incIn.has(`${p.bu}|${p.type}`) ? [...p.idsIn, ...p.idsOut] : p.idsIn })))}>ลบที่เลือก ({sel.size} กลุ่ม)</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+const ap01Safe = (v) => (Number.isFinite(v) && Math.abs(v) < 1e15 ? v : null); // ค่าใหญ่ผิดปกติจาก OCR เกินช่อง NUMERIC(18,2) -> ว่าง
+const ap01DbRow = (it, r, user) => ({
+  period: it.period, ap_set: it.ap, doc_type: it.ap, document_type: it.ap,
+  bu: it.bu, bu_state: it.state || 'active', bu_code_file: r.buCode || null, index_reserve2: r.ir2 || null,
+  business_name: (it.comp && (it.comp['ENGLISH COMPANY NAME'] || it.comp['COMPANY NAME'])) || null, bu_branch_code: r.branch || null,
+  supplier_code: r.vendorCode || null, supplier_name: r.vendorName || null,
+  doc_date: r.invDate, tax_invoice_number: r.invNo || null,
+  gross_value: ap01Safe(r.gross), vat_value: ap01Safe(r.vat), total_value: ap01Safe(Math.round((r.gross + r.vat) * 100) / 100),
+  gross_raw: ap01Safe(r.grossRaw), vat_raw: ap01Safe(r.vatRaw), value_flag: r.valFlag || null,
+  invoice_ref: r.indexInvoice || null, ofin: r.ofin || null, tax_type: r.tax_type || null,
+  origin_file: r.name || null, file_creation_date: r.createdAt, file_modified_date: r.modifiedAt,
+  ocr_user: r.ocrUser || null, ocr_date: r.ocrDate, verify_user: r.verifyUser || null, verify_date: r.verifyDate,
+  source_file: it.file, uploaded_by: user || null,
+});
+// MARKER_AP0105_DATA_PERIODS_V1 -- งวดที่เลือกได้ = งวดที่เปิดอยู่ + งวดที่ปิดล่าสุด + งวดอื่นที่ยังมีข้อมูลใน Backup (ข้อมูลเก็บ 45 วันหลังปิด งวดที่ถูกลบแล้วจะหายไปเอง)
+async function ap01DataPeriods(ctx) {
+  const set = new Set((ctx && ctx.periods) || []);
+  try { const res = await apiFetch(`/${AP01_TABLE}/periods`); ((res && res.rows) || []).forEach((r) => { if (r.period) set.add(r.period); }); } catch (_) { /* ใช้เฉพาะงวดจาก VAT Period */ }
+  return [...set].sort().reverse();
+}
+async function ap01BackupCounts(period) {
+  const out = new Map();
+  try { const res = await apiFetch(`/${AP01_TABLE}/summary?period=${encodeURIComponent(period)}`); ((res && res.rows) || []).forEach((r) => { const k = `${r.ap_set}|${r.bu}`; out.set(k, (out.get(k) || 0) + r.n); }); } catch (_) { /* ยังไม่มีข้อมูล / Backend ยังไม่ Deploy */ }
+  return out;
+}
+// บันทึกเข้า Backup (replace = ลบของเดิมของ Period/ชุด AP/BU นั้นก่อน)
+async function ap01Save(it, user, replace, onProg) {
+  if (replace) await apiFetch(`/${AP01_TABLE}?eq_period=${encodeURIComponent(it.period)}&eq_ap_set=${it.ap}&eq_bu=${encodeURIComponent(it.bu)}&hard=true`, { method: 'DELETE' });
+  const rows = it.dbRows.map((r) => ap01DbRow(it, r, user)); const CH = 1000; const PAR = 3; let sent = 0; // MARKER_AP0105_FAST_IMPORT_V1 -- ส่งทีละ 1,000 แถว พร้อมกัน 3 ชุด
+  const chunks = []; for (let i = 0; i < rows.length; i += CH) chunks.push(rows.slice(i, i + CH));
+  for (let i = 0; i < chunks.length; i += PAR) {
+    await Promise.all(chunks.slice(i, i + PAR).map((c) => apiFetch(`/${AP01_TABLE}/upsert`, { method: 'POST', body: JSON.stringify(c) }).then(() => { sent += c.length; if (onProg) onProg(sent, rows.length); })));
+  }
+}
+const ap01Dot = (c, t) => <span title={t} style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: c, verticalAlign: 'middle' }} />;
+const AP01_NAVY = '#1a3a5c';
+const ap01Btn = (on) => ({ padding: '7px 16px', fontSize: 12.5, fontWeight: 600, borderRadius: 8, cursor: on === false ? 'not-allowed' : 'pointer', border: `1px solid ${AP01_NAVY}`, background: '#fff', color: AP01_NAVY, opacity: on === false ? 0.45 : 1 });
+
+// MARKER_AP0105_COLUMNS_V1 -- คอลัมน์ตารางแท็บ Amagno ตามไฟล์ AP01-AP05 (จัดกลุ่มตามชนิดข้อมูล)
+const AP0105_TABLE_COLUMNS = [
+  { key: 'bu', label: 'BU', g: 'BU' }, { key: 'bu_state', more: true, label: 'BU State', g: 'BU' }, { key: 'bu_code_file', more: true, label: 'BUcode (ไฟล์)', g: 'BU' }, { key: 'index_reserve2', more: true, label: 'IndexReserve2', g: 'BU' }, { key: 'bu_branch_code', label: 'BU Branch Code', g: 'BU' },
+  { key: 'supplier_code', label: 'Vendor Code', g: 'Supplier' }, { key: 'supplier_name', label: 'Vendor Name', g: 'Supplier' },
+  { key: 'doc_date', label: 'Tax Invoice Date', g: 'Invoice' }, { key: 'tax_invoice_number', label: 'Tax Invoice No.', g: 'Invoice' }, { key: 'gross_value', label: 'Total excl. VAT', g: 'Invoice' }, { key: 'vat_value', label: 'VAT', g: 'Invoice' }, { key: 'total_value', more: true, label: 'Total', g: 'Invoice' },
+  { key: 'invoice_ref', more: true, label: 'Index Invoice', g: 'Invoice' }, { key: 'ofin', label: 'OFIN', g: 'Invoice' }, { key: 'tax_type', more: true, label: 'Tax Type', g: 'Invoice' }, { key: 'value_flag', more: true, label: 'ตรวจยอด', g: 'Invoice' },
+  { key: 'ap_set', label: 'AP', g: 'File / OCR' }, { key: 'period', more: true, label: 'Period', g: 'File / OCR' }, { key: 'origin_file', label: 'Name', g: 'File / OCR' }, { key: 'verify_user', more: true, label: 'Verify User', g: 'File / OCR' }, { key: 'verify_date', more: true, label: 'Verify Date', g: 'File / OCR' },
+  { key: 'ocr_user', more: true, label: 'OCR User', g: 'File / OCR' }, { key: 'ocr_date', more: true, label: 'OCR Date', g: 'File / OCR' }, { key: 'file_creation_date', more: true, label: 'Creation Date', g: 'File / OCR' }, { key: 'file_modified_date', more: true, label: 'Last Modified', g: 'File / OCR' },
+];
+const ap0105Groups = (cols) => { const colors = { BU: '#eef1f4', Supplier: '#eef1f4', Invoice: '#eef1f4', 'File / OCR': '#eef1f4' }; /* MARKER_AP0105_NEUTRAL_GROUPS_V1 -- แถบกลุ่มสีเทาอ่อนเดียว ไม่ฉูดฉาด */ const out = []; cols.forEach((c) => { const l = out[out.length - 1]; if (l && l.label === c.g) l.span += 1; else out.push({ label: c.g, span: 1, color: colors[c.g] }); }); return out; }; // MARKER_AP0105_COLUMNS_DEFAULT_V1 -- ค่าเริ่มต้นแสดงเฉพาะคอลัมน์หลัก (more:true = ซ่อน) กด "แสดงทุกคอลัมน์" เพื่อดูครบ
+
+// แยก Invoice Ref. หลายตัวในช่องเดียว (คั่นด้วย , ; | หรือขึ้นบรรทัดใหม่) -> List ไม่ซ้ำ
+const ap01SplitRefs = (v) => [...new Set(String(v == null ? '' : v).split(/[,;|\r\n]+/).map((x) => x.trim()).filter(Boolean))];
+// MARKER_AP0105_ROW_DETAIL_V1 -- ปุ่ม Detail ของแต่ละแถว: โหลดแถวเต็ม (ทุกคอลัมน์ รวมที่ซ่อนอยู่) + รายการ Invoice Ref. ที่แยกแล้ว
+function Ap0105RowModal({ row, onClose }) {
+  const [full, setFull] = React.useState(null); const [done, setDone] = React.useState('');
+  React.useEffect(() => { let off = false; apiFetch(`/${AP01_TABLE}?eq_id=${encodeURIComponent(row.id)}&limit=1`).then((r) => { if (!off) setFull((Array.isArray(r) && r[0]) || row); }).catch(() => { if (!off) setFull(row); }); return () => { off = true; }; }, [row]);
+  const d = full || row; const refs = ap01SplitRefs(d.invoice_ref);
+  const cp = (t, k) => { const ok = () => { setDone(k); setTimeout(() => setDone(''), 1200); }; try { navigator.clipboard.writeText(t).then(ok, ok); } catch (_) { ok(); } };
+  const flagTxt = { swapped: 'ยอดกับ VAT สลับกัน — ระบบสลับให้ถูกแล้ว', incl_vat: 'ช่องยอดรวม VAT แล้ว — ระบบหัก VAT ออกให้', check: 'VAT ไม่เข้ากฎ 7% — ไม่ได้แก้ ควรตรวจ' };
+  const money = new Set(['gross_value', 'vat_value', 'total_value', 'gross_raw', 'vat_raw']);
+  const val = (k) => { const v = d[k]; if (v == null || v === '') return '—'; if (money.has(k)) return ap01Fmt(v); if (k === 'doc_date') return String(v).slice(0, 10); if (k === 'value_flag') return flagTxt[v] || v; return String(v); };
+  const GC = { BU: '#2f6fb3', Supplier: '#c9731c', Invoice: '#1a7f37', 'File / OCR': '#5b6b80' }; // MARKER_AP0105_ROW_DETAIL_PRETTY_V1 -- จัดกลุ่มตามชนิดข้อมูล (สีเดียวกับหัวตาราง) + การ์ดยอดเงินด้านบน
+  const skip = new Set(['invoice_ref', 'gross_value', 'vat_value', 'total_value', 'value_flag', 'tax_invoice_number', 'ap_set', 'period']); const wide = new Set(['origin_file', 'supplier_name']);
+  const raws = [{ key: 'gross_raw', label: 'Total excl. VAT (ตามไฟล์)', g: 'Invoice' }, { key: 'vat_raw', label: 'VAT (ตามไฟล์)', g: 'Invoice' }].filter((x) => d[x.key] != null && d[x.key] !== '');
+  const groups = ['BU', 'Supplier', 'Invoice', 'File / OCR'].map((g) => ({ g, items: [...AP0105_TABLE_COLUMNS.filter((c) => c.g === g && !skip.has(c.key)), ...raws.filter((x) => x.g === g)] })).filter((x) => x.items.length);
+  const chip = (t, bg, fg) => <span style={{ display: 'inline-block', padding: '1px 9px', borderRadius: 10, fontSize: 11.5, fontWeight: 700, background: bg, color: fg }}>{t}</span>;
+  const cell = (c) => { const v = val(c.key); if (v === '—') return <span style={{ color: '#b4bcc7' }}>—</span>; if (c.key === 'bu_state') return v === 'active' ? chip('active', '#e3f1e8', '#1a7f37') : chip(v, '#fde8e8', '#cf222e'); if (c.key === 'ofin') return v === 'YES' ? chip('YES', '#e3f1e8', '#1a7f37') : chip(v, '#f3f4f6', '#6b778c'); if (money.has(c.key)) return <span style={{ fontVariantNumeric: 'tabular-nums' }}>{v}</span>; return v; };
+  const mc = (label, key, accent) => <div style={{ flex: 1, minWidth: 0, border: '1px solid #e3e6ea', borderTop: `3px solid ${accent}`, borderRadius: 8, padding: '8px 12px', background: '#fff' }}><div style={{ fontSize: 11.5, color: '#6b778c' }}>{label}</div><div style={{ fontSize: 17, fontWeight: 700, color: '#1a2433', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{val(key)}</div></div>;
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,28,45,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 14, width: 'min(760px, 94vw)', maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 12px 40px rgba(15,28,45,0.3)' }}>
+        <div style={{ padding: '14px 20px 12px', background: 'linear-gradient(180deg, #eef3f9, #fff)', borderBottom: '1px solid #e3e6ea' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ fontSize: 11.5, fontWeight: 700, color: '#6b778c', letterSpacing: 0.4 }}>TAX INVOICE</span>{d.ap_set && chip(d.ap_set, AP01_NAVY, '#fff')}{d.period && chip(String(d.period).replace('-', '.'), '#e8f0fb', AP01_NAVY)}{d.bu_state && d.bu_state !== 'active' && chip(`BU ${d.bu_state}`, '#fde8e8', '#cf222e')}</div>
+          <div style={{ fontSize: 19, fontWeight: 700, color: AP01_NAVY, marginTop: 2, wordBreak: 'break-all' }}>{d.tax_invoice_number || '—'}</div>
+          <div style={{ fontSize: 12.5, color: '#6b778c', marginTop: 2 }}>{[d.bu, d.supplier_name].filter(Boolean).join(' · ')}</div>
+        </div>
+        <div style={{ overflow: 'auto', scrollbarWidth: 'thin', padding: '14px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', gap: 10 }}>{mc('Total excl. VAT', 'gross_value', '#2f6fb3')}{mc('VAT', 'vat_value', '#c9731c')}{mc('Total', 'total_value', '#1a7f37')}</div>
+          {d.value_flag && <div style={{ padding: '8px 12px', borderRadius: 8, background: '#fff4d6', color: '#9a6700', fontSize: 12.5 }}>⚠ {flagTxt[d.value_flag] || d.value_flag}</div>}
+          <div style={{ border: '1px solid #e3e6ea', borderRadius: 10, overflow: 'hidden' }}>
+            <div style={{ padding: '7px 14px', fontSize: 12, fontWeight: 700, color: AP01_NAVY, background: '#eef3f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span>Invoice Ref. ({refs.length})</span>{refs.length > 1 && <button type="button" style={{ ...ap01Btn(), padding: '3px 10px', fontSize: 11.5 }} onClick={() => cp(refs.join('\n'), '__all')}>{done === '__all' ? 'คัดลอกแล้ว' : 'คัดลอกทั้งหมด'}</button>}</div>
+            {refs.length === 0 ? <div style={{ padding: '8px 14px', fontSize: 13, color: '#b4bcc7' }}>—</div> : refs.map((r, i) => (
+              <div key={r} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 14px', borderTop: '1px solid #eef0f3', fontSize: 13 }}>
+                <span style={{ color: '#9aa5b1', width: 20, fontSize: 11.5 }}>{i + 1}</span><b style={{ flex: 1, fontWeight: 600, wordBreak: 'break-all' }}>{r}</b>
+                <button type="button" style={{ ...ap01Btn(), padding: '3px 10px', fontSize: 11.5 }} onClick={() => cp(r, r)}>{done === r ? 'คัดลอกแล้ว' : 'คัดลอก'}</button>
+              </div>
+            ))}
+          </div>
+          {groups.map((gr) => (
+            <div key={gr.g} style={{ border: '1px solid #e3e6ea', borderLeft: `4px solid ${GC[gr.g]}`, borderRadius: 10, padding: '10px 14px' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: GC[gr.g], marginBottom: 8 }}>{gr.g}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 18px' }}>
+                {gr.items.map((c) => <div key={c.key} style={{ minWidth: 0, gridColumn: wide.has(c.key) ? '1 / -1' : 'auto' }}><div style={{ fontSize: 11.5, color: '#6b778c' }}>{c.label}</div><div style={{ fontSize: 13, color: '#1a2433', wordBreak: 'break-word', textAlign: money.has(c.key) ? 'right' : 'left' }}>{cell(c)}</div></div>)}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 20px', borderTop: '1px solid #e3e6ea' }}><button type="button" style={{ ...ap01Btn(), background: AP01_NAVY, color: '#fff' }} onClick={onClose}>ปิด</button></div>
+      </div>
+    </div>
+  );
+}
+
+// MARKER_AP0105_RESULT_POPUP_V1 -- Popup ผลนำเข้า AP01-AP05: ✗ เข้าไม่ได้ (BU ไม่ Active) / ✓ เข้าได้ (ต่อ BU)
+function Ap0105ResultModal({ res, onClose, onConfirm, onCancel }) {
+  const [selBu, setSelBu] = React.useState(''); const [smpMode, setSmpMode] = React.useState('first'); /* MARKER_AP0105_VIEW_FIXCHK_V1 */ const [tab, setTab] = React.useState(res.ok.length || !res.bad.length ? 'ok' : 'bad'); /* MARKER_AP0105_OK_TAB_FIRST_V1 -- แท็บ เข้าได้ มาก่อนและเปิดเป็นค่าเริ่มต้น */ const failN = (res.fails || []).reduce((a, x) => a + x.n, 0);
+  const badN = res.bad.reduce((a, x) => a + x.n, 0); const okN = res.ok.reduce((a, x) => a + x.n, 0);
+  const th = { textAlign: 'left', padding: '6px 10px', fontSize: 12, color: AP01_NAVY, background: '#e8f0fb', position: 'sticky', top: 0, whiteSpace: 'nowrap' };
+  const td = { padding: '5px 10px', fontSize: 12.5, borderTop: '1px solid #eef0f3' };
+  const copy = () => {
+    const lines = tab === 'bad'
+      ? ['Branch\tBU ในไฟล์\tBU ที่ใช้\tแถว\tเหตุผล', ...res.bad.map((x) => `${x.branch || ''}\t${x.buFile || ''}\t${x.bu}\t${x.n}\t${x.reason}`)]
+      : ['BU\tหาจาก\tAP\tสาขา\tTotal excl. VAT\tVAT\tแก้ยอด\tควรตรวจ\tแถว', ...res.ok.map((x) => { const d = x.d; return `${x.bu}\t${[...x.via].join(' / ')}\t${d ? Object.entries(d.ap).map(([k, v]) => `${k} ${v}`).join(' ') : ''}\t${d ? d.br.size : ''}\t${d ? d.gross.toFixed(2) : ''}\t${d ? d.vat.toFixed(2) : ''}\t${d ? d.fix : ''}\t${d ? d.chk : ''}\t${x.n}`; })];
+    try { navigator.clipboard.writeText(lines.join('\n')); } catch (_) { /* ไม่รองรับ Clipboard */ }
+  };
+  const tb = (k, l, c) => <div onClick={() => setTab(k)} style={{ padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', borderBottom: tab === k ? `2px solid ${AP01_NAVY}` : '2px solid transparent', color: tab === k ? c : '#6b778c' }}>{l}</div>;
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+      <div style={{ background: '#fff', borderRadius: 12, width: 'min(1600px, 98vw)', maxHeight: '94vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: 16, gap: 10 }}><style>{'.ap0105-thin::-webkit-scrollbar{width:6px;height:6px}.ap0105-thin::-webkit-scrollbar-thumb{background:#c3ccd6;border-radius:3px}.ap0105-thin::-webkit-scrollbar-track{background:transparent}'}</style>
+        <div><b style={{ color: AP01_NAVY, fontSize: 15 }}>ผลนำเข้า AP01-AP05</b> <span style={{ fontSize: 12, color: '#6b778c' }}>งวด {String(res.period).replace('-', '.')} · {res.files.length} ไฟล์ · ทั้งหมด {ap01Int(res.total)} แถว (เก็บครบทุกแถว)</span></div>
+        {res.mode === 'preview' && <div style={{ fontSize: 12.5, color: '#9a6700', background: '#fff4d6', borderRadius: 8, padding: '6px 10px' }}><b>Preview</b> — ยังไม่ได้บันทึกอะไรเข้าระบบ · ด้านล่างคือ<b>ตัวอย่างข้อมูลที่จะถูกบันทึก</b> คลิกแถว BU เพื่อดู 5 รายการแรกที่จะเก็บ แล้วกด "บันทึกเข้าระบบ"</div>}
+        {res.saving && <div><div style={{ fontSize: 12, color: AP01_NAVY, marginBottom: 3 }}>⏳ กำลังบันทึก {ap01Int(res.done)} / {ap01Int(res.totalFresh)} แถว — ปิด Popup ได้ ระบบบันทึกต่อให้</div><div style={{ height: 6, background: '#e8f0fb', borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${res.totalFresh ? Math.min(100, (res.done / res.totalFresh) * 100) : 0}%`, height: '100%', background: AP01_NAVY, transition: 'width .3s' }} /></div></div>}
+        {!res.saving && res.secSave != null && <div style={{ fontSize: 12, color: (res.fails || []).length ? '#cf222e' : '#1a7f37' }}>{(res.fails || []).length ? `⚠ บันทึกไม่สำเร็จ ${ap01Int(failN)} แถว (${res.fails.length} กลุ่ม) — ดูแท็บ "บันทึกไม่สำเร็จ"` : `✓ บันทึกครบแล้ว`} · ตรวจไฟล์ {res.secCheck.toFixed(1)} วินาที · บันทึก {res.secSave.toFixed(1)} วินาที</div>}
+        {res.mode === 'preview' && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{[['เข้าได้ (จะบันทึก)', `${ap01Int(okN)} แถว`, `${res.ok.length} BU`, '#1a7f37'], ['เข้าไม่ได้ (ไม่บันทึก)', `${ap01Int(badN)} แถว`, '', '#cf222e']].map(([l, v, sub, c]) => <div key={l} style={{ flex: '1 1 140px', border: '1px solid #e3e6ea', borderRadius: 10, padding: '6px 12px' }}><div style={{ fontSize: 11.5, color: '#6b778c' }}>{l}</div><div style={{ fontSize: 17, fontWeight: 700, color: c }}>{v}</div>{sub && <div style={{ fontSize: 11.5, color: '#8b95a1' }}>{sub}</div>}</div>)}</div>}
+        <div style={{ display: 'flex', borderBottom: '1px solid #e3e6ea' }}>{tb('ok', `✓ เข้าได้ (${ap01Int(okN)} แถว · ${res.ok.length} BU)`, '#1a7f37')}{tb('bad', `✗ เข้าไม่ได้ (${ap01Int(badN)} แถว)`, '#cf222e')}{(res.fails || []).length > 0 && tb('fail', `⚠ บันทึกไม่สำเร็จ (${ap01Int(failN)} แถว)`, '#cf222e')}</div>
+        <div className="ap0105-thin" style={tab === 'ok' ? { flex: '0 0 auto', height: 344, overflow: 'auto', scrollbarWidth: 'thin', border: '1px solid #e3e6ea', borderRadius: 8 } : { flex: 1, minHeight: 160, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: 8 }}> {/* MARKER_AP0105_PREVIEW_LAYOUT_V1 -- โซนข้อมูล Default 10 แถว เกินนั้นเลื่อน */}
+          {tab === 'fail' ? (
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}><thead><tr><th style={th}>AP</th><th style={th}>BU</th><th style={{ ...th, textAlign: 'right' }}>แถว</th><th style={th}>ข้อความจากระบบ</th></tr></thead>
+              <tbody>{res.fails.map((x, i) => <tr key={i}><td style={td}>{x.ap}</td><td style={td}>{x.bu}</td><td style={{ ...td, textAlign: 'right' }}>{ap01Int(x.n)}</td><td style={{ ...td, color: '#cf222e' }}>{x.msg}</td></tr>)}</tbody></table>
+          ) : tab === 'bad' ? (res.bad.length === 0 ? <div style={{ padding: 28, textAlign: 'center', color: '#8b95a1' }}>ไม่มีแถวที่เข้าไม่ได้</div> : (
+            <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}><thead><tr><th style={th}>Branch</th><th style={th}>BU ในไฟล์</th><th style={th}>BU ที่ใช้</th><th style={{ ...th, textAlign: 'right' }}>แถว</th><th style={th}>เหตุผล</th></tr></thead>
+              <tbody>{res.bad.map((x, i) => <tr key={i}><td style={td}>{x.branch || '—'}</td><td style={td}>{x.buFile || '—'}</td><td style={td}>{x.bu}</td><td style={{ ...td, textAlign: 'right' }}>{ap01Int(x.n)}</td><td style={{ ...td, color: '#cf222e' }}>{x.reason}</td></tr>)}</tbody></table>
+          )) : (
+            (() => {
+              // MARKER_AP0105_PREVIEW_NO_TAXTYPE_V1 -- ไม่โชว์ Tax Type ใน Preview: ไฟล์ AP01-AP05 ไม่มีข้อมูลแยก A/N (ระบบเดาจากสาขา) แยกตาม BU ก็พอ
+              const tot = res.ok.reduce((a, x) => ({ n: a.n + x.n, g: a.g + ((x.d && x.d.gross) || 0), v: a.v + ((x.d && x.d.vat) || 0), f: a.f + ((x.d && x.d.fix) || 0), c: a.c + ((x.d && x.d.chk) || 0) }), { n: 0, g: 0, v: 0, f: 0, c: 0 });
+              const R = { ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+              const t1 = { ...th, top: 0 }; const t2 = { ...th, top: 28 }; const ft = { position: 'sticky', bottom: 0, zIndex: 2, background: '#eef3f9', borderTop: '2px solid #c9d3df' }; /* MARKER_AP0105_FOOTER_STICKY_V1 -- ตรึงแถวรวมไว้ล่างตาราง */
+              return (<table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}><thead>
+                <tr><th style={t1} colSpan={3}>จะบันทึก</th><th style={{ ...t1, textAlign: 'right' }} colSpan={3}>ยอด</th></tr>
+                <tr><th style={t2}>BU</th><th style={t2}>AP</th><th style={{ ...t2, textAlign: 'right' }}>สาขา</th><th style={{ ...t2, textAlign: 'right' }}>Total excl. VAT</th><th style={{ ...t2, textAlign: 'right' }}>VAT</th><th style={{ ...t2, textAlign: 'right' }}>แถว</th></tr></thead>
+                <tbody>{res.ok.map((x) => { const d = x.d; const on = selBu === x.bu; return (<tr key={x.bu} onClick={() => { setSmpMode('first'); setSelBu(on ? '' : x.bu); }} title="คลิกเพื่อดูตัวอย่าง 5 รายการ" style={{ cursor: 'pointer', background: on ? '#e3f1e8' : undefined }}><td style={{ ...td, fontWeight: 600 }}>{x.bu}{on ? ' ▾' : ''}</td><td style={{ ...td, whiteSpace: 'nowrap' }}>{d ? Object.keys(d.ap).join(' · ') : '—'}</td><td style={R}>{d ? ap01Int(d.br.size) : '—'}</td><td style={R}>{d ? ap01Fmt(d.gross) : '—'}</td><td style={R}>{d ? ap01Fmt(d.vat) : '—'}</td><td style={R}>{ap01Int(x.n)}</td></tr>); })}
+</tbody><tfoot>
+                  <tr><td style={{ ...td, ...ft, fontWeight: 700 }} colSpan={3}>รวม {res.ok.length} BU</td><td style={{ ...R, ...ft, fontWeight: 700 }}>{ap01Fmt(tot.g)}</td><td style={{ ...R, ...ft, fontWeight: 700 }}>{ap01Fmt(tot.v)}</td><td style={{ ...R, ...ft, fontWeight: 700 }}>{ap01Int(tot.n)}</td></tr></tfoot></table>);
+            })()
+          )}
+        </div>
+        {tab === 'ok' && (() => { // MARKER_AP0105_PREVIEW_SAMPLE_ZONE_V1 -- โซนตัวอย่าง จองพื้นที่ไว้ตลอด (5 แถว) แสดงตามรูปแบบแท็บ Amagno - Tax Invoice
+          const selX = res.ok.find((x) => x.bu === selBu); const smp = (selX && selX.d && (smpMode === 'fix' ? selX.d.fixRows : smpMode === 'chk' ? selX.d.chkRows : selX.d.sample)) || []; const vm = smpMode !== 'first';
+          const g = (bg) => ({ ...th, top: 'auto', position: 'static', background: bg, fontSize: 11 }); const c = { ...td, fontSize: 11.5, whiteSpace: 'nowrap' }; const cwr = { ...td, fontSize: 11.5, whiteSpace: 'nowrap' }; const cw = vm ? [4, 6, 8, 16, 7, 12, 7, 6, 4, 6, 4, 13, 7, 6] : [4, 6, 8, 17, 7, 13, 8, 7, 4, 7, 4, 15]; /* MARKER_AP0105_SAMPLE_FIT_V1 -- ตารางพอดีความกว้าง ไม่ต้องเลื่อนซ้าย-ขวา */
+          return (<div className="ap0105-thin" style={{ height: 232, overflow: 'auto', scrollbarWidth: 'thin', border: '1px solid #e3e6ea', borderLeft: '3px solid #1a7f37', borderRadius: 8, background: '#f8fbf9', flex: '0 0 auto' }}>
+            {!selX ? <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b95a1', fontSize: 12.5 }}>คลิกแถว BU ด้านบน เพื่อดูตัวอย่าง 5 รายการแรกที่จะเก็บลง Backup (Amagno - Tax Invoice)</div> : (<>
+              <div style={{ padding: '6px 10px', fontWeight: 600, color: '#1a7f37', fontSize: 12.5 }}>{smpMode === 'fix' ? `รายการที่ระบบแก้ยอดให้ของ ${selX.bu} — ${ap01Int(selX.d.fix)} แถว (ค่าที่เก็บลง Backup + ค่าเดิมในไฟล์)` : smpMode === 'chk' ? `รายการที่ควรตรวจของ ${selX.bu} — ${ap01Int(selX.d.chk)} แถว (VAT ไม่เข้ากฎ 7% ไม่ได้แก้ เก็บตามไฟล์)` : `ตัวอย่าง 5 รายการแรกของ ${selX.bu} — รูปแบบที่จะเก็บลง Backup (จาก ${ap01Int(selX.n)} แถว)`}{vm && <span onClick={() => setSmpMode('first')} style={{ marginLeft: 12, fontWeight: 400, color: '#1a3a5c', textDecoration: 'underline', cursor: 'pointer' }}>กลับไปดูตัวอย่าง 5 แถว</span>}</div>
+              {!smp.length && <div style={{ padding: '4px 10px', color: '#b42318', fontSize: 12 }}>ไม่มีข้อมูลตัวอย่างในผลนี้ — ให้ Refresh หน้าเว็บ แล้วโยนไฟล์ใหม่อีกครั้ง</div>}<table style={{ width: '100%', tableLayout: 'auto', borderCollapse: 'separate', borderSpacing: 0 }}><thead>
+                <tr><th style={g('#DCEBFB')} colSpan={2}>BU</th><th style={g('#FBEADC')} colSpan={2}>Supplier</th><th style={g('#DCFBE4')} colSpan={6}>Invoice</th><th style={g('#E3E8F0')} colSpan={vm ? 4 : 2}>File / OCR</th></tr>
+                <tr>{['BU', 'Branch Code', 'Vendor Code', 'Vendor Name', 'Tax Invoice Date', 'Tax Invoice No.', 'Total excl. VAT', 'VAT', 'OFIN', 'ตรวจยอด', 'AP', 'Name', ...(vm ? ['Total เดิม', 'VAT เดิม'] : [])].map((h, i2) => <th key={h} style={{ ...g('#f3f6fa'), whiteSpace: 'nowrap', textAlign: i2 === 6 || i2 === 7 || i2 === 12 || i2 === 13 ? 'right' : 'left' }}>{h}</th>)}</tr></thead>
+                <tbody>{smp.map((r, i2) => <tr key={i2}><td style={c}>{r.bu}</td><td style={c}>{r.bu_branch_code}</td><td style={c}>{r.supplier_code}</td><td style={cwr}>{r.supplier_name}</td><td style={c}>{r.doc_date ? String(r.doc_date).slice(0, 10) : ''}</td><td style={c}>{r.tax_invoice_number}</td><td style={{ ...c, textAlign: 'right' }}>{ap01Fmt(r.gross_value)}</td><td style={{ ...c, textAlign: 'right' }}>{ap01Fmt(r.vat_value)}</td><td style={c}>{r.ofin}</td><td style={c}>{r.value_flag === 'swapped' || r.value_flag === 'incl_vat' ? <span style={{ color: '#1a7f37' }}>แก้ยอด</span> : r.value_flag === 'check' ? <span style={{ color: '#9a6700' }}>ควรตรวจ</span> : ''}</td><td style={c}>{r.ap_set}</td><td style={cwr}>{r.origin_file}</td>{vm && <><td style={{ ...c, textAlign: 'right', color: '#6b778c' }}>{ap01Fmt(r.gross_raw)}</td><td style={{ ...c, textAlign: 'right', color: '#6b778c' }}>{ap01Fmt(r.vat_raw)}</td></>}</tr>)}</tbody></table>
+            </>)}
+          </div>); })()}
+        {tab === 'bad' && res.bad.length > 0 && <div style={{ fontSize: 11.5, color: '#8b95a1' }}>แถวเหล่านี้ถูกบันทึกแล้ว (BU State = unknown / inactive) แต่ไม่ขึ้นใน Lobby — เพิ่ม/แก้ BU ใน company_list แล้วโยนไฟล์ใหม่</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" style={ap01Btn()} onClick={copy}>คัดลอกรายการ</button>{res.mode === 'preview' ? (<><button type="button" style={ap01Btn()} onClick={onCancel}>ยกเลิก</button><button type="button" style={{ ...ap01Btn(), background: AP01_NAVY, color: '#fff' }} onClick={onConfirm}>บันทึกเข้าระบบ ({ap01Int(res.totalFresh)} แถว)</button></>) : <button type="button" style={{ ...ap01Btn(), background: AP01_NAVY, color: '#fff' }} onClick={onClose}>ปิด</button>}</div>
+      </div>
+    </div>
+  );
+}
+
+// MARKER_AP0105_PURGE_MODAL_V1 -- ล้างข้อมูลเฉพาะตาราง AP01-AP05 : กรอง Period / ชุด AP / BU (Owner เท่านั้น · Backend นับสดซ้ำก่อนลบ)
+function Ap0105PurgeModal({ onClose, onDone }) {
+  const [opts, setOpts] = React.useState(null);
+  const [per, setPer] = React.useState(''); const [aps, setAps] = React.useState(''); const [bu, setBu] = React.useState(''); const [all, setAll] = React.useState(false);
+  const [cnt, setCnt] = React.useState(null); const [sample, setSample] = React.useState([]); const [busy, setBusy] = React.useState(false); const [err, setErr] = React.useState('');
+  React.useEffect(() => { apiFetch(`/${AP01_TABLE}/purge`, { method: 'POST', body: JSON.stringify({ action: 'options' }) }).then(setOpts).catch((e) => setErr(e.message || String(e))); }, []);
+  const hasFilter = !!(per || aps || bu || all);
+  const body = (action, extra) => ({ action, ...(per ? { period: per } : {}), ...(aps ? { ap_set: aps } : {}), ...(bu ? { bu } : {}), ...(all ? { all: true } : {}), ...(extra || {}) });
+  React.useEffect(() => { setCnt(null); setSample([]); setErr(''); }, [per, aps, bu, all]);
+  const preview = async () => { setBusy(true); setErr(''); try { const r = await apiFetch(`/${AP01_TABLE}/purge`, { method: 'POST', body: JSON.stringify(body('preview')) }); setCnt(r.count); setSample(r.sample || []); } catch (e) { setErr(e.message || String(e)); } setBusy(false); };
+  const doDel = async () => {
+    const ok = await confirmDialog.confirm(`ลบข้อมูล AP01-AP05 จำนวน ${ap01Int(cnt)} แถว ?\nข้อมูลที่ลบแล้วกู้คืนไม่ได้`, { title: 'ล้างข้อมูล AP01-AP05', variant: 'danger' }); if (!ok) return;
+    setBusy(true); try { const r = await apiFetch(`/${AP01_TABLE}/purge`, { method: 'POST', body: JSON.stringify(body('delete', { expected_count: cnt })) }); try { broadcastWs('vat_ap0105_updated', { purged: r.deleted }); } catch (_) {} if (onDone) onDone(); onClose(); } catch (e) { setErr(e.message || String(e)); setBusy(false); }
+  };
+  const sel = { padding: '7px 10px', fontSize: 12.5, border: '1px solid #ccd5e0', borderRadius: 7, background: '#fff', width: '100%', boxSizing: 'border-box' };
+  const lab = { fontSize: 12, color: '#6b778c', marginBottom: 3 };
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1300 }}>
+      <div style={{ background: '#fff', borderRadius: 12, width: 'min(760px, 94vw)', maxHeight: '88vh', overflow: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div><b style={{ color: AP01_NAVY, fontSize: 15 }}>ล้างข้อมูล Amagno · AP01-AP05</b> <span style={{ fontSize: 12, color: '#6b778c' }}>{opts ? `ทั้งตาราง ${ap01Int(opts.total)} แถว` : 'กำลังโหลด…'} · ไม่กระทบ AR Collection</span></div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ flex: 1 }}><div style={lab}>Period</div><select style={sel} value={per} onChange={(e) => setPer(e.target.value)}><option value="">ทุก Period</option>{opts && opts.by_period.map((x) => <option key={x.k} value={x.k}>{String(x.k).replace('-', '.')} ({ap01Int(x.n)})</option>)}</select></div>
+          <div style={{ flex: 1 }}><div style={lab}>ชุด AP</div><select style={sel} value={aps} onChange={(e) => setAps(e.target.value)}><option value="">ทุกชุด</option>{opts && opts.by_ap_set.map((x) => <option key={x.k} value={x.k}>{x.k} ({ap01Int(x.n)})</option>)}</select></div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}><div style={lab}>BU</div><SuspenseBuSelect value={bu} options={opts ? opts.by_bu.map((x) => x.k).filter(Boolean) : []} onChange={setBu} style={sel} /></div>
+        </div>
+        <label style={{ fontSize: 12.5, color: '#cf222e', cursor: 'pointer' }}><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> ล้างทั้งหมด (ไม่กรอง)</label>
+        {err && <div style={{ fontSize: 12.5, color: '#cf222e' }}>{err}</div>}
+        {cnt !== null && (
+          <div style={{ border: '1px solid #e3e6ea', borderRadius: 8 }}>
+            <div style={{ padding: '8px 12px', fontSize: 13 }}>จะลบ <b style={{ color: '#cf222e' }}>{ap01Int(cnt)}</b> แถว{cnt > 15 ? ' (ตัวอย่าง 15 แถวล่าสุด)' : ''}</div>
+            {sample.length > 0 && <div style={{ maxHeight: 200, overflow: 'auto' }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><tbody>{sample.map((r, i) => <tr key={i} style={{ borderTop: '1px solid #eef0f3' }}><td style={{ padding: '4px 10px', fontSize: 12 }}>{String(r.period).replace('-', '.')} · {r.ap_set}</td><td style={{ padding: '4px 10px', fontSize: 12 }}>{r.bu}</td><td style={{ padding: '4px 10px', fontSize: 12, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.supplier_name}</td><td style={{ padding: '4px 10px', fontSize: 12 }}>{r.tax_invoice_number}</td></tr>)}</tbody></table></div>}
+          </div>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button type="button" style={ap01Btn()} onClick={onClose}>ปิด</button>
+          <button type="button" disabled={!hasFilter || busy} style={ap01Btn(hasFilter && !busy)} onClick={preview}>ตรวจจำนวนที่จะลบ</button>
+          <button type="button" disabled={!cnt || busy} style={{ ...ap01Btn(!!cnt && !busy), background: cnt ? '#cf222e' : '#fff', color: cnt ? '#fff' : AP01_NAVY, border: cnt ? 'none' : undefined }} onClick={doDel}>ลบ</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function VatReconcileAp0105Page() {
+  const { userName } = useAuth();
+  const { isOwner, isAdmin } = useUserRole();
+  const canAll = !!(isOwner || isAdmin);
+  const [ctx, setCtx] = React.useState(null);
+  const [period, setPeriod] = React.useState('');
+  const [periodList, setPeriodList] = React.useState([]);
+  const [view, setView] = React.useState(null); // null = Lobby | { bu } = หน้า Reconcile
+  const [mode, setMode] = React.useState('file');
+  const [drag, setDrag] = React.useState(false);
+  const [busy, setBusy] = React.useState('');
+  const [log, setLog] = React.useState([]); // ผลการนำเข้า
+  const [resultPop, setResultPop] = React.useState(null); // MARKER_AP0105_RESULT_POPUP_V1 -- ผลนำเข้าแสดงเป็น Popup หลังทั้งชุดบันทึกเสร็จ
+  const [lastRes, setLastRes] = React.useState(null);
+  const pendRef = React.useRef(null);
+  const [dups, setDups] = React.useState([]); // [{file, items:[{nw, old}]}]
+  const [incFiles, setIncFiles] = React.useState(null);
+  const [inpFile, setInpFile] = React.useState(null);
+  const [inpQueue, setInpQueue] = React.useState([]); // MARKER_AP0105_MULTIFILE_DROP_V1 -- Input Vat Reconcile หลายไฟล์: เข้าคิว เปิดทีละไฟล์ (เดิมรับแค่ไฟล์แรก)
+  React.useEffect(() => { if (!inpFile && inpQueue.length) { setInpFile(inpQueue[0]); setInpQueue(inpQueue.slice(1)); } }, [inpFile, inpQueue]);
+  const [scope, setScope] = React.useState('mine');
+  const [q, setQ] = React.useState('');
+  const [onlyReady, setOnlyReady] = React.useState(false);
+  const [prepF, setPrepF] = React.useState(''); // MARKER_AP0105_PREPARE_FILTER_V1 -- Filter Prepare by (แทนคอลัมน์ Prepare by)
+  const [agg, setAgg] = React.useState(null);
+  const [myBus, setMyBus] = React.useState(null);
+  const [prepName, setPrepName] = React.useState(''); // MARKER_AP0105_PROFILE_CARD_V1 -- Prepare by ที่ผูกกับ User (แสดงในการ์ด Profile)
+  const [monitor, setMonitor] = React.useState(null); // MARKER_AP0105_MONITOR_CFG_V1 -- BU ที่เลือก Monitor เอง (null = ใช้ BU ที่ผูกไว้)
+  const [showCfg, setShowCfg] = React.useState(false);
+  const [lastUpd, setLastUpd] = React.useState(null); // MARKER_AP0105_PAGE_HEADER_V1
+  const monKey = `ap0105_monitor_bus_${String(userName || '').trim().toLowerCase()}`;
+  React.useEffect(() => { try { const v = JSON.parse(localStorage.getItem(monKey) || 'null'); setMonitor(Array.isArray(v) ? v : null); } catch (_) { setMonitor(null); } }, [monKey]);
+  const saveMonitor = (list) => { setMonitor(list); try { if (list) localStorage.setItem(monKey, JSON.stringify(list)); else localStorage.removeItem(monKey); } catch (_) {} };
+  const monSet = React.useMemo(() => (monitor ? new Set(monitor) : myBus), [monitor, myBus]);
+  const priRef = React.useRef(null); priRef.current = monSet; // MARKER_AP0105_FAST_LOAD_V1 -- BU ของ My Job (ดึงมาก่อน)
+  const [aggFull, setAggFull] = React.useState(false);
+  const [aggMine, setAggMine] = React.useState(false); // MARKER_AP0105_LOAD_ORDER_V1 -- ลำดับ: 1) My Job (AP01+AP05) 2) สถานะ Input ของ My Job 3) All Job 4) เบื้องหลัง (สาขา/รายการงวด) — ไม่ดึงพร้อมกัน
+  const inputRef = React.useRef(null);
+  const user = userName || 'unknown';
+  React.useEffect(() => { let off = false; ap01LoadCtx(true).then((c) => { if (off) return; setCtx(c); setPeriod((p) => p || c.cur || (c.periods[0] || '')); setPeriodList(c.periods || []); }).catch(() => {}); return () => { off = true; }; }, []);
+  React.useEffect(() => { let off = false; (async () => {
+    try {
+      const [u0, ctx0, wa] = await Promise.all([apiFetch(`/user_roles?eq_username=${encodeURIComponent(userName || '')}`).catch(() => []), ap01LoadCtx(), tlDb.from('timeline_watch').select('*')]);
+      let uRows = Array.isArray(u0) ? u0 : []; if (!uRows.length) { const all = await tlDb.from('user_roles').select('*'); uRows = Array.isArray(all.data) ? all.data : []; } // หา User นี้ก่อน (ไม่ดึงทุกคนถ้าเจอ)
+      const u = { data: uRows }; const c = { data: ctx0.comps };
+      if (off) return; const low = (v) => String(v || '').trim().toLowerCase();
+      const mine = (Array.isArray(u.data) ? u.data : []).find((x) => low(x.username) === low(userName));
+      const bound = mine && mine.vat_prepare_name ? low(mine.vat_prepare_name) : '';
+      setPrepName(mine && mine.vat_prepare_name ? String(mine.vat_prepare_name) : '');
+      const wr = (Array.isArray(wa.data) ? wa.data : []).find((x) => low(x.username) === low(mine && mine.username)); const watch = wr && Array.isArray(wr.bus) ? wr.bus : [];
+      const set = new Set(); (Array.isArray(c.data) ? c.data : []).forEach((x) => { if (x.bu && ((bound && low(x['PREPARE BY']) === bound) || watch.includes(x.bu))) set.add(String(x.bu)); });
+      setMyBus(set);
+    } catch (_) { if (!off) setMyBus(new Set()); }
+  })(); return () => { off = true; }; }, [userName]);
+  const loadAgg = React.useCallback(async () => {
+    if (!period) return;
+    try { // MARKER_AP0105_SUMMARY_ROUTE_V1 -- Backend สรุป GROUP BY ให้ (ไม่ดึงทุกแถวมานับในเบราว์เซอร์)
+      const res = await apiFetch(`/${AP01_TABLE}/summary?period=${encodeURIComponent(period)}`);
+      const m = {};
+      ((res && res.rows) || []).forEach((r) => { if (!AP01_NEED.includes(r.ap_set) || r.bu_state !== 'active') return; const o = m[r.bu] || (m[r.bu] = { sets: new Set(), tt: {}, exp: null }); o.sets.add(r.ap_set); if (r.first_at && (!o.exp || r.first_at < o.exp)) o.exp = r.first_at; if (r.tax_type) o.tt[r.tax_type] = (o.tt[r.tax_type] || 0) + r.n; });
+      setAgg(m); setAggMine(true); setAggFull(true); setLastUpd(new Date());
+    } catch (_) { setAgg((pv) => pv || {}); setAggMine(true); setAggFull(true); }
+  }, [period]);
+  const bgRef = React.useRef('');
+  React.useEffect(() => { if (!aggFull || !ctx || bgRef.current === period) return; bgRef.current = period; ap01LoadBranches().catch(() => {}); ap01DataPeriods(ctx).then(setPeriodList).catch(() => {}); }, [aggFull, ctx, period]); // 4) เบื้องหลัง: หลัง All Job โหลดครบ
+  const myBusReady = myBus !== null;
+  React.useEffect(() => { if (!myBusReady) return; setAgg(null); setAggMine(false); setAggFull(false); loadAgg(); }, [loadAgg, myBusReady]);
+  const [inpBus, setInpBus] = React.useState(() => new Set()); // MARKER_AP0105_INPUT_STATUS_V1 -- BU ที่มีข้อมูล Input Reconcile (Input Summary) ใน Period นี้ (ดึงจากสถานะหน้า Input Vat Rec.)
+  const loadInp = React.useCallback(async () => {
+    if (!period) return;
+    try { const d = await apiFetch(`/${IVR_TABLE}/summary?period=${encodeURIComponent(period)}`); const st = new Set(); ((d && d.rows) || []).forEach((x) => { if (x.bu && x.n > 0) st.add(String(x.bu).toUpperCase()); }); setInpBus(st); } catch (_) { setInpBus(new Set()); } // MARKER_AP0105_INPUT_VAT_RECON_V1 -- สถานะ Input Rec. อ่านจากตาราง vat_input_vat_recon (รายงาน Input VAT Reconciliation)
+  }, [period]);
+  React.useEffect(() => { if (aggMine) loadInp(); }, [loadInp, aggMine]); // 2) สถานะ Input หลัง My Job แสดงแล้ว
+  React.useEffect(() => subscribeWs(['vat_reconcile_data_changed', 'vat_input_vat_recon_updated'], () => { loadInp(); }), [loadInp]);
+  const [ctxMenu, setCtxMenu] = React.useState(null); // MARKER_AP0105_RIGHT_CLICK_DELETE_V1 -- คลิกขวาที่จุด AP01 / AP05 / Input Rec. เพื่อลบข้อมูล (Owner/Admin เท่านั้น · ยืนยันก่อนลบ)
+  React.useEffect(() => { if (!ctxMenu) return undefined; const close = () => setCtxMenu(null); window.addEventListener('click', close); window.addEventListener('scroll', close, true); window.addEventListener('keydown', close); return () => { window.removeEventListener('click', close); window.removeEventListener('scroll', close, true); window.removeEventListener('keydown', close); }; }, [ctxMenu]);
+  const openMenu = (e, bu, kind, has) => { if (!canAll) return; e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, bu, kind, has }); };
+  const doDelete = async (bu, kind) => {
+    const per = String(period || '').replace('-', '.');
+    if (kind === 'INPUT') { // MARKER_AP0105_INPUT_VAT_RECON_V1 -- ลบข้อมูล Input VAT Reconciliation ของ BU + งวดนี้
+      const ok = await confirmDialog.confirm(`ลบข้อมูล Input VAT Reconciliation ของ ${bu} งวด ${per} ?\nข้อมูลที่ลบแล้วกู้คืนไม่ได้`, { title: 'ลบข้อมูล Input VAT Reconciliation', variant: 'danger' }); if (!ok) return;
+      try { await apiFetch(`/${IVR_TABLE}?eq_period=${encodeURIComponent(period)}&eq_bu=${encodeURIComponent(bu)}&hard=true`, { method: 'DELETE' }); try { broadcastWs('vat_input_vat_recon_updated', { period }); } catch (_) { /* ไม่มี WS */ } addLog([{ ok: 1, t: `ลบ Input VAT Reconciliation · ${bu} (งวด ${per})` }]); }
+      catch (e) { addLog([{ ok: 0, t: `ลบ Input VAT Reconciliation · ${bu} ไม่สำเร็จ: ${e.message || e}` }]); }
+      await loadInp(); return;
+    }
+    try {
+      const res = await apiFetch(`/${AP01_TABLE}?eq_period=${encodeURIComponent(period)}&eq_bu=${encodeURIComponent(bu)}&eq_ap_set=${encodeURIComponent(kind)}&select=id&limit=500000`);
+      const ids = (Array.isArray(res) ? res : []).map((x) => x.id); if (!ids.length) return;
+      const ok = await confirmDialog.confirm(`ลบข้อมูล ${kind} ของ ${bu} งวด ${per} จำนวน ${ap01Int(ids.length)} รายการ ?\nข้อมูลที่ลบแล้วกู้คืนไม่ได้`, { title: `ลบข้อมูล ${kind}`, variant: 'danger' }); if (!ok) return;
+      for (let i = 0; i < ids.length; i += 300) await apiFetch(`/${AP01_TABLE}?eq_bu=${encodeURIComponent(bu)}&in_id=${ids.slice(i, i + 300).join(',')}&hard=true`, { method: 'DELETE' });
+      addLog([{ ok: 1, t: `ลบ ${kind} · ${bu} · ${ap01Int(ids.length)} รายการ (งวด ${per})` }]);
+      try { broadcastWs('vat_ap0105_updated', { period }); } catch (_) {} await loadAgg();
+    } catch (e) { addLog([{ ok: 0, t: `ลบ ${kind} · ${bu} ไม่สำเร็จ: ${e.message || e}` }]); }
+  };
+  React.useEffect(() => subscribeWs(['company_list_updated', 'vat_ap0105_updated', 'vat_backup_tax_invoice_updated'], () => { ap01LoadCtx(true).then(setCtx).catch(() => {}); loadAgg(); }), [loadAgg]);
+  const addLog = (l) => setLog((p) => { const ks = new Set(l.map((x) => `${x.ok}|${x.t}`)); return [...l, ...p.filter((y) => !ks.has(`${y.ok}|${y.t}`))].slice(0, 60); }); // MARKER_AP0105_NO_REPEAT_V1 -- บรรทัดผลที่เหมือนเดิมไม่ซ้อนกัน (ย้ายขึ้นบนสุดแทน)
+  const persist = async (items, replace, onStep) => {
+    const fails = []; const total = items.reduce((a, x) => a + x.n, 0); let done = 0;
+    for (const it of items) {
+      setBusy(`กำลังบันทึก ${it.ap} · ${it.bu} …`);
+      try { await ap01Save(it, user, replace, (a, b) => { setBusy(`กำลังบันทึก ${it.ap} · ${it.bu} ${ap01Int(a)}/${ap01Int(b)}`); if (onStep) onStep(done + a, total); }); addLog([{ ok: 1, t: `${it.ap} · ${it.bu} · ${ap01Int(it.n)} รายการ${replace ? ' (แทนที่ของเดิม)' : ''} — ${it.file}` }]); }
+      catch (e) { fails.push({ ap: it.ap, bu: it.bu, n: it.n, msg: String((e && e.message) || e) }); addLog([{ ok: 0, t: `${it.ap} · ${it.bu} — บันทึกไม่สำเร็จ: ${e.message || e}` }]); }
+      done += it.n; if (onStep) onStep(done, total);
+    }
+    try { broadcastWs('vat_ap0105_updated', { period }); } catch (_) {}
+    await loadAgg(); if (ctx) ap01DataPeriods(ctx).then(setPeriodList); setBusy('');
+    return fails;
+  };
+  const ingestAp = async (jobs) => { // jobs = [{file?, text?}]
+    if (!period) { addLog([{ ok: 0, t: 'ยังไม่ได้เลือก Period' }]); return; }
+    setBusy('กำลังตรวจไฟล์ …'); const t0 = Date.now(); // MARKER_AP0105_TIMING_V1 -- จับเวลา: ตรวจไฟล์ / บันทึก
+    const c = await ap01LoadCtx(false, true); const bk = await ap01BackupCounts(period); const seen = new Map(); const fresh = []; const dupGroups = new Map(); const unchanged = new Map(); const sts = [];
+    for (const j of jobs) {
+      try {
+        const st = await ap01Stage(j.file || null, j.text, period, c); sts.push(st);
+        if (st.noSet) addLog([{ ok: 0, t: `${j.file ? j.file.name : 'ข้อความที่วาง'} — ${ap01Int(st.noSet)} แถวไม่ระบุชุด AP` }]);
+        st.items.forEach((it) => {
+          const k = `${it.ap}|${it.bu}`; const old = seen.get(k) ? { n: seen.get(k).n, file: seen.get(k).file } : (bk.has(k) ? { n: bk.get(k), file: `Backup งวด ${period.replace('-', '.')}` } : null);
+          if (old && old.n === it.n) { unchanged.set(it.file, (unchanged.get(it.file) || 0) + 1); } // MARKER_AP0105_NO_REPEAT_V1 -- โยนซ้ำและจำนวนเท่าเดิม = ไม่มีการเปลี่ยนแปลง
+          else if (old) { const g = dupGroups.get(it.file) || { file: it.file, items: [] }; g.items.push({ nw: it, old }); dupGroups.set(it.file, g); }
+          else { seen.set(k, it); fresh.push(it); }
+        });
+        if (!st.items.length) addLog([{ ok: 0, t: `${j.file ? j.file.name : 'ข้อความที่วาง'} — ไม่พบข้อมูลที่นำเข้าได้` }]);
+      } catch (e) { addLog([{ ok: 0, t: `${j.file ? j.file.name : 'ข้อความที่วาง'} — ${e.message || e}` }]); }
+    }
+    unchanged.forEach((n, f) => addLog([{ ok: 1, t: `${f} — ไม่มีการเปลี่ยนแปลง (มีข้อมูลอยู่แล้ว ${ap01Int(n)} กลุ่ม AP/BU)` }]));
+    if (dupGroups.size) setDups((p) => { const sig = (g) => `${g.file}|${g.items.map((x) => `${x.nw.ap}${x.nw.bu}`).sort().join(',')}`; const have = new Set(p.map(sig)); return [...p, ...[...dupGroups.values()].filter((g) => !have.has(sig(g)))]; });
+    // MARKER_AP0105_POPUP_FIRST_V1 -- แสดง Popup ผลคัดแยกทันที แล้วบันทึกต่อโดยมีแถบความคืบหน้าใน Popup
+    const okM = new Map(); sts.forEach((st) => st.ok.forEach((o) => { const x = okM.get(o.bu) || { bu: o.bu, via: new Set(), n: 0 }; o.via.forEach((v) => x.via.add(v)); x.n += o.n; okM.set(o.bu, x); }));
+    const det = new Map(); // MARKER_AP0105_RESULT_DETAIL_V1 -- รายละเอียดต่อ BU: AP / สาขา / Tax Type / ยอด / แถวที่แก้หรือควรตรวจ
+    sts.forEach((st) => st.items.forEach((it) => { if (it.state !== 'active') return; const d = det.get(it.bu) || { ap: {}, br: new Set(), gross: 0, vat: 0, fix: 0, chk: 0, tt: {}, sample: [], fixRows: [], chkRows: [] }; d.ap[it.ap] = (d.ap[it.ap] || 0) + it.n; it.dbRows.forEach((r) => { if (d.sample.length < 5) d.sample.push(ap01DbRow(it, r, '')); /* MARKER_AP0105_PREVIEW_SAMPLE_V1 -- ตัวอย่าง 5 แถวแรกในรูปแบบที่จะเก็บลง Backup */ d.br.add(r.branch); if ((r.valFlag === 'swapped' || r.valFlag === 'incl_vat') && d.fixRows.length < 300) d.fixRows.push(ap01DbRow(it, r, '')); else if (r.valFlag === 'check' && d.chkRows.length < 300) d.chkRows.push(ap01DbRow(it, r, '')); d.gross += r.gross || 0; d.vat += r.vat || 0; if (r.valFlag === 'swapped' || r.valFlag === 'incl_vat') d.fix += 1; else if (r.valFlag === 'check') d.chk += 1; const t = r.tax_type || '-'; d.tt[t] = (d.tt[t] || 0) + 1; }); det.set(it.bu, d); }));
+    const tok = Date.now(); const totalFresh = fresh.reduce((a, x) => a + x.n, 0);
+    const res = { tok, period, at: new Date(), files: sts.map((st) => st.file), total: sts.reduce((a, st) => a + st.total, 0), ok: [...okM.values()].map((o) => ({ ...o, d: det.get(o.bu) || null })).sort((a, b) => a.bu.localeCompare(b.bu)), bad: sts.flatMap((st) => st.bad).sort((a, b) => b.n - a.n), fixedN: sts.reduce((a, st) => a + st.fixedN, 0), checkN: sts.reduce((a, st) => a + st.checkN, 0), mode: fresh.length ? 'preview' : 'done', saving: false, done: 0, totalFresh, fails: [], secCheck: (Date.now() - t0) / 1000, secSave: null };
+    if (sts.length) { setLastRes(res); setResultPop(res); }
+    pendRef.current = { tok, items: fresh }; // Preview ก่อน: ยังไม่บันทึกจนกว่าจะกดยืนยันใน Popup
+    setBusy('');
+  };
+  const confirmSave = async () => { // MARKER_AP0105_PREVIEW_CONFIRM_V1
+    const pd = pendRef.current; if (!pd) return; pendRef.current = null;
+    const { tok, items } = pd; const t1 = Date.now();
+    setResultPop((p) => (p && p.tok === tok ? { ...p, mode: 'saving', saving: true } : p));
+    const fails = await persist(items, false, (d, t) => setResultPop((p) => (p && p.tok === tok ? { ...p, done: d, totalFresh: t } : p)));
+    const upd = { mode: 'done', saving: false, fails, secSave: (Date.now() - t1) / 1000 };
+    setResultPop((p) => (p && p.tok === tok ? { ...p, ...upd } : p)); setLastRes((p) => (p && p.tok === tok ? { ...p, ...upd } : p));
+  };
+  const cancelSave = () => { pendRef.current = null; setResultPop(null); setLastRes(null); addLog([{ ok: 1, t: 'ยกเลิกการนำเข้า — ไม่ได้บันทึกข้อมูล' }]); };
+  const handleFiles = async (fl) => {
+    const arr = Array.from(fl || []); if (!arr.length) return;
+    const apJobs = []; const incs = []; const inps = []; const ivrs = [];
+    for (const f of arr) {
+      if (!/\.(xlsx|xls|csv|txt|tsv|out)$/i.test(f.name)) { addLog([{ ok: 0, t: `${f.name} — นามสกุลไม่รองรับ` }]); continue; }
+      let k = ap01Kind(f.name);
+      if ((k === 'inp' || k === 'text') && /\.(out|txt)$/i.test(f.name)) { try { if (ivrSniff(await f.slice(0, 6000).text())) { ivrs.push(f); continue; } } catch (_) { /* อ่านหัวไฟล์ไม่ได้ -> ไปทางเดิม */ } } // MARKER_AP0105_INPUT_VAT_RECON_V1 -- รายงาน Input VAT Reconciliation (.out) แยกไปตารางของตัวเอง
+      if (k === 'inp' && /\.(xlsx|xls)$/i.test(f.name) && !/input.?vat/i.test(f.name)) { try { const wb0 = XLSX.read(await f.arrayBuffer(), { type: 'array', sheetRows: 1 }); const h0 = ((XLSX.utils.sheet_to_json(wb0.Sheets[wb0.SheetNames[0]], { header: 1, defval: '' })[0]) || []).map((x) => String(x).trim().toLowerCase()); if (h0.includes('bubranchcode') && h0.includes('ocr_taxinvoiceno')) k = 'ap'; } catch (_) {} } // MARKER_AP0105_MULTIFILE_DROP_V1 -- ชื่อไฟล์ไม่เข้าแบบ AP0x_ ให้ดูหัวคอลัมน์ในไฟล์
+      if (k === 'ap') apJobs.push({ file: f });
+      else if (k === 'inc') { try { incs.push(/\.xlsx$/i.test(f.name) ? await suspenseXlsxToFile(f) : f); } catch (e) { addLog([{ ok: 0, t: `${f.name} — อ่านไฟล์ Incomplete ไม่สำเร็จ: ${e.message || e}` }]); } }
+      else if (k === 'text') { const t = await f.text(); const kk = ap01Kind(f.name, t); if (kk === 'ap') apJobs.push({ text: t, file: null }); else if (kk === 'inc') { incs.push(f); /* MARKER_AP0105_INC_KEEP_ORIGINAL_ENCODING_V1 -- ส่งไฟล์ .out ต้นฉบับเข้า Upload Incomplete (ห้ามแปลงเป็น UTF-8 ก่อน: ไฟล์เป็น Windows-874 ภาษาไทยจะเพี้ยนเป็น ����) */ } else inps.push(f); }
+      else inps.push(f);
+    }
+    if (incs.length) setIncFiles(incs);
+    if (inps.length) setInpQueue((q) => [...q, ...inps]);
+    if (apJobs.length) await ingestAp(apJobs);
+    if (ivrs.length) await ingestInputVatRecon(ivrs); // MARKER_AP0105_INPUT_VAT_RECON_V1
+  };
+  const handleText = async (t) => {
+    if (!t || !t.trim()) return; const k = ap01Kind('', t);
+    if (k === 'ap') await ingestAp([{ text: t }]);
+    else if (k === 'inc') { const f = new File([t], 'pasted-incomplete.txt', { type: 'text/plain' }); f.__utf8 = true; f.__kind = 'incomplete'; setIncFiles([f]); }
+    else if (ivrSniff(t)) { const f = new File([t], 'pasted-input-vat-recon.out', { type: 'text/plain' }); f.__utf8 = true; await ingestInputVatRecon([f]); } // MARKER_AP0105_INPUT_VAT_RECON_V1
+    else { const f = new File([t], t.includes('\t') ? 'pasted-excel.tsv' : 'pasted-data.out', { type: 'text/plain' }); f.__utf8 = true; setInpQueue((q) => [...q, f]); }
+  };
+  const [clearPlan, setClearPlan] = React.useState(null); // MARKER_AP0105_CLEAR_CONFIRM_V1
+  const [ivrPop, setIvrPop] = React.useState(null); const ivrRef = React.useRef(null); // MARKER_AP0105_INPUT_VAT_RECON_V1
+  const ingestInputVatRecon = async (files) => { // รายงาน Input VAT Reconciliation (.out): ตรวจ -> Preview (กรอง Tax Type ตาม BU) -> ยืนยันแล้วบันทึกลง vat_input_vat_recon
+    if (!period) { addLog([{ ok: 0, t: 'ยังไม่ได้เลือก Period' }]); return; }
+    setBusy('กำลังตรวจไฟล์ Input VAT Reconciliation …');
+    try {
+      const c = await ap01LoadCtx(false, true); const byBu = new Map(); const noBu = {}; const names = [];
+      for (const f of files) {
+        try {
+          const st = await ivrStage(f, period, c, user); names.push(f.name); Object.entries(st.noBu).forEach(([k, n]) => { noBu[k] = (noBu[k] || 0) + n; });
+          st.per.forEach((p) => { if (byBu.has(p.bu)) addLog([{ ok: 1, t: `${p.bu} มีในหลายไฟล์ — ใช้ ${p.file} (ไฟล์หลังแทนที่ไฟล์ก่อน ไม่รวมซ้ำ)` }]); byBu.set(p.bu, p); });
+          if (!st.per.length) addLog([{ ok: 0, t: `${f.name} — ไม่พบแถวที่นำเข้าได้` }]);
+        } catch (e) { addLog([{ ok: 0, t: `${f.name} — ${e.message || e}` }]); }
+      }
+      if (!byBu.size) return;
+      let sm = null; try { sm = await apiFetch(`/${IVR_TABLE}/summary?period=${encodeURIComponent(period)}`); } catch (_) { /* ไม่มีสรุปเดิม */ }
+      const exist = {}; ((sm && sm.rows) || []).forEach((x) => { exist[x.bu] = (exist[x.bu] || 0) + x.n; });
+      const per = [...byBu.values()].sort((a, b) => a.bu.localeCompare(b.bu)).map((p) => ({ ...p, existing: exist[p.bu] || 0 })); const tok = Date.now();
+      ivrRef.current = { tok, per };
+      setIvrPop({ tok, period, days: (sm && sm.retention_days) || 30, files: names, noBu, per: per.map(({ rows, f, ...x }) => x), mode: 'preview' });
+    } finally { setBusy(''); }
+  };
+  const ivrConfirm = async () => {
+    const pd = ivrRef.current; if (!pd) return; ivrRef.current = null;
+    const total = pd.per.reduce((a, x) => a + x.rows.length, 0); let done = 0; const fails = []; const okBus = [];
+    setIvrPop((p) => (p ? { ...p, mode: 'saving', done: 0, total } : p));
+    for (const it of pd.per) {
+      try {
+        setBusy(`กำลังบันทึก Input VAT Reconciliation · ${it.bu} …`);
+        await apiFetch(`/${IVR_TABLE}?eq_period=${encodeURIComponent(period)}&eq_bu=${encodeURIComponent(it.bu)}&hard=true`, { method: 'DELETE' }); // แทนที่ของเดิมของ BU + งวดนี้ (ไม่เบิ้ล)
+        const CH = 1000; const PAR = 3; const chunks = []; for (let i = 0; i < it.rows.length; i += CH) chunks.push(it.rows.slice(i, i + CH));
+        for (let i = 0; i < chunks.length; i += PAR) await Promise.all(chunks.slice(i, i + PAR).map((ch) => apiFetch(`/${IVR_TABLE}/upsert?onConflict=bu,period,row_hash,dup_seq`, { method: 'POST', body: JSON.stringify(ch) }).then(() => { done += ch.length; setIvrPop((p) => (p ? { ...p, done } : p)); })));
+        okBus.push(it); addLog([{ ok: 1, t: `Input VAT Reconciliation · ${it.bu} · ${ap01Int(it.rows.length)} แถว (ไม่เก็บ ${ap01Int(it.dropped)}) — ${it.file}` }]);
+      } catch (e) { fails.push({ bu: it.bu, msg: String((e && e.message) || e) }); addLog([{ ok: 0, t: `Input VAT Reconciliation · ${it.bu} — บันทึกไม่สำเร็จ: ${e.message || e}` }]); }
+    }
+    try { broadcastWs('vat_input_vat_recon_updated', { period }); } catch (_) { /* ไม่มี WS */ }
+    setBusy(''); setIvrPop((p) => (p ? { ...p, mode: 'done', fails } : p)); await loadInp();
+    try { // Step 1: Vendor ของประเภทที่ BU ไม่ได้ใช้ -> ขึ้นให้ยืนยันลบ (ไม่ลบเอง)
+      const byFile = new Map(); okBus.forEach((it) => { const o = byFile.get(it.f) || []; o.push(it.bu); byFile.set(it.f, o); }); const plans = [];
+      for (const [f, bus] of byFile) plans.push(...(await ap01BuildClearPlan(f, { bus, period }, period)));
+      if (plans.length) setClearPlan(plans);
+    } catch (e) { addLog([{ ok: 0, t: `ตรวจแถว AP ที่ Input ไม่ได้ใช้ไม่สำเร็จ: ${e.message || e}` }]); }
+    await loadAgg();
+  };
+  const onInputCommitted = async (d, f) => { try { const pl = f ? await ap01BuildClearPlan(f, d, period) : []; if (pl.length) setClearPlan(pl); } catch (e) { addLog([{ ok: 0, t: `ตรวจแถว AP ที่ Input ไม่ได้ใช้ไม่สำเร็จ: ${e.message || e}` }]); } await loadAgg(); };
+  const confirmClear = async (items) => {
+    setClearPlan(null);
+    for (const p of items) {
+      try { for (let i = 0; i < p.ids.length; i += 300) await apiFetch(`/${AP01_TABLE}?eq_bu=${encodeURIComponent(p.bu)}&in_id=${p.ids.slice(i, i + 300).join(',')}&hard=true`, { method: 'DELETE' }); addLog([{ ok: 1, t: `ลบแถว AP ประเภท ${p.type} · ${p.bu} · ${ap01Int(p.ids.length)} รายการ (งวด ${p.period.replace('-', '.')})` }]); }
+      catch (e) { addLog([{ ok: 0, t: `ลบ ${p.bu} ประเภท ${p.type} ไม่สำเร็จ: ${e.message || e}` }]); }
+    }
+    try { broadcastWs('vat_ap0105_updated', { period }); } catch (_) {} await loadAgg();
+  };
+  const dupAct = async (i, act) => {
+    const g = dups[i]; if (!g) return; setDups((p) => p.filter((_, ix) => ix !== i));
+    if (act === 'rep') await persist(g.items.map((x) => x.nw), true);
+  };
+  const dupAll = async (act) => { const all = dups; setDups([]); if (act === 'rep') await persist(all.flatMap((g) => g.items.map((x) => x.nw)), true); };
+  // ── Zone B ──
+  const fmtD = (iso) => { if (!iso) return ''; const d = new Date(iso); return Number.isNaN(d.getTime()) ? String(iso).slice(0, 10) : `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`; };
+  const rows = React.useMemo(() => {
+    if (!ctx || !agg) return [];
+    // MARKER_AP0105_ALL_BU_ROWS_V1 -- แถวขึ้นจาก BU ที่ผูกกับ User (My Job) / Active BU ทั้งหมด (All Job) แม้ยังไม่มีข้อมูล AP (แสดง 0/5) ไม่ใช่เฉพาะ BU ที่มีข้อมูลแล้ว
+    const buList = [...new Set([...ctx.comps.map((x) => x.bu), ...Object.keys(agg)])].filter((bu) => ctx.byBu[bu] && getVatWatchlistEffectiveStatus(ctx.byBu[bu]) === 'active'); // MARKER_AP0105_ACTIVE_ONLY_V1 -- แสดงเฉพาะ BU ที่เป็น Active ตามกฎ VAT Watchlist (ไม่เอา Inactive / Unclaim / Out of Scope)
+    return buList.sort().map((bu) => {
+      const comp = ctx.byBu[bu]; const a = agg[bu] || { sets: new Set(), tt: {}, exp: null }; const cnt = {}; const al = ap01Allowed(comp);
+      Object.entries(a.tt).forEach(([cls, n]) => { const e = ap01EffType(cls, comp); if (e) cnt[e] = (cnt[e] || 0) + n; });
+      // MARKER_AP0105_EXPIRE_COL_V1 -- Expire (ใช้ร่วมกันทั้ง AP01-AP05 และ Input Reconcile): นับ N วันหลังปิด Period ; งวดที่ยังเปิดอยู่ยังไม่เริ่มนับ
+      const periodOpen = !!(ctx.last ? period > ctx.last : true); let expDate = null; // MARKER_AP0105_RETENTION_30D_V1
+      if (!periodOpen && a.exp) { const d = new Date(a.exp); if (!Number.isNaN(d.getTime())) { d.setDate(d.getDate() + AP01_RETENTION_DAYS); expDate = d; } }
+      const inc = comp.vat_watchlist_incomplete_to || null;
+      const miss = []; { const lack = AP01_NEED.filter((x) => !a.sets.has(x)); if (lack.length) miss.push(`AP ยังไม่ครบ (ขาด ${lack.join(', ')})`); } if (!inc) miss.push('ยังไม่มีข้อมูล Incomplete');
+      return { bu, comp, name: comp['ENGLISH COMPANY NAME'] || comp['COMPANY NAME'] || '', prep: comp['PREPARE BY'] || '', sets: a.sets, cnt, al, inc, miss, expDate, periodOpen, hasData: a.sets.size > 0, ready: miss.length === 0 };
+    });
+  }, [ctx, agg]);
+  const setsIn = new Set(); Object.values(agg || {}).forEach((o) => o.sets.forEach((x) => setsIn.add(x))); // MARKER_AP0105_STATUS_3STATE_V1 -- ชุด AP ที่มีไฟล์เข้าแล้วใน Period นี้ (ทุก BU) : เขียว = BU นี้มีข้อมูล · แดง = ไฟล์เข้าแล้วแต่ BU นี้ไม่มีข้อมูลจริง · เทา = ยังไม่มีไฟล์เข้า
+  const inpHas = (bu) => inpBus.has(String(bu || '').toUpperCase());
+  const rowsR = rows.map((r) => { const m = inpHas(r.bu) ? r.miss : [...r.miss, 'ยังไม่มีข้อมูล Input Reconcile']; return { ...r, miss: m, ready: m.length === 0 }; }); // MARKER_AP0105_READY_NEEDS_INPUT_V1 -- Reconcile กดได้ต่อเมื่อมี AP01+AP05 + Incomplete + Input Reconcile ครบ
+  const shown = rowsR.filter((r) => ((scope === 'all' && canAll) || (monSet && monSet.has(r.bu))) &&(!onlyReady || r.ready) && (!prepF || r.prep === prepF) && (!q.trim() || `${r.bu} ${r.name} ${r.prep}`.toLowerCase().includes(q.trim().toLowerCase())));
+  const mine = rowsR.filter((r) => monSet && monSet.has(r.bu)); // MARKER_AP0105_PROFILE_CARD_V1 -- สรุปบนการ์ด Profile (เฉพาะ BU ที่ Monitor)
+  if (view) return <Ap0105ReconcileView bu={view.bu} comp={ctx && ctx.byBu[view.bu]} period={period} onBack={() => setView(null)} />;
+  const box = { background: '#fff', border: '0.5px solid #ddd', borderRadius: 12, boxSizing: 'border-box', padding: '14px 16px' };
+  const tab = (k, l) => <div onClick={() => setMode(k)} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', borderRadius: '8px 8px 0 0', border: '1px solid #e3e6ea', borderBottom: mode === k ? `2px solid ${AP01_NAVY}` : '1px solid #e3e6ea', background: mode === k ? '#fff' : '#f6f8fa', color: mode === k ? AP01_NAVY : '#6b778c', marginRight: 4 }}>{l}</div>;
+  const th = { textAlign: 'left', padding: '7px 10px', fontSize: 12, color: AP01_NAVY, background: '#e8f0fb', position: 'sticky', top: 0, whiteSpace: 'nowrap', zIndex: 1 };
+  const td = { padding: '7px 10px', fontSize: 12.5, borderTop: '1px solid #eef0f3', whiteSpace: 'nowrap' };
+  const pill = (on, l, k) => <span onClick={() => { setScope(k); setPrepF(''); }} style={{ padding: '5px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', borderRadius: 8, border: `1px solid ${on ? AP01_NAVY : '#d0d7de'}`, background: on ? AP01_NAVY : '#fff', color: on ? '#fff' : '#555' }}>{l}</span>;
+  return (
+    <div style={{ padding: 24, height: '100%', boxSizing: 'border-box', overflow: 'auto', background: '#f5f7fa', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', padding: '8px 18px', borderLeft: '4px solid #0f7a6b', background: '#fff', borderRadius: '4px 12px 12px 4px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', flexShrink: 0 }}>{/* MARKER_AP0105_PAGE_HEADER_V1 -- Header หน้า (สไตล์เดียวกับ VAT Watchlist Dashboard) */}
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', color: '#0f7a6b' }}>VAT CONTROLLER</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: AP01_NAVY, lineHeight: 1.25 }}>VAT <span style={{ color: '#0f7a6b' }}>Reconcile</span> AP01-AP05</div>
+          <div style={{ fontSize: 12, color: '#7a8696', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" title="รีเฟรชข้อมูล" onClick={() => { ap01LoadCtx(true).then(setCtx).catch(() => {}); loadAgg(); }} style={{ width: 18, height: 18, padding: 0, border: '1px solid #cfd8e3', borderRadius: 4, background: '#eef4fb', color: AP01_NAVY, cursor: 'pointer', fontSize: 11, lineHeight: 1 }}>⟳</button>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: '#1a9e5c', display: 'inline-block' }} />Live</span>
+            <span>|</span><span>Period: {period || '—'}</span><span>|</span><span>อัปเดตล่าสุด: {lastUpd ? `${String(lastUpd.getHours()).padStart(2, '0')}:${String(lastUpd.getMinutes()).padStart(2, '0')}` : '—'}</span>
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap', flexShrink: 0 }}>{/* MARKER_AP0105_PROFILE_CARD_V1 -- Zone A แบ่ง 2 ฝั่ง: ซ้าย = ช่องโยนไฟล์ · ขวา = การ์ด Profile User */}
+      <div style={{ ...box, flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', padding: '10px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+          <div style={{ display: 'flex', borderBottom: '1px solid #e3e6ea', flex: 1 }}>{tab('file', '📎 แนบไฟล์ / ลากไฟล์')}{tab('text', '📋 วาง Text จาก Excel / Notepad')}</div>
+        </div>
+        {mode === 'file' ? (
+          <div tabIndex={0} onPaste={(e) => { const f = e.clipboardData && e.clipboardData.files; if (f && f.length) { e.preventDefault(); handleFiles(f); } else { const t = e.clipboardData && e.clipboardData.getData('text/plain'); if (t && t.trim()) { e.preventDefault(); handleText(t); } } }}
+            onDrop={(e) => { e.preventDefault(); setDrag(false); handleFiles(e.dataTransfer.files); }} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onClick={() => inputRef.current && inputRef.current.click()}
+            style={{ flex: 1, minHeight: 84, border: `1.5px dashed ${drag ? AP01_NAVY : '#9db4d3'}`, background: drag ? '#eef4fb' : '#fff', borderRadius: 12, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', textAlign: 'center', padding: 16, outline: 'none' }}>
+            <input ref={inputRef} type="file" multiple style={{ display: 'none' }} onChange={(e) => { handleFiles(e.target.files); e.target.value = ''; }} />
+            <div style={{ fontSize: 15, fontWeight: 600, color: AP01_NAVY, marginBottom: 4 }}>ลากไฟล์มาวาง หรือคลิกเพื่อเลือกไฟล์</div>
+            <div style={{ fontSize: 12.5, color: '#666' }}>AP01-AP05 · Input Vat Reconcile · Incomplete — ระบบแยกชนิดไฟล์ให้เอง โยนได้ทีละหลายไฟล์</div>
+            <div style={{ marginTop: 4, fontSize: 12, color: '#666', background: '#f2f5f9', borderRadius: 8, padding: '2px 10px' }}>หรือกด Ctrl+V เพื่อวางไฟล์/ข้อมูลจากคลิปบอร์ดโดยตรง</div>
+          </div>
+        ) : (
+          <textarea onPaste={(e) => { const t = e.clipboardData && e.clipboardData.getData('text/plain'); if (t && t.trim()) { e.preventDefault(); handleText(t); } }} readOnly value="" placeholder="คลิกที่นี่แล้ววาง (Ctrl+V) ข้อมูลที่ Copy จาก Excel หรือ Notepad — ระบบนำเข้าให้อัตโนมัติ"
+            style={{ flex: 1, width: '100%', minHeight: 84, boxSizing: 'border-box', fontFamily: 'Consolas, monospace', fontSize: 12, padding: 12, border: '1.5px dashed #9db4d3', borderRadius: 12, resize: 'none' }} />
+        )}
+        {busy && <div style={{ marginTop: 10, fontSize: 12.5, color: AP01_NAVY, fontWeight: 600 }}>⏳ {busy}</div>}
+        {dups.length > 0 && (
+          <div style={{ marginTop: 10, border: '1px solid #c9d3e0', background: '#f6f9fd', borderRadius: 10, padding: '10px 12px' }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: AP01_NAVY, marginBottom: 6 }}>พบข้อมูลซ้ำ {dups.length} ไฟล์ — เลือกว่าจะทำอย่างไร</div>
+            {dups.map((g, i) => (
+              <div key={`${g.file}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', borderTop: i ? '1px solid #e3e9f1' : 'none', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600, fontSize: 12.5 }}>{g.file}</span>
+                <span style={{ flex: 1, fontSize: 12, color: '#6b778c', minWidth: 200 }}>{g.items.map((x) => `${x.nw.ap} · ${x.nw.bu} (ใหม่ ${ap01Int(x.nw.n)} / เดิม ${ap01Int(x.old.n)} จาก ${x.old.file})`).join(' · ')}</span>
+                <button type="button" style={ap01Btn()} onClick={() => dupAct(i, 'rep')}>แทนที่ของเดิม</button><button type="button" style={ap01Btn()} onClick={() => dupAct(i, 'skip')}>ข้าม (ใช้ของเดิม)</button>
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 6 }}><button type="button" style={ap01Btn()} onClick={() => dupAll('rep')}>แทนที่ทั้งหมด</button><button type="button" style={ap01Btn()} onClick={() => dupAll('skip')}>ข้ามทั้งหมด</button></div>
+          </div>
+        )}
+        {/* MARKER_AP0105_NO_INLINE_LOG_V1 -- ผลนำเข้า/ข้อผิดพลาดทั้งหมดดูใน Popup ไม่แสดงบนหน้านี้ */}
+        {resultPop && <Ap0105ResultModal res={resultPop} onClose={() => (resultPop.mode === 'preview' ? cancelSave() : setResultPop(null))} onConfirm={confirmSave} onCancel={cancelSave} />}
+      </div>
+      <div style={{ ...box, flex: '0 0 480px', display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', background: AP01_NAVY, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, fontWeight: 700, flexShrink: 0 }}>{String(userName || '?').trim().charAt(0).toUpperCase()}</div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: AP01_NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userName || '—'}</div>
+            <div style={{ fontSize: 11, color: '#6b778c', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`Prepare by: ${prepName || '—'}`}>{isOwner ? 'Owner' : isAdmin ? 'Admin' : 'User'} · {prepName || '—'}</div>
+          </div>
+          <select value={period} onChange={(e) => setPeriod(e.target.value)} title="Period" style={{ padding: '5px 8px', fontSize: 12.5, border: '1px solid #ccd5e0', borderRadius: 7, background: '#fff' }}>{(periodList.length ? periodList : (ctx ? ctx.periods : [])).map((p) => <option key={p} value={p}>{p.replace('-', '.')}{ctx && p === ctx.cur ? ' (เปิดอยู่)' : ''}</option>)}</select>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+          {[['BU ที่ Monitor', 'BU ที่ Monitor', mine.length], ['AP01+AP05 ครบ', 'BU ที่ AP01 และ AP05 ครบ', mine.filter((r) => AP01_NEED.every((x) => r.sets.has(x))).length], ['พร้อม Reconcile', 'พร้อม Reconcile', mine.filter((r) => r.ready).length], ['ใกล้หมดอายุ ≤7 วัน', 'ใกล้หมดอายุ ≤7 วัน', mine.filter((r) => r.expDate && Math.ceil((r.expDate - Date.now()) / 86400000) <= 7).length]].map(([l, tip, v]) => (
+            <div key={l} title={tip} style={{ background: '#f2f5f9', borderRadius: 8, padding: '4px 8px' }}><div style={{ fontSize: 10.5, color: '#6b778c' }}>{l}</div><div style={{ fontSize: 17, fontWeight: 700, color: AP01_NAVY, lineHeight: 1.2 }}>{ap01Int(v)}</div></div>
+          ))}
+        </div>
+        <button type="button" onClick={() => setShowCfg(true)} title={monitor ? 'กำลังใช้รายการที่เลือกเอง' : 'ใช้ BU ที่ผูกกับคุณ (Prepare by / ติ๊กดู Progress) · All Job ไม่ถูกกรอง'} style={{ ...ap01Btn(), padding: '5px 12px', marginTop: 'auto' }}>⚙ Config BU ที่ต้องการ Monitor{monitor ? ` (${ap01Int(monitor.length)})` : ''}</button>
+      </div>
+      </div>
+      <div style={{ ...box, flex: 1, minHeight: 320, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          {pill(scope === 'mine', 'My Job', 'mine')}{canAll && pill(scope === 'all', 'All Job', 'all')}
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา BU / ชื่อบริษัท / Prepare by" style={{ width: 260, padding: '7px 10px', fontSize: 12.5, border: '1px solid #ccd5e0', borderRadius: 8 }} />
+          {scope === 'all' && <select value={prepF} onChange={(e) => setPrepF(e.target.value)} title="Filter Prepare by" style={{ padding: '7px 10px', fontSize: 12.5, border: '1px solid #ccd5e0', borderRadius: 8, background: '#fff' }}><option value="">Prepare by: ทั้งหมด</option>{[...new Set(rows.map((r) => r.prep).filter(Boolean))].sort().map((n) => <option key={n} value={n}>{n}</option>)}</select>}
+          <label style={{ fontSize: 12.5, color: '#555', display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}><input type="checkbox" checked={onlyReady} onChange={(e) => setOnlyReady(e.target.checked)} />เฉพาะที่พร้อม Reconcile</label>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: '#8b95a1' }}>{ap01Int(shown.length)} BU · Period {period ? period.replace('-', '.') : '—'}</span>
+        </div>
+        <div className="ap01-noscroll" style={{ flex: 1, minHeight: 0, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: 8, scrollbarWidth: 'none', msOverflowStyle: 'none' }}>{/* MARKER_AP0105_HIDE_SCROLL_V1 -- ซ่อนแถบ Scroll (ยังเลื่อนด้วยเมาส์/ทัชแพดได้) */}<style>{'.ap01-noscroll::-webkit-scrollbar{display:none}'}</style>
+          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+            <thead><tr><th rowSpan={2} style={th}>BU</th><th rowSpan={2} style={th}>ชื่อบริษัท (English)</th><th colSpan={2} style={{ ...th, textAlign: 'center', borderBottom: '1px solid #cfd9e8' }}>Amagno</th><th rowSpan={2} style={{ ...th, textAlign: 'center' }} title="เชื่อมสถานะ Input Reconcile ในขั้นถัดไป">Input Rec.</th><th rowSpan={2} style={th} title="ใช้ร่วมกันทั้ง AP01-AP05 และ Input Reconcile — นับ 45 วันหลังปิด Period">Expire</th><th rowSpan={2} style={{ ...th, textAlign: 'center' }}>Incomplete</th><th rowSpan={2} style={th}>Last Incomplete Date</th>{['N', 'A', 'T', 'F', 'M'].map((t) => <th key={t} rowSpan={2} style={{ ...th, textAlign: 'center' }}>{t}</th>)}<th rowSpan={2} style={{ ...th, textAlign: 'center' }}>Action</th></tr><tr>{AP01_NEED.map((x) => <th key={x} style={{ ...th, top: 30, textAlign: 'center' }} title={`${x} — เขียว = มีข้อมูล · แดง = ไฟล์เข้าแล้วแต่ไม่มีข้อมูลจริง · เทา = ยังไม่มีไฟล์เข้า`}>{x}</th>)}</tr></thead>
+            <tbody>
+              {agg === null || !ctx || myBus === null || (scope === 'all' && !aggFull) ? <tr><td colSpan={14} style={{ ...td, textAlign: 'center', color: '#8b95a1', padding: 28 }}>กำลังโหลด…</td></tr>
+                : shown.length === 0 ? <tr><td colSpan={14} style={{ ...td, textAlign: 'center', color: '#8b95a1', padding: 28 }}>{scope === 'all' ? 'ไม่พบ BU' : 'ยังไม่มี BU ที่ Monitor (กด ⚙ Config BU ที่การ์ด Profile เพื่อเลือก หรือผูกที่ Prepare by ใน User/Business Unit)'}</td></tr>
+                : shown.map((r) => (
+                  <tr key={r.bu}>
+                    <td style={{ ...td, fontWeight: 700, color: AP01_NAVY }}>{r.bu}</td><td style={td}>{r.name}</td>
+                    {AP01_NEED.map((x) => <td key={x} onContextMenu={(e) => openMenu(e, r.bu, x, r.sets.has(x))} style={{ ...td, textAlign: 'center' }}>{ap01Dot(r.sets.has(x) ? '#1a7f37' : setsIn.has(x) ? '#cf222e' : '#c0c8d3', `${x}: ${r.sets.has(x) ? 'มีข้อมูลแล้ว' : setsIn.has(x) ? 'มีไฟล์เข้าแล้ว แต่ BU นี้ไม่มีข้อมูลจริง' : 'ยังไม่มีไฟล์เข้า'}`)}</td>)} {/* MARKER_AP0105_HEADER_2TIER_V1 */}
+                    <td onContextMenu={(e) => openMenu(e, r.bu, 'INPUT', inpHas(r.bu))} style={{ ...td, textAlign: 'center' }}>{ap01Dot(inpHas(r.bu) ? '#1a7f37' : '#c0c8d3', inpHas(r.bu) ? 'มีข้อมูล Input Reconcile แล้ว' : 'ยังไม่มีข้อมูล Input Reconcile')}</td>
+                    <td style={td} title={r.expDate ? `หมดอายุ ${r.expDate.toLocaleDateString('en-GB')}` : ''}>{!r.hasData ? '—' : r.periodOpen ? <span style={{ color: '#6b778c' }}>Period ล่าสุด (ไม่ลบ)</span> : r.expDate ? (() => { const left = Math.ceil((r.expDate - Date.now()) / 86400000); return <>{`${String(r.expDate.getDate()).padStart(2, '0')}-${String(r.expDate.getMonth() + 1).padStart(2, '0')}-${r.expDate.getFullYear()}`} <span style={{ color: left <= 7 ? '#cf222e' : '#6b778c', fontSize: 11.5 }}>({left > 0 ? `อีก ${left} วัน` : 'ครบกำหนดลบ'})</span></>; })() : '—'}</td>
+                    <td style={{ ...td, textAlign: 'center' }}>{r.inc ? ap01Dot(AP01_NAVY, 'มีข้อมูล Incomplete') : ap01Dot('#c0c8d3', 'ยังไม่มี Incomplete')}</td><td style={td}>{r.inc ? fmtD(r.inc) : '—'}</td>
+                    {['N', 'A', 'T', 'F', 'M'].map((t) => <td key={t} style={{ ...td, textAlign: 'center', color: '#c0c8d3' }}>{(r.sets.has('AP01') || r.sets.has('AP05')) && inpHas(r.bu) ? ((r.cnt[t] || 0) > 0 ? ap01Dot('#1a7f37', `${t}: มีข้อมูลแล้ว ${ap01Int(r.cnt[t])} รายการ`) : r.al.includes(t) ? ap01Dot('#cf222e', `${t}: AP และ Input Reconcile เข้าแล้ว แต่ไม่มีข้อมูลจริง`) : '—') : ((r.cnt[t] || 0) > 0 || r.al.includes(t) ? ap01Dot('#c0c8d3', `${t}: รอข้อมูลให้ครบทั้ง 2 อย่าง (AP01 หรือ AP05 + Input Reconcile)`) : '—')}</td>)} {/* MARKER_AP0105_TT_STATUS_DOT_V1 -- N/M/A/T/F แสดงสถานะเขียว(มีข้อมูล)/แดง(ต้องมีแต่ยังไม่มี)/—(BU ไม่ได้ใช้ประเภทนี้) แทนตัวเลข */}
+                    <td style={{ ...td, textAlign: 'center' }}><button type="button" disabled={!r.ready} title={r.ready ? 'เปิดหน้า Reconcile' : `ยังไม่พร้อม: ${r.miss.join(' · ')}`} onClick={() => setView({ bu: r.bu })} style={{ ...ap01Btn(r.ready), padding: '4px 14px', background: r.ready ? AP01_NAVY : '#fff', color: r.ready ? '#fff' : AP01_NAVY }}>Reconcile</button></td>
+                  </tr>))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {showCfg && ctx && <Ap0105MonitorModal comps={ctx.comps.filter((c) => getVatWatchlistEffectiveStatus(c) === 'active')} defaultSet={myBus || new Set()} value={monitor} onClose={() => setShowCfg(false)} onSave={(l) => { saveMonitor(l); setShowCfg(false); }} />}
+      {ctxMenu && <div onClick={(e) => e.stopPropagation()} style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y, zIndex: 9999, background: '#fff', border: '1px solid #cfd9e8', borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.18)', padding: 4, minWidth: 230 }}><button type="button" disabled={!ctxMenu.has} onClick={() => { const m = ctxMenu; setCtxMenu(null); doDelete(m.bu, m.kind); }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', border: 'none', background: 'transparent', fontSize: 13, color: ctxMenu.has ? '#cf222e' : '#9aa5b4', cursor: ctxMenu.has ? 'pointer' : 'not-allowed' }}>🗑 ลบข้อมูล {ctxMenu.kind === 'INPUT' ? 'Input Reconcile' : ctxMenu.kind} · {ctxMenu.bu}{ctxMenu.has ? '' : ' (ไม่มีข้อมูล)'}</button></div>}
+      {clearPlan && <Ap0105ClearModal plan={clearPlan} onClose={() => setClearPlan(null)} onConfirm={confirmClear} />}
+      {ivrPop && <Ap0105InputReconModal pop={ivrPop} onConfirm={ivrConfirm} onClose={() => { ivrRef.current = null; setIvrPop(null); }} />}
+      {incFiles && <VatWatchlistUploadModal initialFiles={incFiles} plain onClose={() => { setIncFiles(null); ap01LoadCtx(true).then(setCtx).catch(() => {}); try { broadcastWs('vat_suspense_updated', { kind: 'incomplete' }); } catch (_) {} }} />}
+      {inpFile && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
+          <div style={{ background: '#fff', borderRadius: 12, width: 'min(1100px, 94vw)', maxHeight: '88vh', overflow: 'auto', padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}><b style={{ color: AP01_NAVY }}>Input Vat Reconcile · {inpFile.name}{inpQueue.length ? ` (เหลืออีก ${inpQueue.length} ไฟล์)` : ''}</b><button type="button" style={ap01Btn()} onClick={() => setInpFile(null)}>ปิด</button></div>
+            <VatReconcileSystem initialFile={inpFile} onCommitSuccess={(d) => { onInputCommitted(d, inpFile); }} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// MARKER_AP0105_MONITOR_CFG_V1 -- เลือก BU ที่ต้องการ Monitor (ใช้กับแท็บ My Job + สรุปในการ์ด Profile) · เก็บต่อ User ในเบราว์เซอร์นี้
+function Ap0105MonitorModal({ comps, defaultSet, value, onSave, onClose }) {
+  const list = React.useMemo(() => [...(comps || [])].filter((c) => c && c.bu).sort((a, b) => String(a.bu).localeCompare(String(b.bu))), [comps]);
+  const [sel, setSel] = React.useState(() => new Set(value || [...defaultSet]));
+  const [q, setQ] = React.useState('');
+  const vis = list.filter((c) => !q.trim() || `${c.bu} ${c['ENGLISH COMPANY NAME'] || ''} ${c['PREPARE BY'] || ''}`.toLowerCase().includes(q.trim().toLowerCase()));
+  const tog = (bu) => setSel((p) => { const n = new Set(p); if (n.has(bu)) n.delete(bu); else n.add(bu); return n; });
+  const setMany = (arr, on) => setSel((p) => { const n = new Set(p); arr.forEach((c) => (on ? n.add(c.bu) : n.delete(c.bu))); return n; });
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, width: 'min(640px, 94vw)', maxHeight: '86vh', display: 'flex', flexDirection: 'column', padding: 16, gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}><b style={{ color: AP01_NAVY, fontSize: 15 }}>⚙ Config BU ที่ต้องการ Monitor</b><button type="button" style={ap01Btn()} onClick={onClose}>ปิด</button></div>
+        <div style={{ fontSize: 12, color: '#6b778c' }}>เลือก BU ที่จะแสดงในแท็บ My Job และนับในสรุปด้านบน — เลือกได้จาก Active BU ทั้งหมด (ป้าย “ผูกอยู่” คือ BU ที่ผูกกับคุณอยู่แล้ว)</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหา BU / ชื่อบริษัท / Prepare by" style={{ flex: 1, minWidth: 180, padding: '7px 10px', fontSize: 12.5, border: '1px solid #ccd5e0', borderRadius: 8 }} />
+          <button type="button" style={ap01Btn()} onClick={() => setMany(vis, true)}>เลือกที่เห็น</button>
+          <button type="button" style={ap01Btn()} onClick={() => setMany(vis, false)}>ล้างที่เห็น</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 200, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: 8 }}>
+          {vis.length === 0 ? <div style={{ padding: 24, textAlign: 'center', color: '#8b95a1', fontSize: 12.5 }}>ไม่พบ BU</div> : vis.map((c) => (
+            <label key={c.bu} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', borderTop: '1px solid #eef0f3', cursor: 'pointer', fontSize: 12.5 }}>
+              <input type="checkbox" checked={sel.has(c.bu)} onChange={() => tog(c.bu)} />
+              <b style={{ color: AP01_NAVY, minWidth: 54 }}>{c.bu}</b>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c['ENGLISH COMPANY NAME'] || c['COMPANY NAME'] || ''}</span>
+              <span style={{ color: '#8b95a1', fontSize: 11.5 }}>{c['PREPARE BY'] || ''}</span>
+              {defaultSet.has(c.bu) && <span style={{ fontSize: 10.5, padding: '1px 7px', borderRadius: 10, background: '#e8f0fb', color: AP01_NAVY }}>ผูกอยู่</span>}
+            </label>
+          ))}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: '#6b778c' }}>เลือกแล้ว {ap01Int(sel.size)} BU</span>
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button type="button" style={ap01Btn()} onClick={() => onSave(null)} title="กลับไปใช้ BU ที่ผูกกับคุณ">ใช้ค่าเริ่มต้น (BU ที่ผูกไว้)</button>
+            <button type="button" style={{ ...ap01Btn(), background: AP01_NAVY, color: '#fff' }} onClick={() => onSave([...sel])}>บันทึก</button>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// หน้า Reconcile (เปิดจากปุ่ม Reconcile ใน Zone B) — ฝั่ง AP01-AP05 แยกตาม Tax Type · ฝั่ง Input Vat ต่อข้อมูลในขั้นถัดไป
+function Ap0105ReconcileView({ bu, comp, period, onBack }) {
+  const [rows, setRows] = React.useState(null);
+  React.useEffect(() => { let off = false; (async () => { try { const r = await apiFetch(`/${AP01_TABLE}?eq_period=${encodeURIComponent(period)}&eq_bu=${encodeURIComponent(bu)}&limit=200000`); if (!off) setRows(Array.isArray(r) ? r : []); } catch (_) { if (!off) setRows([]); } })(); return () => { off = true; }; }, [bu, period]);
+  const cur = rows || []; // MARKER_AP0105_RECONCILE_BY_BU_V1 -- แยกตาม BU อย่างเดียว ไม่แยกแท็บ Tax Type
+  const sum = (k) => cur.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  const bySet = AP01_SETS.map((s) => ({ s, n: cur.filter((r) => r.ap_set === s).length }));
+  const exportXlsx = () => {
+    const data = cur.map((r) => ({ 'AP': r.ap_set, 'BU': r.bu, 'BU Branch': r.bu_branch_code, 'Vendor Code': r.supplier_code, 'Vendor Name': r.supplier_name, 'Tax Invoice No.': r.tax_invoice_number, 'Tax Invoice Date': r.doc_date ? String(r.doc_date).slice(0, 10) : '', 'Total excl. VAT': Number(r.gross_value) || 0, 'VAT': Number(r.vat_value) || 0, 'Index Invoice': r.invoice_ref, 'OFIN': r.ofin }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), `${bu}`.slice(0, 31)); XLSX.writeFile(wb, `Reconcile_AP01-05_${bu}_${period}.xlsx`);
+  };
+  const th = { textAlign: 'left', padding: '7px 10px', fontSize: 12, color: AP01_NAVY, background: '#e8f0fb', position: 'sticky', top: 0, whiteSpace: 'nowrap', zIndex: 1 };
+  const td = { padding: '6px 10px', fontSize: 12.5, borderTop: '1px solid #eef0f3', whiteSpace: 'nowrap' };
+  const card = (l, v, sub) => <div style={{ flex: '1 1 180px', background: '#fff', border: '1px solid #dbe3ee', borderRadius: 10, padding: '10px 14px' }}><div style={{ fontSize: 11.5, color: '#6b778c' }}>{l}</div><div style={{ fontSize: 19, fontWeight: 700, color: AP01_NAVY }}>{v}</div>{sub && <div style={{ fontSize: 11.5, color: '#8b95a1' }}>{sub}</div>}</div>;
+  return (
+    <div style={{ padding: 24, height: '100%', boxSizing: 'border-box', overflow: 'auto', background: '#f5f7fa', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <button type="button" style={ap01Btn()} onClick={onBack}>← กลับ</button>
+        <div style={{ fontSize: 16, fontWeight: 700, color: AP01_NAVY }}>Reconcile AP01-AP05 · {bu}</div>
+        <div style={{ fontSize: 12.5, color: '#6b778c' }}>{(comp && (comp['ENGLISH COMPANY NAME'] || comp['COMPANY NAME'])) || ''} · Period {String(period).replace('-', '.')}</div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button type="button" style={ap01Btn(cur.length > 0)} disabled={!cur.length} onClick={exportXlsx}>Export Excel</button>
+          <button type="button" disabled title="เปิดใช้เมื่อเชื่อมข้อมูล Input Vat เพื่อเทียบส่วนต่างแล้ว" style={{ ...ap01Btn(false), background: '#b6bfcb', color: '#fff', border: 'none' }}>Confirm</button>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        {card('รายการ AP', rows === null ? '…' : ap01Int(cur.length), bySet.filter((x) => x.n).map((x) => `${x.s}: ${ap01Int(x.n)}`).join(' · ') || '—')}
+        {card('Total excl. VAT (AP)', ap01Fmt(sum('gross_value')))}
+        {card('VAT (AP)', ap01Fmt(sum('vat_value')))}
+        {card('Input Vat / ส่วนต่าง', 'รอเชื่อมข้อมูล', 'เทียบกับ Input Vat Reconcile ในขั้นถัดไป')}
+      </div>
+      <div style={{ flex: 1, minHeight: 240, overflow: 'auto', border: '1px solid #e3e6ea', borderRadius: 8, background: '#fff' }}>
+        <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+          <thead><tr>{['AP', 'BU Branch', 'Vendor Code', 'Vendor Name', 'Tax Invoice No.', 'Date', 'Total excl. VAT', 'VAT', 'Index Invoice', 'OFIN'].map((h, i) => <th key={h} style={{ ...th, textAlign: i === 6 || i === 7 ? 'right' : 'left' }}>{h}</th>)}</tr></thead>
+          <tbody>{rows === null ? <tr><td colSpan={10} style={{ ...td, textAlign: 'center', padding: 28, color: '#8b95a1' }}>กำลังโหลด…</td></tr> : cur.length === 0 ? <tr><td colSpan={10} style={{ ...td, textAlign: 'center', padding: 28, color: '#8b95a1' }}>ไม่มีรายการของ BU นี้ใน Period นี้</td></tr>
+            : cur.slice(0, 500).map((r) => <tr key={r.id}><td style={td}>{r.ap_set}</td><td style={td}>{r.bu_branch_code}</td><td style={td}>{r.supplier_code}</td><td style={td}>{r.supplier_name}</td><td style={td}>{r.tax_invoice_number}</td><td style={td}>{r.doc_date ? String(r.doc_date).slice(0, 10) : ''}</td><td style={{ ...td, textAlign: 'right' }}>{ap01Fmt(r.gross_value)}</td><td style={{ ...td, textAlign: 'right' }}>{ap01Fmt(r.vat_value)}</td><td style={td}>{r.invoice_ref}</td><td style={td}>{r.ofin}</td></tr>)}</tbody>
+        </table>
+        {cur.length > 500 && <div style={{ padding: '6px 10px', fontSize: 11.5, color: '#8b95a1' }}>แสดง 500 จาก {ap01Int(cur.length)} รายการ — Export Excel เพื่อดูครบ</div>}
+      </div>
+    </div>
+  );
+}
+
+// MARKER_AP0105_UPLOAD_MODAL_V1 -- ปุ่ม Upload Excel ของแท็บ Amagno - Tax Invoice: โยนไฟล์ AP01-AP05 (Reformat + หา BU + ตรวจซ้ำ แล้วบันทึกเหมือนหน้า VAT Reconcile AP01-AP05)
+function Ap0105UploadModal({ onClose, onSaved, username, period }) {
+  const [busy, setBusy] = React.useState(false);
+  const [lines, setLines] = React.useState([]);
+  const run = async (fl) => {
+    const files = Array.from(fl || []); if (!files.length) return; setBusy(true); setLines([]);
+    const out = [];
+    try {
+      const ctx = await ap01LoadCtx(false, true); const per = period || ctx.cur; const bk = await ap01BackupCounts(per);
+      for (const f of files) {
+        try {
+          if (ap01Kind(f.name) !== 'ap') throw new Error('ไม่ใช่ไฟล์ AP01-AP05 (ชื่อไฟล์ต้องขึ้นต้น AP01_ ถึง AP05_)');
+          const st = await ap01Stage(f, null, per, ctx);
+          for (const it of st.items) {
+            const k = `${it.ap}|${it.bu}`; let rep = false;
+            if (bk.has(k)) { const ok = await confirmDialog.confirm(`${it.ap} · ${it.bu} งวด ${per.replace('-', '.')} มีข้อมูลใน Backup แล้ว ${ap01Int(bk.get(k))} รายการ\nต้องการแทนที่ด้วยไฟล์ ${f.name} (${ap01Int(it.n)} รายการ) หรือไม่`); if (!ok) { out.push(`ข้าม ${it.ap} · ${it.bu}`); continue; } rep = true; }
+            await ap01Save(it, username, rep); bk.set(k, it.n); out.push(`✓ ${it.ap} · ${it.bu} · ${ap01Int(it.n)} รายการ`);
+          }
+          if (st.fixedN) out.push(`✎ ${f.name}: ยอดกับ VAT สลับ/รวม VAT ${ap01Int(st.fixedN)} แถว ระบบแก้ให้ถูกแล้ว (กฎ VAT = 7%)`);
+          if (st.checkN) out.push(`⚠ ${f.name}: VAT ไม่เข้ากฎ 7% ${ap01Int(st.checkN)} แถว (ไม่ได้แก้ ควรตรวจ)`);
+          if (st.bad.length) out.push(`⚠ ${f.name}: BU ไม่อยู่ใน Active ${ap01Int(st.bad.reduce((a, x) => a + x.n, 0))} แถว (บันทึกแล้ว ทำเครื่องหมาย BU State ไว้ — ดูที่แท็บ Amagno)`);
+        } catch (e) { out.push(`✕ ${f.name}: ${e.message || e}`); }
+      }
+      try { broadcastWs('vat_ap0105_updated', { period: per }); } catch (_) {}
+    } catch (e) { out.push(`✕ ${e.message || e}`); }
+    setLines(out); setBusy(false); onSaved();
+  };
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
+      <div style={{ background: 'white', borderRadius: '12px', width: '520px', maxHeight: '85vh', overflowY: 'auto', padding: '20px' }}>
+        <div style={{ fontSize: '15px', fontWeight: '500', marginBottom: '10px' }}>Upload Excel — AP01-AP05</div>
+        <div style={{ fontSize: '12px', color: '#888', marginBottom: '14px' }}>ระบบ Reformat หาBU (Group Range → Segment 3 → Branch list) และตรวจข้อมูลซ้ำให้ · งวด {String(period || '').replace('-', '.')}</div>
+        <input type="file" accept=".xlsx,.xls,.csv" multiple disabled={busy} onChange={(e) => { run(e.target.files); e.target.value = ''; }} style={{ width: '100%', fontSize: '12.5px' }} />
+        {busy && <div style={{ fontSize: 12, color: '#1a3a5c', marginTop: 10 }}>กำลังประมวลผล…</div>}
+        {lines.map((l, i) => <div key={i} style={{ fontSize: 12, marginTop: 4, color: l.startsWith('✕') || l.startsWith('⚠') ? '#cf222e' : '#1a3a5c' }}>{l}</div>)}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}><button onClick={onClose} disabled={busy} style={{ padding: '7px 16px', fontSize: '13px', border: '0.5px solid #ccc', background: 'white', borderRadius: '8px', cursor: busy ? 'not-allowed' : 'pointer' }}>ปิด</button></div>
+      </div>
+    </div>
+  );
+}
+function VatTaxInvoiceTab({ scope, headerTabs } = {}) {
+  const isAp = scope === 'ap0105'; // MARKER_AP0105_AMAGNO_TAB_V1
   const { userName, currentUser } = useAuth();
   const username = userName || currentUser?.email || 'unknown';
   const [rows, setRows] = React.useState([]);
@@ -26296,6 +27468,26 @@ function VatTaxInvoiceTab() {
   const [showManualForm, setShowManualForm] = React.useState(false);
   const { isOwner: isOwnerTaxInv } = useUserRole(); // MARKER_VATTAXINVOICE_PURGE_MODAL_V1
   const [showPurge, setShowPurge] = React.useState(false);
+  const [apCtx, setApCtx] = React.useState(null); // MARKER_AP0105_AMAGNO_TAB_V1 -- Period/สถานะของแท็บ Amagno
+  const [apPeriod, setApPeriod] = React.useState('');
+  React.useEffect(() => { if (isAp) ap01LoadCtx().then(setApCtx).catch(() => {}); }, [isAp]);
+  React.useEffect(() => subscribeWs(['vat_ap0105_updated'], () => { if (isAp) setPage((p) => p); }), [isAp]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [apPeriods, setApPeriods] = React.useState([]);
+  React.useEffect(() => { if (isAp && apCtx) ap01DataPeriods(apCtx).then(setApPeriods); }, [isAp, apCtx]);
+  const apExpiry = (p) => { if (!apCtx || !p) return ''; return p > (apCtx.last || '') ? 'Period ล่าสุด' : 'ข้อมูลเก่า — เก็บ 30 วัน'; };
+  const [refPop, setRefPop] = React.useState(null); // MARKER_AP0105_INVREF_DETAIL_V1 -- Invoice Ref. หลายตัวในช่องเดียว: แสดงตัวแรก + จำนวนที่เหลือ + ปุ่ม Detail เปิดรายการ
+  const [coNameByBu, setCoNameByBu] = React.useState({}); // MARKER_TAXINV_BUSINESS_NAME_FALLBACK_V1 -- Business Name ว่าง -> จับกับ company_list ตาม BU / Tax ID
+  React.useEffect(() => { let off = false; apiFetch('/company_list').then((res) => { if (off) return; const m = {}; (Array.isArray(res) ? res : []).forEach((c) => { const n = c['ENGLISH COMPANY NAME'] || c['COMPANY NAME'] || ''; if (!n) return; if (c.bu) m['bu:' + String(c.bu).trim().toUpperCase()] = n; const t = String(c['TAX ID'] || '').replace(/\D/g, ''); if (t && !m['tx:' + t]) m['tx:' + t] = n; }); setCoNameByBu(m); }).catch(() => {}); return () => { off = true; }; }, []);
+  const rowsView = React.useMemo(() => (isAp ? rows : rows.map((r) => (r.business_name ? r : { ...r, business_name: coNameByBu['bu:' + String(r.bu || '').trim().toUpperCase()] || coNameByBu['tx:' + String(r.bu_tax_id || '').replace(/\D/g, '')] || r.business_name }))), [rows, coNameByBu, isAp]);
+  const apFormatCell = (row, col) => {
+    if (col.key !== 'invoice_ref') return row[col.key] ?? '';
+    const refs = ap01SplitRefs(row.invoice_ref); if (refs.length <= 1) return refs[0] || '';
+    return (<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>{refs[0]}<span style={{ background: '#e8f0fb', color: AP01_NAVY, borderRadius: 999, padding: '0 7px', fontSize: 11, fontWeight: 600 }}>+{refs.length - 1}</span></span>);
+  };
+  const [apAllCols, setApAllCols] = React.useState(() => { try { return localStorage.getItem('ap0105_all_cols') === '1'; } catch (_) { return false; } });
+  const toggleApCols = () => setApAllCols((v) => { const n = !v; try { localStorage.setItem('ap0105_all_cols', n ? '1' : '0'); } catch (_) {} return n; });
+  const taxCols = React.useMemo(() => (isAp ? (apAllCols ? AP0105_TABLE_COLUMNS : AP0105_TABLE_COLUMNS.filter((c) => !c.more)) : VAT_TAX_INVOICE_COLUMNS), [isAp, apAllCols]); // MARKER_AP0105_NO_FLICKER_V1 -- ต้อง Memo ไม่งั้น fetchRows เปลี่ยนทุก Render -> โหลดวนซ้ำ (หน้ากระพริบ)
+  const taxPath = isAp ? `/${AP01_TABLE}` : '/vat_backup_tax_invoice';
 
   // MARKER_VATTAXINVOICE_PAGINATION_V1 -- แบ่งหน้าฝั่ง Server (limit/offset) + นับจำนวนรวมด้วย count + ค้นหา/กรอง Status ฝั่ง Server
   const [searchDebounced, setSearchDebounced] = React.useState('');
@@ -26306,62 +27498,84 @@ function VatTaxInvoiceTab() {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 400);
     return () => clearTimeout(t);
   }, [search]);
-  React.useEffect(() => { setPage(1); }, [searchDebounced, statusFilter, pageSize]);
+  React.useEffect(() => { setPage(1); }, [searchDebounced, statusFilter, pageSize, apPeriod]);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const fetchRows = React.useCallback(() => {
     setLoading(true);
     const base = new URLSearchParams();
-    if (statusFilter) base.set('eq_status', statusFilter);
+    if (isAp) { // MARKER_AP0105_AMAGNO_TAB_V1
+      if (apPeriod) base.set('eq_period', apPeriod);
+      else if (statusFilter === 'open' && apCtx && apCtx.cur) base.set('eq_period', apCtx.cur);
+      else if (statusFilter === 'closed' && apPeriods.length) { const cl = apPeriods.filter((p) => p <= ((apCtx && apCtx.last) || '')); base.set('in_period', cl.length ? cl.join(',') : '0000-00'); }
+    } else if (statusFilter) base.set('eq_status', statusFilter);
+    else base.set('neq_status', 'ap_recon'); // MARKER_AP0105_AMAGNO_TAB_V1 -- ข้อมูล AP01-AP05 ไม่ปนในตาราง Tax Invoice หลัก
     if (searchDebounced) {
       base.set('search', searchDebounced);
-      base.set('search_cols', VAT_TAX_INVOICE_COLUMNS.map((c) => c.key).join(','));
+      base.set('search_cols', (isAp ? AP0105_TABLE_COLUMNS : VAT_TAX_INVOICE_COLUMNS).map((c) => c.key).join(','));
     }
     const cnt = new URLSearchParams(base); cnt.set('count', 'true');
     const params = new URLSearchParams(base);
-    params.set('select', ['id', 'status', ...VAT_TAX_INVOICE_COLUMNS.map((c) => c.key)].join(','));
+    params.set('select', ['id', ...(isAp ? [] : ['status']), ...taxCols.map((c) => c.key)].join(','));
     params.set('order', 'id.desc');
     params.set('limit', String(pageSize));
     if (page > 1) params.set('offset', String((page - 1) * pageSize));
     Promise.all([
-      apiFetch(`/vat_backup_tax_invoice?${params.toString()}`).then((res) => (Array.isArray(res) ? res : [])).catch(() => []),
-      apiFetch(`/vat_backup_tax_invoice?${cnt.toString()}`).then((r) => Number(r && r.total) || 0).catch(() => 0),
+      apiFetch(`${taxPath}?${params.toString()}`).then((res) => (Array.isArray(res) ? res : [])).catch(() => []),
+      apiFetch(`${taxPath}?${cnt.toString()}`).then((r) => Number(r && r.total) || 0).catch(() => 0),
     ]).then(([rowsRes, totalRes]) => { const vis = statusFilter ? rowsRes : rowsRes.filter((r) => r.status !== 'deleted'); /* MARKER_TAXINV_HIDE_DELETED_V1 -- Delete จาก Full Page = ยืนยันว่าไม่ Match -> ใบหายจากตารางนี้ (ดูได้เมื่อเลือก Status = deleted) */ setRows(vis); setTotal(Math.max(0, totalRes - (rowsRes.length - vis.length))); }).finally(() => setLoading(false));
-  }, [searchDebounced, statusFilter, page, pageSize]);
+  }, [searchDebounced, statusFilter, page, pageSize, isAp, apPeriod, apCtx, apPeriods, taxCols, taxPath]);
   React.useEffect(() => { fetchRows(); }, [fetchRows]);
 
   const statusOptions = React.useMemo(() => Array.from(new Set(['pending', statusFilter, ...rows.map((r) => r.status)].filter(Boolean))).sort(), [rows, statusFilter]);
 
 
   return (
-    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: '16px', fontWeight: '500' }}>Tax Invoice <span style={{ fontSize: '12px', color: '#888', fontWeight: '400' }}>({total.toLocaleString()} รายการ)</span></div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {isOwnerTaxInv && <button type="button" onClick={() => setShowPurge(true)} style={{ padding: '8px 16px', fontSize: '13px', border: '0.5px solid #b3261e', borderRadius: '8px', background: 'white', color: '#b3261e', cursor: 'pointer' }}>ล้างข้อมูล</button>} {/* MARKER_VATTAXINVOICE_PURGE_MODAL_V1 -- Owner Only */}
-          <button type="button" onClick={() => setShowManualForm(true)} style={{ padding: '8px 16px', fontSize: '13px', border: '0.5px solid #1a3a5c', borderRadius: '8px', background: 'white', color: '#1a3a5c', cursor: 'pointer' }}>+ กรอกข้อมูลเอง</button>
-          <button type="button" onClick={() => setShowUpload(true)} style={{ padding: '8px 16px', fontSize: '13px', border: 'none', borderRadius: '8px', background: '#1a3a5c', color: 'white', cursor: 'pointer' }}>Upload Excel</button>
+    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', height: '100%', boxSizing: 'border-box', background: '#f5f6f8' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', padding: '12px 18px', borderLeft: '4px solid #0f7a6b', background: 'white', borderRadius: '4px 12px 12px 4px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}> {/* MARKER_TAXINV_HEADER_PRETTY_V1 -- หัวแบบเดียวกับ Transaction Backup: แถบเขียวซ้าย + ป้ายเล็ก + ชื่อสองสี + Pill */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', width: '100%' }}> {/* MARKER_TAXINV_TITLE_BACK_V1 -- ชื่อหน้าซ้าย แท็บขวา */}
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', color: '#0f7a6b' }}>VAT CONTROLLER</div>
+            <div style={{ fontSize: '22px', fontWeight: 700, color: '#1a3a5c', lineHeight: 1.25 }}>{isAp ? <>Amagno <span style={{ color: '#0f7a6b' }}>Tax Invoice</span></> : <>AR <span style={{ color: '#0f7a6b' }}>Collection</span></>} <span style={{ fontSize: '12px', color: '#7a8696', fontWeight: 500 }}>({total.toLocaleString()} รายการ)</span></div>
+            <div style={{ fontSize: '12px', color: '#7a8696' }}>{isAp ? 'รับเฉพาะข้อมูลจากไฟล์ AP01-AP05 (Report Amagno) · Period ล่าสุดเก็บไว้ · ข้อมูลเก่าเก็บ 30 วันนับจากวันที่โยนไฟล์' : 'รับข้อมูลใบกำกับภาษีจาก AR_Collection, Inbox Excel, กรอกเอง และ Upload Excel · ไม่รวมข้อมูล AP01-AP05'}</div>
+          </div>
+          {headerTabs}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%' }}>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px' }}>
+            {isAp ? (<><option value="">Status: ทั้งหมด</option><option value="open">Period ล่าสุด</option><option value="closed">ข้อมูลเก่า (เก็บ 30 วัน)</option></>) : (<><option value="">Status: ทั้งหมด (รวมที่ปิดแล้ว)</option>
+            {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}</>)}
+          </select>
+          {isAp && (<select value={apPeriod} onChange={(e) => setApPeriod(e.target.value)} style={{ fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px' }}>
+            <option value="">Period: ทั้งหมด</option>
+            {apPeriods.map((p) => <option key={p} value={p}>{p.replace('-', '.')} · {apExpiry(p)}</option>)}
+          </select>)}
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา Tax Invoice / Vendor / BU / Name" style={{ flex: '0 1 380px', minWidth: '200px', fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px', boxSizing: 'border-box' }} />
+          {isAp && <button type="button" onClick={toggleApCols} style={{ fontSize: '12.5px', fontWeight: 600, color: '#0f7a6b', background: '#eaf5f3', border: '1px solid #0f7a6b', borderRadius: '999px', padding: '6px 16px', cursor: 'pointer' }}>{apAllCols ? 'แสดงเฉพาะคอลัมน์หลัก' : `แสดงทุกคอลัมน์ (+${AP0105_TABLE_COLUMNS.filter((c) => c.more).length})`}</button>}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginLeft: 'auto' }}> {/* MARKER_TAXINV_ICON_BUTTONS_V1 -- ปุ่มเป็น Icon (วางเมาส์ดูชื่อได้) */}
+          {isOwnerTaxInv && <button type="button" title="ล้างข้อมูล" aria-label="ล้างข้อมูล" onClick={() => setShowPurge(true)} style={{ width: '34px', height: '34px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '999px', cursor: 'pointer', padding: 0, color: '#b3261e', background: 'white', border: '1px solid #b3261e' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg></button>} {/* MARKER_VATTAXINVOICE_PURGE_MODAL_V1 -- Owner Only */}
+          <button type="button" title="กรอกข้อมูลเอง" aria-label="กรอกข้อมูลเอง" onClick={() => setShowManualForm(true)} style={{ width: '34px', height: '34px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '999px', cursor: 'pointer', padding: 0, color: '#0f7a6b', background: 'white', border: '1px solid #0f7a6b' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg></button>
+          <button type="button" title="Upload Excel" aria-label="Upload Excel" onClick={() => setShowUpload(true)} style={{ width: '34px', height: '34px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '999px', cursor: 'pointer', padding: 0, color: 'white', background: '#0f7a6b', border: 'none' }}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg></button>
+        </div>
         </div>
       </div>
-      <div style={{ display: 'flex', gap: '10px' }}>
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search" style={{ width: '260px', padding: '7px 10px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px', boxSizing: 'border-box' }} />
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: '7px 10px', fontSize: '12px', border: '0.5px solid #ccc', borderRadius: '8px' }}>
-          <option value="">Status: ทั้งหมด (รวมที่ปิดแล้ว)</option>
-          {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-      </div>
-      <div style={{ flex: 1, border: '0.5px solid #e8e8e8', borderRadius: '10px', overflow: 'auto' }}>
+      <div style={{ flex: 1, border: '1px solid #e3e8ef', background: 'white', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', overflow: 'auto' }}>
         {loading ? (
           <div style={{ padding: '32px', textAlign: 'center', color: '#999' }}>กำลังโหลด...</div>
         ) : (
           <ExcelStyleGrid
-            columns={VAT_TAX_INVOICE_COLUMNS}
-            columnGroups={VAT_TAX_INVOICE_COLUMN_GROUPS} // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1
-            rows={rows}
+            columns={taxCols}
+            headerTheme="teal"
+            formatCell={isAp ? apFormatCell : undefined}
+            rowFallbackContextMenu={isAp ? { key: 'view_detail', label: 'View Detail', options: ['-'], onPick: (r) => setRefPop(r) } : undefined} /* MARKER_AP0105_VIEW_DETAIL_RIGHTCLICK_V1 -- คลิกขวาที่แถว > View Detail */
+            columnWidths={isAp ? { origin_file: '360px', bu_branch_code: '90px', bu: '70px' } : undefined}
+            columnGroups={isAp ? ap0105Groups(taxCols) : VAT_TAX_INVOICE_COLUMN_GROUPS} // MARKER_VATWATCHLISTOPS_TAX_INVOICE_ZONES_MERCHANT_V1
+            rows={rowsView}
             emptyText="ยังไม่มีข้อมูล"
             numericKeys={new Set(['gross_value', 'vat_value', 'total_value'])}
             rightAlignKeys={new Set(['gross_value', 'vat_value', 'total_value'])}
             onCommitCell={(row, key, value) => {
-              apiFetch(`/vat_backup_tax_invoice/${row.id}`, { method: 'PUT', body: JSON.stringify({ [key]: value }) })
+              if (key === '__action') return;
+              apiFetch(`${taxPath}/${row.id}`, { method: 'PUT', body: JSON.stringify({ [key]: value }) })
                 .then(() => {
                   setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, [key]: value } : r)));
                   broadcastWs('vat_backup_tax_invoice_updated', { id: row.id }); // MARKER_VATCONTROLLER_INLINE_EDIT_BROADCAST_CONSISTENCY_V1 -- ไม่มี bu prop ในสโคปนี้ ส่ง id แทน
@@ -26384,9 +27598,10 @@ function VatTaxInvoiceTab() {
           <button type="button" disabled={page >= totalPages} onClick={() => setPage(totalPages)} style={{ padding: '4px 9px', border: '0.5px solid #ccc', borderRadius: '6px', background: 'white', cursor: page >= totalPages ? 'default' : 'pointer', opacity: page >= totalPages ? 0.4 : 1 }}>»</button>
         </div>
       </div>
-      {showPurge && <VatTaxInvoicePurgeModal onClose={() => setShowPurge(false)} onDone={fetchRows} />}
-      {showManualForm && <VatTaxInvoiceManualFormModal username={username} onClose={() => setShowManualForm(false)} onSaved={fetchRows} />}
-      {showUpload && <VatTaxInvoiceUploadModal username={username} onClose={() => setShowUpload(false)} onSaved={fetchRows} />}
+      {refPop && <Ap0105RowModal row={refPop} onClose={() => setRefPop(null)} />}
+      {showPurge && (isAp ? <Ap0105PurgeModal onClose={() => setShowPurge(false)} onDone={fetchRows} /> : <VatTaxInvoicePurgeModal onClose={() => setShowPurge(false)} onDone={fetchRows} />)}
+      {showManualForm && <VatTaxInvoiceManualFormModal username={username} onClose={() => setShowManualForm(false)} onSaved={fetchRows} table={isAp ? AP01_TABLE : null} forceFields={isAp ? { period: apPeriod || (apCtx && apCtx.cur) || null } : null} />}
+      {showUpload && (isAp ? <Ap0105UploadModal username={username} period={apPeriod || (apCtx && apCtx.cur) || ''} onClose={() => setShowUpload(false)} onSaved={fetchRows} /> : <VatTaxInvoiceUploadModal username={username} onClose={() => setShowUpload(false)} onSaved={fetchRows} />)}
     </div>
   );
 }
@@ -26446,6 +27661,9 @@ function VatSmCodeSearchModal({ onClose, onSelect, smCodes = [], branches = [], 
   const [editTarget, setEditTarget] = React.useState(null);
   const [smForm, setSmForm] = React.useState(SM_CODE_FORM_EMPTY);
   const [smFormError, setSmFormError] = React.useState('');
+  const smEscRef = React.useRef(null); // MARKER_SMCODE_MODAL_ESC_V1 -- กด Esc: หน้าค้นหา = ปิดกลับไปฟอร์มเดิม (GL-TransferVat) | หน้าฟอร์ม New/Edit/View = ถอยกลับหน้าค้นหา
+  smEscRef.current = () => { if (view === 'search') { if (typeof onClose === 'function') onClose(); } else { handleSmBack(); } };
+  React.useEffect(() => { const onEscKey = (ev) => { if (ev.key !== 'Escape') return; ev.stopPropagation(); ev.preventDefault(); if (smEscRef.current) smEscRef.current(); }; document.addEventListener('keydown', onEscKey, true); return () => document.removeEventListener('keydown', onEscKey, true); }, []);
   const [saving, setSaving] = React.useState(false);
   // MARKER_VATCONTROLLER_SMCODE_VIEWONLY_REMOVE_OLD_VIEWROW_V1 -- ถอด viewRow/setViewRow (Popup View แบบเดิม 6 คอลัมน์) ออกแล้ว เปลี่ยนเป็น view === 'viewonly' ใช้ renderSmForm() ร่วมกับ Edit Form (Disable ทุกช่อง) แทน
 
@@ -26901,7 +28119,7 @@ function VatSmCodeSearchModal({ onClose, onSelect, smCodes = [], branches = [], 
               {/* MARKER_VATCONTROLLER_SIMPLE_INPUT_OPS_ADI_SMCODE_MODAL_FILTER_HEIGHT_CAP_V1 -- เปลี่ยนจาก Native <select> (Dropdown สูงเกินตามจำนวน Option) เป็น SmComboBox เดิมของฟอร์มนี้ (MaxHeight 160px ~ 5 แถว แล้ว Scroll เอา) */}
               <div style={{ height: '36px', width: '150px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px', padding: '0 4px 0 10px', border: '1px solid #d1d5db', borderRadius: '8px', background: 'white', boxSizing: 'border-box' }}>
                 <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600', flexShrink: 0 }}>BU</span>
-                <SmComboBox value={smBuFilter || 'ทั้งหมด'} onChange={(val) => setSmBuFilter(val === 'ทั้งหมด' ? '' : val)} options={['ทั้งหมด', ...smBuOptions]} />
+                <SmComboBox clearOnFocus="ทั้งหมด" value={smBuFilter || 'ทั้งหมด'} onChange={(val) => setSmBuFilter(val === 'ทั้งหมด' ? '' : val)} options={['ทั้งหมด', ...smBuOptions]} />
               </div>
               <div style={{ height: '36px', width: '190px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '4px', padding: '0 4px 0 10px', border: '1px solid #d1d5db', borderRadius: '8px', background: 'white', boxSizing: 'border-box' }}>
                 <span style={{ fontSize: '11px', color: '#6b7280', fontWeight: '600', flexShrink: 0 }}>AT-Match</span>
@@ -30069,6 +31287,41 @@ const VAT_WAITING_CLAIM_IMPORT_FIELDS = [
   { key: 'payment_date', label: 'Payment Date', type: 'date' },
   { key: 'purchase_order', label: 'Purchase Order', type: 'text' },
 ];
+// MARKER_VATCONTROLLER_BACKUP_BY_TRANSACTION_V1 -- โหมด By Transaction (เฉพาะ Tab Backup_Popvat): 1 แถว = 1 รายการ · คอลัมน์ตาม Popup View + Supplier Name/Code · Amount · Vat · Total · Payment Doc
+const VAT_BACKUP_POPVAT_TXN_COLUMNS = [ // MARKER_BACKUP_TXN_SUPPLIER_AFTER_BU_V1 -- Supplier Name / Supplier Code อยู่ถัดจาก BU
+  { key: 'bu', label: 'BU' }, { key: 'supplier_name', label: 'Supplier Name' }, { key: 'supplier_code', label: 'Supplier Code' },
+  { key: 'branch', label: 'Branch' }, { key: 'grt_number', label: 'GRT Number' },
+  { key: 'original_invoice_number', label: 'Original Invoice Number' }, { key: 'receipt_date', label: 'Receipt Date' }, { key: 'tax_invoice_number', label: 'Tax Invoice Number' },
+  { key: 'tax_invoice_date', label: 'Tax Invoice Date' }, { key: 'vendor_tax_invoice_number', label: 'Vendor Tax Invoice Number' },
+  { key: 'amount', label: 'Amount', num: true }, { key: 'vat', label: 'Vat', num: true }, { key: 'total', label: 'Total', num: true }, { key: 'check_no', label: 'Payment Doc' }, { key: 'username', label: 'ผู้ทำ' },
+];
+// MARKER_VATCONTROLLER_BACKUP_PERIOD_5ROWS_V1 -- ตัวเลือก Period (From/To) แสดงรายการเริ่มต้น 5 แถว เลื่อนดูที่เหลือได้ (select ปกติกำหนดจำนวนแถวไม่ได้) · เปิดมาเลื่อนไปที่ค่าที่เลือกอยู่
+function VatPeriodPick({ value, onChange, options, emptyLabel, title }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef(null);
+  const listRef = React.useRef(null);
+  const ROW = 34;
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+  React.useEffect(() => {
+    if (open && listRef.current) { const el = listRef.current.querySelector('[data-sel="1"]'); if (el) listRef.current.scrollTop = el.offsetTop; }
+  }, [open]);
+  const items = [{ v: '', l: emptyLabel }, ...(options || []).map((x) => ({ v: x, l: x }))];
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button type="button" title={title} onClick={() => setOpen((o) => !o)} style={{ fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px', cursor: 'pointer', whiteSpace: 'nowrap' }}>{value || emptyLabel}<span style={{ marginLeft: '8px', fontSize: '10px' }}>▼</span></button>
+      {open && (
+        <div ref={listRef} style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, background: 'white', border: '1px solid #dde3e8', borderRadius: '10px', boxShadow: '0 6px 18px rgba(0,0,0,0.12)', minWidth: '100%', maxHeight: `${ROW * 5}px`, overflowY: 'auto' }}>
+          {items.map((it) => (<div key={it.v || '__all'} data-sel={it.v === value ? '1' : undefined} onClick={() => { onChange(it.v); setOpen(false); }} style={{ height: ROW, lineHeight: `${ROW}px`, padding: '0 14px', fontSize: '12.5px', cursor: 'pointer', whiteSpace: 'nowrap', background: it.v === value ? '#e6f4f1' : 'white', color: it.v === value ? '#0f7a6b' : '#333', fontWeight: it.v === value ? 600 : 400 }}>{it.l}</div>))}
+        </div>
+      )}
+    </div>
+  );
+}
 const VAT_BACKUP_COLUMNS_BY_TAB = { popvat: VAT_BACKUP_POPVAT_COLUMNS, simple: VAT_BACKUP_SIMPLE_COLUMNS, adi: VAT_BACKUP_ADI_COLUMNS, waiting_claim: VAT_BACKUP_WAITING_CLAIM_COLUMNS };
 // MARKER_VATCONTROLLER_BACKUP_VIEW_MODAL_V1 -- ปุ่ม View ในหน้า Transaction Backup: เปิด Popup หน้าตาเหมือน Draft Monitor (3 Tab Popvat/Simple/ADI) แต่เป็น Read-only ดึงเฉพาะ Batch ที่ Finish แล้ว (status='pv-backup')
 // MARKER_VATWATCHLISTOPS_DRAFTMONITOR_POPVAT_INLINE_EDIT_V1 -- แก้ Tax Invoice Date / Vendor Tax Invoice Number ใน Draft Monitor (Tab Popvat) ได้เลย ไม่ต้องกลับไป Operation
@@ -30134,6 +31387,7 @@ function VatBackupViewModal({ batch, initialTab, initialSearch, onClose, bucket 
   const [simpleTypeFilter, setSimpleTypeFilter] = React.useState('all');
   const [search, setSearch] = React.useState(initialSearch || ''); // MARKER_VATCONTROLLER_BACKUP_SEARCH_TAXINV_V14 -- รับคำค้นจากหน้า Transaction Backup แล้ว Highlight แถวที่ตรงทันที
   const [data, setData] = React.useState({ popvat: [], simple: [], adi: [] });
+  const [buView, setBuView] = React.useState('all'); // MARKER_TXN_VIEW_BU_SWITCH_V1 -- มุมมอง ทั้ง Batch / รายBU (Batch โหมด Book รวมหลาย BU)
   const [loading, setLoading] = React.useState(true);
 const SIMPLE_BKVIEW_COLUMNS = [ // MARKER_VATWATCHLISTOPS_DRAFTMONITOR_SIMPLE_RESTORE_CASCADE_V1 -- Column ตาม Schema vat_simpleinputdraft
     { key: 'liability_cost_center_special', label: 'Liability Cost Center (Special)' },
@@ -30193,7 +31447,7 @@ const ADI_BKVIEW_COLUMNS = [ // MARKER_VATWATCHLISTOPS_DRAFTMONITOR_ADI_DISPLAY_
   React.useEffect(() => {
     let active = true;
     setLoading(true);
-    const q = `eq_bu=${encodeURIComponent(batch.bu)}&eq_batch_id=${encodeURIComponent(batch.batch_id)}`;
+    const q = `eq_batch_id=${encodeURIComponent(batch.batch_id)}`; // MARKER_TXN_VIEW_ALL_BU_IN_BATCH_V1 -- ดึงตาม batch_id อย่างเดียว (เดิมกรอง eq_bu ด้วย ทำให้ Batch โหมด Book ที่รวมหลาย BU เห็นเฉพาะ BU หัว Batch)
     const get = (t, st) => apiFetch(`/${t}?${q}&eq_status=${st}`).then((r) => (Array.isArray(r) ? r : [])).catch(() => []);
     Promise.all([get('vat_upload_popvatdraft', bucket ? 'exported' : 'pv-backup'), get('vat_simpleinputdraft', bucket ? 'exported' : 'sm-backup'), get('vat_adi_transferdraft', bucket ? 'exported' : 'adi-backup')]) // MARKER_VATCONTROLLER_SEPARATE_BACKUP_STATUS_V1
       .then(([popvat, simple, adi]) => { if (active) setData({ popvat, simple, adi }); })
@@ -30230,11 +31484,18 @@ const ADI_BKVIEW_COLUMNS = [ // MARKER_VATWATCHLISTOPS_DRAFTMONITOR_ADI_DISPLAY_
     const pd = m ? `${m[3]}-${POPVAT_MONTH_ABBR[parseInt(m[2], 10) - 1] || m[2]}-${m[1].slice(-2)}` : (a.pay || '-');
     return `Vendor: ${a.vendor || '-'}\nPayment Date: ${pd}\nGross Amount: ${f(a.gross)}\nVat Amount: ${f(a.vat)}\nTotal: ${f(a.gross + a.vat)}`;
   };
+  const bkBuList = React.useMemo(() => [...new Set([...data.popvat, ...data.simple, ...data.adi].map((r) => String((r && r.bu) || '').trim()).filter(Boolean))].sort(), [data]); // MARKER_TXN_VIEW_BU_SWITCH_V1
+  const bkMultiBu = bkBuList.length > 1;
+  const bkBuFilter = (arr) => (bkMultiBu && buView !== 'all' ? arr.filter((r) => String((r && r.bu) || '').trim() === buView) : arr);
+  const bkCols = (cols) => cols; // MARKER_TXN_VIEW_BU_SWITCH_V1 -- ไม่เพิ่มคอลัมน์ BU ในตาราง (ใช้แถบมุมมองรายBU แทน)
+  const bkSimpleAll = simpleTypeFilter === 'all' ? data.simple : data.simple.filter((r) => r.invoice_ref === simpleTypeFilter);
   const cfg = {
-    popvat: { cols: POPVAT_BKVIEW_COLUMNS, rows: data.popvat },
-    simple: { cols: SIMPLE_BKVIEW_COLUMNS, rows: simpleTypeFilter === 'all' ? data.simple : data.simple.filter((r) => r.invoice_ref === simpleTypeFilter) },
-    adi: { cols: ADI_BKVIEW_COLUMNS, rows: data.adi },
+    popvat: { cols: bkCols(POPVAT_BKVIEW_COLUMNS), rows: bkBuFilter(data.popvat) },
+    simple: { cols: bkCols(SIMPLE_BKVIEW_COLUMNS), rows: bkBuFilter(bkSimpleAll) },
+    adi: { cols: bkCols(ADI_BKVIEW_COLUMNS), rows: bkBuFilter(data.adi) },
   };
+  const bkTabAll = tab === 'simple' ? bkSimpleAll : tab === 'adi' ? data.adi : data.popvat;
+  const bkBuCount = (b) => bkTabAll.filter((r) => String((r && r.bu) || '').trim() === b).length;
   const cur = cfg[tab] || cfg.popvat;
   const kw = search.trim().toLowerCase();
   const rows = cur.rows; // MARKER_VATCONTROLLER_BACKUP_VIEW_SEARCH_HIGHLIGHT_V1 -- Search = Highlight แถวที่ตรง (ไม่ซ่อนแถวอื่น) + เลื่อนไปแถวแรกที่ตรง
@@ -30271,13 +31532,18 @@ const ADI_BKVIEW_COLUMNS = [ // MARKER_VATWATCHLISTOPS_DRAFTMONITOR_ADI_DISPLAY_
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '0.5px solid #e8e8e8' }}>
           <div>
             <div style={{ fontSize: '15px', fontWeight: '500' }}>{bucket ? 'Transaction' : 'Transaction Backup'} · {batch.batch_id}</div>
-            <div style={{ fontSize: '12px', color: '#888', marginTop: '3px' }}>BU {batch.bu}{batch.period ? ` · Period ${batch.period}` : ''}{batch.expire_at ? ` · หมดอายุ ${formatVatExportDateOnly(batch.expire_at)}` : ''} · View อย่างเดียว</div>
+            <div style={{ fontSize: '12px', color: '#888', marginTop: '3px' }}>BU {batch.bu}{bkMultiBu ? ` · รวม ${bkBuList.length} BU` : ''}{batch.period ? ` · Period ${batch.period}` : ''}{batch.expire_at ? ` · หมดอายุ ${formatVatExportDateOnly(batch.expire_at)}` : ''} · View อย่างเดียว</div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ค้นหา Invoice / เลขที่ (Highlight)" style={{ fontSize: '12.5px', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 10px', width: '240px' }} />
             <button onClick={onClose} style={{ width: '28px', height: '28px', padding: 0, border: 'none', borderRadius: '50%', background: '#f0f0f0', cursor: 'pointer', fontSize: '14px', color: '#666' }}>×</button>
           </div>
         </div>
+        {bkMultiBu && (<div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', padding: '8px 20px 0' }}>{/* MARKER_TXN_VIEW_BU_SWITCH_V1 */}
+          <span style={{ fontSize: '12px', color: '#6b7280' }}>มุมมอง:</span>
+          {[{ key: 'all', label: 'ทั้ง Batch', n: bkTabAll.length }, ...bkBuList.map((b) => ({ key: b, label: b, n: bkBuCount(b) }))].map((v) => (
+            <button key={v.key} type="button" onClick={() => setBuView(v.key)} style={{ padding: '4px 12px', fontSize: '12px', border: '1px solid #1a3a5c', borderRadius: '14px', cursor: 'pointer', fontWeight: 500, background: buView === v.key ? '#1a3a5c' : '#fff', color: buView === v.key ? '#fff' : '#1a3a5c' }}>{v.label} ({v.n})</button>))}
+        </div>)}
         <div style={{ display: 'flex', gap: '4px', padding: '10px 20px 0', borderBottom: '0.5px solid #e8e8e8' }}>
           {[{ key: 'popvat', label: 'Upload Popvat', count: data.popvat.length }, { key: 'simple', label: 'Upload Simple', count: data.simple.length }, { key: 'adi', label: 'Upload ADI', count: data.adi.length }].map((t) => (
             <button key={t.key} type="button" onClick={() => setTab(t.key)} style={{ padding: '9px 16px', fontSize: '13px', border: 'none', borderBottom: tab === t.key ? '2px solid #1a3a5c' : '2px solid transparent', background: 'transparent', cursor: 'pointer', color: tab === t.key ? '#1a3a5c' : '#888', fontWeight: tab === t.key ? '500' : '400' }}>
@@ -30584,8 +31850,18 @@ function VatBackupTransactionLobby() {
   const [tab, setTab] = React.useState('popvat');
   const [bkSub, setBkSub] = React.useState('recent'); // MARKER_VATCONTROLLER_SIMPLE_BACKUP_SUBTABS_V1 -- Backup_SimpleInput แยก 3 แท็บย่อยเหมือน Invoice History: recent (≤7 วัน) / history (>7 วัน) / legacy (ข้อมูลระบบเก่า)
   const isLegacyView = tab === 'simple' && bkSub === 'legacy';
+  const [bkClosedKey, setBkClosedKey] = React.useState(''); // YYYY-MM ของ Period ที่ปิดล่าสุด (vat_period_month)
+  const [bkCurPeriod, setBkCurPeriod] = React.useState(''); // MARKER_SIMPLE_BACKUP_CURRENT_LAST_PERIOD_V1 -- Recent/History เปลี่ยนเป็น Current Period / Last Period (รูปแบบ MM-YYYY เหมือนคอลัมน์ period)
+  React.useEffect(() => {
+    if (tab !== 'simple' || bkCurPeriod) return undefined;
+    let off = false;
+    apiFetch('/vat/period/status').then((ps) => { if (off || !ps) return; const m = /^(\d{4})-(\d{2})$/.exec(String(vatPeriodKey(ps.vat_period_current_month) || '')); const c = /^(\d{4})-(\d{2})$/.exec(String(vatPeriodKey(ps.vat_period_month) || '')); if (c) setBkClosedKey(`${c[1]}-${c[2]}`); if (m) setBkCurPeriod(`${m[2]}-${m[1]}`); }).catch(() => {});
+    return () => { off = true; };
+  }, [tab, bkCurPeriod]);
   const VAT_LEGACY_COLUMNS = [{ key: 'bu', label: 'BU' }, { key: 'period', label: 'Period' }, { key: 'supplier_name', label: 'Supplier' }, { key: 'vendor_tax_invoice_number', label: 'TIV Invoice' }, { key: 'tax_invoice_date', label: 'TIV Date' }, { key: 'amount_ex_vat', label: 'Gross Amount' }, { key: 'vat_amount', label: 'VAT Amount' }, { key: 'batch_id', label: 'Import Batch' }, { key: 'created_at', label: 'Imported At' }, { key: 'days_left', label: 'เหลือ (วัน)' }, { key: 'action', label: 'Action' }];
-  const columns = isLegacyView ? VAT_LEGACY_COLUMNS : (VAT_BACKUP_COLUMNS_BY_TAB[tab] || []);
+  const [bkMode, setBkMode] = React.useState(() => { try { return localStorage.getItem('vat_backup_mode') === 'txn' ? 'txn' : 'batch'; } catch (_) { return 'batch'; } }); // MARKER_VATCONTROLLER_BACKUP_BY_TRANSACTION_V1
+  const isTxn = tab === 'popvat' && bkMode === 'txn';
+  const columns = isTxn ? VAT_BACKUP_POPVAT_TXN_COLUMNS : isLegacyView ? VAT_LEGACY_COLUMNS : (VAT_BACKUP_COLUMNS_BY_TAB[tab] || []);
   // MARKER_VATCONTROLLER_BACKUP_TRANSACTION_WIRE_V1 -- ต่อ API /vat-export/backup (Batch ที่ Finish แล้ว status='pv-backup') เฉพาะ Tab Popvat/Simple/ADI
   const [bkRows, setBkRows] = React.useState([]);
   const [bkLoading, setBkLoading] = React.useState(false);
@@ -30596,6 +31872,74 @@ function VatBackupTransactionLobby() {
   const [bkSearchDebounced, setBkSearchDebounced] = React.useState('');
   React.useEffect(() => { const t = setTimeout(() => setBkSearchDebounced(bkSearch), 350); return () => clearTimeout(t); }, [bkSearch]);
   const [bkViewBatch, setBkViewBatch] = React.useState(null); // MARKER_VATCONTROLLER_BACKUP_VIEW_MODAL_V1
+  const [bkHl, setBkHl] = React.useState('');
+  const [txRows, setTxRows] = React.useState([]);
+  const [txLoading, setTxLoading] = React.useState(false);
+  const [txPage, setTxPage] = React.useState(0);
+  const [txInfo, setTxInfo] = React.useState({});
+  const txAutoPeriodRef = React.useRef(false);
+  const [txPeriodInit, setTxPeriodInit] = React.useState(false); // MARKER_BACKUP_TXN_FAST_V1 -- รอให้ได้ Period เริ่มต้นก่อนค่อยโหลด (เดิมโหลด 30,000 แถวทั้งหมด 1 รอบ แล้วโหลดซ้ำอีกรอบเมื่อ Period มา)
+  const TX_PAGE_SIZE = 200;
+  const switchBkMode = (m) => { setBkMode(m); try { localStorage.setItem('vat_backup_mode', m); } catch (_) { /* ignore */ } };
+  // By Batch = Period ทั้งหมด · By Transaction = เริ่มที่ Period ปัจจุบัน (เลือกเองได้ ถ้าเลือกเองแล้วสลับกลับจะไม่ล้างให้)
+  React.useEffect(() => {
+    if (tab !== 'popvat') return undefined;
+    if (bkMode === 'txn') {
+      if (bkPeriod) { setTxPeriodInit(true); return undefined; }
+      let off = false;
+      apiFetch('/vat/period/status').then((ps) => { if (off || !ps) return; const m = /^(\d{4})-(\d{2})$/.exec(String(vatPeriodKey(ps.vat_period_current_month) || '')); if (m) { txAutoPeriodRef.current = true; setBkPeriod(`${m[2]}-${m[1]}`); } }).catch(() => {}).finally(() => { if (!off) setTxPeriodInit(true); });
+      return () => { off = true; };
+    }
+    if (txAutoPeriodRef.current) { txAutoPeriodRef.current = false; setBkPeriod(''); }
+    return undefined;
+  }, [bkMode, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    if (!isTxn || !txPeriodInit) return undefined;
+    let off = false; setTxLoading(true);
+    const qs = ['eq_status=pv-backup', bkBu ? `eq_bu=${encodeURIComponent(bkBu)}` : '', bkPeriod ? `eq_period=${encodeURIComponent(bkPeriod)}` : '', 'order=created_at.desc', 'limit=30000'].filter(Boolean).join('&');
+    apiFetch(`/vat_upload_popvatdraft?${qs}`).then((r) => { if (!off) { setTxRows(Array.isArray(r) ? r : []); setTxPage(0); } }).catch(() => { if (!off) setTxRows([]); }).finally(() => { if (!off) setTxLoading(false); });
+    return () => { off = true; };
+  }, [isTxn, txPeriodInit, bkBu, bkPeriod, bkRefresh]);
+  const txFiltered = React.useMemo(() => {
+    const q = bkSearchDebounced.trim().toLowerCase(); if (!q) return txRows;
+    return txRows.filter((r) => ['tax_invoice_number', 'original_invoice_number', 'grt_number', 'vendor_tax_invoice_number', 'supplier_name', 'batch_id', 'bu', 'check_no', 'username'].some((k) => String(r[k] || '').toLowerCase().includes(q)));
+  }, [txRows, bkSearchDebounced]);
+  React.useEffect(() => { setTxPage(0); }, [bkSearchDebounced]);
+  const txPages = Math.max(1, Math.ceil(txFiltered.length / TX_PAGE_SIZE));
+  const txView = React.useMemo(() => txFiltered.slice(txPage * TX_PAGE_SIZE, (txPage + 1) * TX_PAGE_SIZE), [txFiltered, txPage]);
+  // Supplier Code ไม่ได้เก็บในแถว Popvat -> หาจากรายงาน Watchlist (BU + Invoice) เฉพาะแถวที่แสดงอยู่ในหน้านี้
+  React.useEffect(() => {
+    if (!isTxn || txView.length === 0) return undefined;
+    const need = {}; txView.forEach((r) => { const k = `${r.bu}|${r.original_invoice_number}`; if (r.bu && r.original_invoice_number && !(k in txInfo)) (need[r.bu] = need[r.bu] || new Set()).add(r.original_invoice_number); });
+    const bus = Object.keys(need); if (!bus.length) return undefined;
+    let off = false;
+    (async () => {
+      const add = {};
+      const jobs = []; // MARKER_BACKUP_TXN_FAST_V1 -- ยิงทุก BU/ทุกก้อนพร้อมกัน (เดิมไล่ทีละ BU ทีละ 80 รายการ -> ช้า)
+      for (const bu of bus) {
+        const refs = [...need[bu]];
+        refs.forEach((ref) => { add[`${bu}|${ref}`] = { codes: {} }; });
+        for (let i = 0; i < refs.length; i += 80) {
+          jobs.push(apiFetch(`/vat_watchlist_report?eq_bu=${encodeURIComponent(bu)}&in_invoice_ref=${encodeURIComponent(refs.slice(i, i + 80).join(','))}&select=invoice_ref,supplier_code,vendor_name`)
+            .then((res) => { (Array.isArray(res) ? res : []).forEach((x) => { const o = add[`${bu}|${x.invoice_ref}`]; if (o && x.supplier_code) o.codes[x.supplier_code] = x.vendor_name || ''; }); })
+            .catch(() => { /* ปล่อยว่าง */ }));
+        }
+      }
+      await Promise.all(jobs);
+      if (!off) setTxInfo((p) => ({ ...p, ...add }));
+    })();
+    return () => { off = true; };
+  }, [isTxn, txView]); // eslint-disable-line react-hooks/exhaustive-deps
+  const txNum = (v) => { if (v === null || v === undefined || v === '') return null; const n = Number(String(v).replace(/,/g, '')); return Number.isFinite(n) ? n : null; };
+  const txFmt = (n) => (n === null ? '-' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  const txCode = (r) => { const o = txInfo[`${r.bu}|${r.original_invoice_number}`]; if (!o) return '…'; const ents = Object.entries(o.codes); if (!ents.length) return ''; const hit = ents.find(([, v]) => v && v === r.supplier_name); return (hit || ents[0])[0]; };
+  const txCell = (r, key) => {
+    if (key === 'supplier_code') return txCode(r) || '-';
+    if (key === 'amount') return txFmt(txNum(r.product_value));
+    if (key === 'vat') return txFmt(txNum(r.vat_amount));
+    if (key === 'total') { const a = txNum(r.product_value); const v = txNum(r.vat_amount); return a === null && v === null ? '-' : txFmt((a || 0) + (v || 0)); }
+    return r[key] == null || r[key] === '' ? '-' : String(r[key]);
+  };
   const isBkTab = tab === 'popvat' || tab === 'simple' || tab === 'adi';
   // MARKER_VATCONTROLLER_BACKUP_WAITING_CLAIM_TEMPLATE_IMPORT_V1 -- Tab Waiting for Claim: Template (Dropdown รอผูก Template ที่บันทึกไว้) + Import ไฟล์ .xlsx/.csv อ่านตามหัวคอลัมน์ แสดงในตารางทันที (ยังไม่บันทึกลงฐานข้อมูล -- รอ Config)
   const [wcDbRows, setWcDbRows] = React.useState([]);
@@ -30917,9 +32261,9 @@ function VatBackupTransactionLobby() {
   React.useEffect(() => { setBkBu(''); setBkPeriod(''); setBkSearch(''); }, [tab]);
   const bkFiltered = React.useMemo(() => {
     const q = bkSearch.trim().toLowerCase();
-    const ageOk = (r) => { if (tab !== 'simple') return true; const t = r.upload_at ? new Date(r.upload_at).getTime() : NaN; if (!Number.isFinite(t)) return bkSub === 'recent'; const recent = Date.now() - t <= 7 * 86400000; return bkSub === 'recent' ? recent : !recent; }; // MARKER_VATCONTROLLER_SIMPLE_BACKUP_SUBTABS_V1
+    const ageOk = (r) => { if (tab !== 'simple') return true; if (!bkCurPeriod) return bkSub === 'recent'; const pm = /^(\d{2})-(\d{4})$/.exec(String(r.period || '')); const key = pm ? `${pm[2]}-${pm[1]}` : ''; const closed = !!(key && bkClosedKey && key <= bkClosedKey); return bkSub === 'recent' ? !closed : closed; }; // Current Period = ยังไม่ปิด (ปัจจุบัน) · Last Period = Period ที่ปิดแล้ว // MARKER_VATCONTROLLER_SIMPLE_BACKUP_SUBTABS_V1
     return bkRows.filter((r) => ageOk(r) && (!bkBu || r.bu === bkBu) && (!bkPeriod || r.period === bkPeriod) && (!q || bkSearch.trim() !== bkSearchDebounced.trim() || (r.match_count || 0) > 0 || String(r.batch_id || '').toLowerCase().includes(q) || String(r.bu || '').toLowerCase().includes(q)));
-  }, [bkRows, bkBu, bkPeriod, bkSearch, bkSearchDebounced, tab, bkSub]);
+  }, [bkRows, bkBu, bkPeriod, bkSearch, bkSearchDebounced, tab, bkSub, bkCurPeriod]);
   // MARKER_VATCONTROLLER_SIMPLE_LEGACY_IMPORT_V1 -- Legacy Data (Backup_SimpleInput) : Import Excel ระบบเก่า -> vat_simpleinputdraft status='sm-legacy' (ไม่ต้องแก้ Backend) ; ใช้ตรวจซ้ำให้ Temp. T36
   const [lgRows, setLgRows] = React.useState([]);
   const [lgLoading, setLgLoading] = React.useState(false);
@@ -31096,7 +32440,7 @@ function VatBackupTransactionLobby() {
         <div style={{ flex: 1, minWidth: '260px' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', color: '#0f7a6b' }}>VAT CONTROLLER</div>
           <div style={{ fontSize: '22px', fontWeight: 700, color: '#1a3a5c', lineHeight: 1.25 }}>Transaction <span style={{ color: '#0f7a6b' }}>Backup</span></div>
-          <div style={{ fontSize: '12px', color: '#7a8696' }}>{({ popvat: 'Backup ของ Pop VAT ที่ Finish แล้ว', simple: 'Backup ของ Simple Input · แยก Recent / History / Legacy', adi: 'Backup ของ ADI Transfer', waiting_claim: 'Report Input Tax – Waiting for Claim' })[tab] || ''}</div>
+          <div style={{ fontSize: '12px', color: '#7a8696' }}>{({ popvat: 'Backup ของ Pop VAT ที่ Finish แล้ว', simple: 'Backup ของ Simple Input · แยก Current Period / Last Period / Legacy', adi: 'Backup ของ ADI Transfer', waiting_claim: 'Report Input Tax – Waiting for Claim' })[tab] || ''}</div>
         </div>
         <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
           <div style={{ display: 'inline-flex', gap: '2px', padding: '3px', background: '#f3f3f3', border: '1px solid #e5e5e5', borderRadius: '999px' }}>
@@ -31106,14 +32450,21 @@ function VatBackupTransactionLobby() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%' }}>
-          <select disabled={!isBkTab && tab !== 'waiting_claim'} value={bkBu} onChange={(e) => setBkBu(e.target.value)} style={{ fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px' }}><option value="">BU: ทั้งหมด</option>{(tab === 'waiting_claim' ? wcBuOptions : bkBuOptions).map((b) => <option key={b} value={b}>{b}</option>)}</select>
+          {tab === 'popvat' && (<div style={{ display: 'inline-flex', padding: '2px', background: '#f3f3f3', border: '1px solid #e5e5e5', borderRadius: '999px' }}>{[['batch', 'By Batch'], ['txn', 'By Transaction']].map(([k, l]) => (<button key={k} type="button" onClick={() => switchBkMode(k)} style={{ padding: '5px 14px', fontSize: '12px', border: 'none', borderRadius: '999px', background: bkMode === k ? '#0f7a6b' : 'transparent', color: bkMode === k ? 'white' : '#666', fontWeight: bkMode === k ? 600 : 500, cursor: 'pointer', whiteSpace: 'nowrap' }}>{l}</button>))}</div>)}
+          <span style={{ display: 'inline-block', opacity: (!isBkTab && tab !== 'waiting_claim') ? 0.5 : 1, pointerEvents: (!isBkTab && tab !== 'waiting_claim') ? 'none' : 'auto' }}><VatPeriodPick value={bkBu} options={tab === 'waiting_claim' ? wcBuOptions : bkBuOptions} emptyLabel="BU: ทั้งหมด" title="เลือก BU" onChange={(v) => setBkBu(v)} /></span> {/* MARKER_BACKUP_BU_PICK_5ROWS_V1 -- Dropdown BU แสดงเริ่มต้น 5 แถว เลื่อนดูที่เหลือ */}
           {tab === 'waiting_claim' ? (<>
-            <select value={wcFrom} onChange={(e) => { const v = e.target.value; if (v && wcTo && wcPeriodKey(v) > wcPeriodKey(wcTo)) { setWcFrom(wcTo); setWcTo(v); } else setWcFrom(v); }} title="From: เดือนเริ่มต้น (ไม่เลือก = เก่าที่สุด)" style={{ fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px' }}><option value="">From: เก่าที่สุด</option>{wcMonthOptions.map((p) => <option key={p} value={p}>{p}</option>)}</select>
-            <select value={wcTo} onChange={(e) => { const v = e.target.value; if (v && wcFrom && wcPeriodKey(v) < wcPeriodKey(wcFrom)) { setWcTo(wcFrom); setWcFrom(v); } else setWcTo(v); }} title="To: เดือนสิ้นสุด (ไม่เลือก = ล่าสุด)" style={{ fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px' }}><option value="">To: ล่าสุด</option>{wcMonthOptions.map((p) => <option key={p} value={p}>{p}</option>)}</select>
+            <VatPeriodPick value={wcFrom} options={wcMonthOptions} emptyLabel="From: เก่าที่สุด" title="From: เดือนเริ่มต้น (ไม่เลือก = เก่าที่สุด)" onChange={(v) => { if (v && wcTo && wcPeriodKey(v) > wcPeriodKey(wcTo)) { setWcFrom(wcTo); setWcTo(v); } else setWcFrom(v); }} />
+            <VatPeriodPick value={wcTo} options={wcMonthOptions} emptyLabel="To: ล่าสุด" title="To: เดือนสิ้นสุด (ไม่เลือก = ล่าสุด)" onChange={(v) => { if (v && wcFrom && wcPeriodKey(v) < wcPeriodKey(wcFrom)) { setWcTo(wcFrom); setWcFrom(v); } else setWcTo(v); }} />
           </>) : (
-          <select disabled={!isBkTab} value={bkPeriod} onChange={(e) => setBkPeriod(e.target.value)} style={{ fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px' }}><option value="">Period: ทั้งหมด</option>{bkPeriodOptions.map((p) => <option key={p} value={p}>{p}</option>)}</select>
+          <select disabled={!isBkTab} value={bkPeriod} onChange={(e) => { txAutoPeriodRef.current = false; setBkPeriod(e.target.value); }} style={{ fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 14px' }}><option value="">Period: ทั้งหมด</option>{bkPeriodOptions.map((p) => <option key={p} value={p}>{p}</option>)}</select>
           )}
           <input disabled={!isBkTab && tab !== 'waiting_claim'} type="search" value={bkSearch} onChange={(e) => setBkSearch(e.target.value)} placeholder={isLegacyView ? 'ค้นหา Supplier / TIV Invoice / Batch / BU' : isBkTab ? 'ค้นหา Tax Invoice / Invoice / GRT / Supplier / Batch ID / BU' : 'ค้นหา Supplier / Tax Invoice / Draft ID'} style={isBkTab ? { flex: '0 1 380px', minWidth: '200px', fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 16px' } : { flex: 'none', width: '260px', fontSize: '12.5px', color: '#333', background: '#f5f6f8', border: '1px solid #dde3e8', borderRadius: '999px', padding: '6px 16px' }} />
+        {isTxn && (<div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', fontSize: '12px', color: '#666' }}>
+          <span>{txFiltered.length.toLocaleString('en-US')} รายการ{txRows.length >= 30000 ? ' (แสดงล่าสุด 30,000 — เลือก Period/BU เพื่อดูเจาะจง)' : ''}</span>
+          <button type="button" disabled={txPage <= 0} onClick={() => setTxPage((p) => Math.max(0, p - 1))} style={{ border: '1px solid #dde3e8', background: 'white', borderRadius: '999px', padding: '3px 12px', cursor: txPage <= 0 ? 'not-allowed' : 'pointer' }}>‹</button>
+          <span>{txPage + 1} / {txPages}</span>
+          <button type="button" disabled={txPage >= txPages - 1} onClick={() => setTxPage((p) => Math.min(txPages - 1, p + 1))} style={{ border: '1px solid #dde3e8', background: 'white', borderRadius: '999px', padding: '3px 12px', cursor: txPage >= txPages - 1 ? 'not-allowed' : 'pointer' }}>›</button>
+        </div>)}
         {tab === 'waiting_claim' && (<div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
               <input ref={wcFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleWcImportFile} style={{ display: 'none' }} />
               <button type="button" onClick={() => wcCstOpen('export')} title="Export CST Report (As off เดือนที่เลือก) เป็น Excel" style={{ fontSize: '12.5px', fontWeight: 600, color: '#0f7a6b', background: '#eaf5f3', border: '1px solid #0f7a6b', borderRadius: '999px', padding: '6px 18px', cursor: 'pointer' }}>Export</button>
@@ -31173,7 +32524,7 @@ function VatBackupTransactionLobby() {
               )}
             </div>)}
         {tab === 'simple' && (<div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginLeft: 'auto' }}>{/* MARKER_VATCONTROLLER_SIMPLE_BACKUP_SUBTABS_V1 */}
-            {[{ key: 'recent', label: 'Recent (≤7 วัน)' }, { key: 'history', label: 'History (>7 วัน)' }, { key: 'legacy', label: '📁 Legacy Data' }].map((st) => (
+            {[{ key: 'recent', label: 'Current Period' }, { key: 'history', label: 'Last Period' }, { key: 'legacy', label: '📁 Legacy Data' }].map((st) => (
               <div key={st.key} style={{ position: 'relative' }} onMouseEnter={() => { if (st.key === 'legacy') setLgHover(true); }} onMouseLeave={() => { if (st.key === 'legacy') setLgHover(false); }}>
                 <button type="button" onClick={() => setBkSub(st.key)} style={{ padding: '4px 14px', fontSize: '12px', borderRadius: '999px', border: bkSub === st.key ? '1px solid #0f7a6b' : '1px solid #dde3e8', background: bkSub === st.key ? '#eaf5f3' : 'white', cursor: 'pointer', color: bkSub === st.key ? '#0f7a6b' : '#7a8696', fontWeight: bkSub === st.key ? 600 : 500 }}>{st.label}</button>
                 {st.key === 'legacy' && bkSub === 'legacy' && canEditWcDetail && lgHover && (
@@ -31259,16 +32610,23 @@ function VatBackupTransactionLobby() {
               <thead>
                 <tr>
                   {columns.map((c) => (
-                    <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, background: '#0f7a6b', color: 'white', fontWeight: '500', textAlign: (isLegacyView && (c.key === 'amount_ex_vat' || c.key === 'vat_amount')) ? 'right' : 'left', padding: '9px 12px', fontSize: '12px' }}>{c.label}</th>
+                    <th key={c.key} style={{ position: 'sticky', top: 0, zIndex: 1, background: '#0f7a6b', color: 'white', fontWeight: '500', textAlign: ((isLegacyView && (c.key === 'amount_ex_vat' || c.key === 'vat_amount')) || c.num) ? 'right' : 'left', padding: '9px 12px', fontSize: '12px' }}>{c.label}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {isBkTab && !isLegacyView && bkLoading && (<tr><td colSpan={columns.length} style={{ padding: '30px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>)}
-                {isBkTab && !isLegacyView && !bkLoading && bkFiltered.length === 0 && (<tr><td colSpan={columns.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>ยังไม่มี Batch ที่ Finish แล้ว</td></tr>)}
-                {isBkTab && !isLegacyView && !bkLoading && bkFiltered.map((r) => (
+                {isBkTab && !isLegacyView && !isTxn && bkLoading && (<tr><td colSpan={columns.length} style={{ padding: '30px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>)}
+                {isBkTab && !isLegacyView && !isTxn && !bkLoading && bkFiltered.length === 0 && (<tr><td colSpan={columns.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>ยังไม่มี Batch ที่ Finish แล้ว</td></tr>)}
+                {isBkTab && !isLegacyView && !isTxn && !bkLoading && bkFiltered.map((r) => (
                   <tr key={`${r.bu}|${r.batch_id}`} style={{ borderTop: '0.5px solid #eee' }}>
                     {columns.map((c) => (<td key={c.key} style={{ padding: '8px 12px' }}>{bkCell(r, c.key)}</td>))}
+                  </tr>
+                ))}
+                {isTxn && txLoading && (<tr><td colSpan={columns.length} style={{ padding: '30px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>)}
+                {isTxn && !txLoading && txFiltered.length === 0 && (<tr><td colSpan={columns.length} style={{ padding: '40px', textAlign: 'center', color: '#999', fontSize: '13px' }}>ไม่พบรายการ</td></tr>)}
+                {isTxn && !txLoading && txView.map((r) => (
+                  <tr key={r.id} onClick={() => { setBkHl(r.tax_invoice_number || r.original_invoice_number || ''); setBkViewBatch({ batch_id: r.batch_id, bu: r.bu, expire_at: r.expire_at }); }} title="คลิกเพื่อเปิด Batch นี้" style={{ borderTop: '0.5px solid #eee', cursor: 'pointer' }}>
+                    {columns.map((c) => (<td key={c.key} style={{ padding: '8px 12px', textAlign: c.num ? 'right' : 'left' }}>{txCell(r, c.key)}</td>))}
                   </tr>
                 ))}
                 {isLegacyView && lgLoading && (<tr><td colSpan={columns.length} style={{ padding: '30px', textAlign: 'center', color: '#999', fontSize: '13px' }}>กำลังโหลด...</td></tr>)}
@@ -31315,7 +32673,7 @@ function VatBackupTransactionLobby() {
         </div>)}
         {wcNoteRow && <WcNoteModal row={wcNoteRow} onClose={() => setWcNoteRow(null)} onSaved={(wcId, n) => setWcNoteMap((m) => ({ ...m, [wcId]: { wc_id: wcId, cnt: ((m[wcId] && m[wcId].cnt) || 0) + 1, last_note: n.note, last_by: n.created_by, last_at: n.created_at } }))} />}
         {wcDetailRow && <WcDetailPopup row={wcDetailRow} canEdit={canEditWcDetail} onClose={() => setWcDetailRow(null)} onSaved={(nr) => setWcDbRows((rows) => rows.map((x) => (x.id === nr.id ? { ...x, ...nr } : x)))} />}
-        {bkViewBatch && <VatBackupViewModal batch={bkViewBatch} initialTab={tab} initialSearch={bkSearchDebounced.trim()} onClose={() => setBkViewBatch(null)} />}
+        {bkViewBatch && <VatBackupViewModal batch={bkViewBatch} initialTab={tab} initialSearch={bkHl || bkSearchDebounced.trim()} onClose={() => { setBkViewBatch(null); setBkHl(''); }} />}
         {/* MARKER_VATCONTROLLER_BACKUP_TRANSACTION_WAITING_CLAIM_SOURCE_NOTE_V1 -- ตามที่แจ้ง: ข้อมูล Tab นี้ต้องรับมาจาก Simple (vat_simpleinputdraft) แต่เกณฑ์/Mapping ยังไม่ Fix -- รอ Design รอบถัดไป ยังไม่ต่อ Query จริง */}
       </div>
     </div>
@@ -31578,10 +32936,10 @@ function SuspenseUploadDrop() { // MARKER_VATSUSPENSE_UPLOAD_DROP_V3 -- แท�
 }
 function VatSuspenseRecPage() {
   const [tab, setTab] = React.useState('dashboard');
-  const periods = React.useMemo(() => suspensePeriodOptions(), []);
-  const [period, setPeriod] = React.useState(periods[0]);
-  const [periodLocked, setPeriodLocked] = React.useState(false); // ล็อก Period ตามเดือนของ Incomplete ล่าสุด
-  React.useEffect(() => { let off = false; (async () => { try { const d = await apiFetch('/vat-suspense/period'); if (!off && d && d.period) { setPeriod(d.period); setPeriodLocked(true); } } catch (_) {} })(); return () => { off = true; }; }, []);
+  const [periods, setPeriods] = React.useState(() => suspensePeriodOptions()); // MARKER_VATSUSPENSE_PERIOD_ONLY_WITH_DATA_V1 -- ตัวเลือก Period ยึดตาม Period VAT (ระหว่างรอ/ถ้าโหลดไม่สำเร็จใช้ 12 เดือนล่าสุดเดิม)
+  const [period, setPeriod] = React.useState(() => suspensePeriodOptions()[0]);
+  // MARKER_VATSUSPENSE_PERIOD_DEFAULT_CURRENT_V1 -- Default = Period VAT ปัจจุบันที่ยังเปิดอยู่ (vat_period_current_month) เสมอ · เลือกได้เฉพาะเดือนที่เปิดอยู่ กับเดือนที่ปิดล่าสุด (vat_period_month)
+  React.useEffect(() => { let off = false; (async () => { try { const d = await apiFetch('/vat/period/status'); const cur = d && d.vat_period_current_month; if (off || !cur) return; const last = d.vat_period_month; setPeriods([cur, ...(last && last !== cur ? [last] : [])]); setPeriod(cur); } catch (_) {} })(); return () => { off = true; }; }, []);
   const [data, setData] = React.useState(null);
   const [err, setErr] = React.useState('');
   const [selBu, setSelBu] = React.useState('');
@@ -31694,7 +33052,7 @@ function VatSuspenseRecPage() {
           <div style={{ fontWeight: 700, fontSize: 13, color: '#1a3a5c', marginBottom: 12 }}>Suspense Control Zone</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
             <FieldLabelBox label="PERIOD" />
-            <select style={{ flex: 1, background: '#fff', color: '#24292f', border: '1px solid #d0d7de', borderRadius: 8, padding: '9px 10px', fontSize: 13, cursor: 'pointer' }} title={periodLocked ? 'ค่าเริ่มต้น = Period ล่าสุดของ Incomplete (เลือกเปลี่ยนได้)' : ''} value={period} onChange={(e) => { setPeriod(e.target.value); setMsg(null); }}>
+            <select style={{ flex: 1, background: '#fff', color: '#24292f', border: '1px solid #d0d7de', borderRadius: 8, padding: '9px 10px', fontSize: 13, cursor: 'pointer' }} value={period} onChange={(e) => { setPeriod(e.target.value); setMsg(null); }}>
               {(periods.includes(period) ? periods : [period, ...periods]).map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>

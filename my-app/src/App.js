@@ -2105,7 +2105,7 @@ function MainApp() {
     clearTeamHoverTimer();
     teamHoverTimerRef.current = setTimeout(() => setShowTeamPopup(false), 300);
   };
-  const selectPage = (id) => { setActivePage(id); if (flyoutPinnedRef.current) return; setSidebarExpanded(true); setOpenMenu(null); }; // MARKER_APP_FLYOUT_PIN_V1 -- ปักหมุดอยู่ = เลือกหน้าแล้ว Flyout ไม่ปิด
+  const selectPage = (id) => { setActivePage(id); if (id === 'home' && flyoutPinnedRef.current) { flyoutPinnedRef.current = false; setFlyoutPinned(false); try { if (flyoutPinKey) localStorage.removeItem(flyoutPinKey); } catch (_) { /* ไม่เป็นไร */ } } /* MARKER_APP_HOME_UNPIN_V1 กด Home = เลิกปักหมุด */ if (flyoutPinnedRef.current) return; setSidebarExpanded(true); setOpenMenu(null); }; // MARKER_APP_FLYOUT_PIN_V1 -- ปักหมุดอยู่ = เลือกหน้าแล้ว Flyout ไม่ปิด
   const toggleFlyoutPin = () => { // MARKER_APP_FLYOUT_PIN_V1
     const next = !flyoutPinnedRef.current;
     flyoutPinnedRef.current = next; setFlyoutPinned(next);

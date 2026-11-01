@@ -1040,19 +1040,20 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
   const BRANCH_FULL_WIDTH = ['Branch Address','Company for Show in Report Display'];
 
   const BRANCH_COLUMNS = [
-    { key: 'Branch Code', label: 'Branch Code', sortable: true, w: 110 },
-    { key: 'Branch Direct', label: 'Branch Direct', sortable: true, w: 120 },
-    { key: 'Branch Allocate', label: 'Branch Allocate', w: 120 },
-    { key: 'Company for Show in Report Display', label: 'Company Name', w: 200 },
-    { key: 'BU-TaxID', label: 'BU Tax ID', w: 130 },
-    { key: 'BU-Branch', label: 'BU Branch', w: 80 },
+    // MARKER_BUSINESSUNIT_BRANCH_COLWIDTH_V1 -- ปรับความกว้างให้พอดีหัวคอลัมน์ (ไอคอน + ชื่อ + ลูกศร Sort + Padding 20px) และให้ Company Name กว้างขึ้น (ส่วนที่เหลือของจอถูกแบ่งตามสัดส่วนอัตโนมัติ: table-layout fixed)
+    { key: 'Branch Code', label: 'Branch Code', sortable: true, w: 125 },
+    { key: 'Branch Direct', label: 'Branch Direct', sortable: true, w: 145 },
+    { key: 'Branch Allocate', label: 'Branch Allocate', w: 140 },
+    { key: 'Company for Show in Report Display', label: 'Company Name', w: 260 },
+    { key: 'BU-TaxID', label: 'BU Tax ID', w: 118 }, // MARKER_BUSINESSUNIT_BRANCH_COLWIDTH_V1 -- Tax ID 13 หลักพอดี ลดช่องว่างให้ BU Branch ชิดซ้าย
+    { key: 'BU-Branch', label: 'BU Branch', w: 115 },
     { key: '%', label: '%', w: 55 },
-    { key: 'DB(%)', label: 'DB(%)', w: 65 },
-    { key: 'cpc', label: 'CPC', w: 65 },
+    { key: 'DB(%)', label: 'DB(%)', w: 80 },
+    { key: 'cpc', label: 'CPC', w: 70 },
     { key: 'Group-P', label: 'Group-P', w: 90 },
-    { key: 'bu', label: 'BU', sortable: true, w: 65 },
+    { key: 'bu', label: 'BU', sortable: true, w: 75 },
     { key: 'status', label: 'Status', w: 90 },
-    { key: 'Inactive Date', label: 'Inactive Date', w: 110 },
+    { key: 'Inactive Date', label: 'Inactive Date', w: 130 },
   ];
 
   const branchTaxIds = useMemo(() => new Set(branches.map(b => b['BU-TaxID']).filter(Boolean)), [branches]);
@@ -2233,7 +2234,7 @@ function BusinessUnit({ activeSubTab, onSubTabChange }) {
               {renderColGroup(BRANCH_COLUMNS, true, branchActionW)}
               <thead><tr>
                 <th style={S.thCheck}><input type="checkbox" checked={pagedBranch.length>0&&pagedBranch.every(i=>branchSelected.includes(i.id))} onChange={()=>{const ids=pagedBranch.map(i=>i.id);const all=ids.every(id=>branchSelected.includes(id));setBranchSelected(all?branchSelected.filter(id=>!ids.includes(id)):[...new Set([...branchSelected,...ids])]);}} /></th>
-                {BRANCH_COLUMNS.map(c=>(<th key={c.key} style={{...(c.sortable?S.thSort:S.th), ...headTint(c.key)}} onClick={c.sortable?()=>{if(branchSortField===c.key)setBranchSortDir(d=>d==='asc'?'desc':'asc');else{setBranchSortField(c.key);setBranchSortDir('asc');}}:undefined}>{headIcon(c.label)}{c.label}{c.sortable?(branchSortField===c.key?(branchSortDir==='asc'?' ▲':' ▼'):' ↕'):''}</th>))}
+                {BRANCH_COLUMNS.map(c=>(<th key={c.key} title={c.label} style={{...(c.sortable?S.thSort:S.th), ...headTint(c.key)}} onClick={c.sortable?()=>{if(branchSortField===c.key)setBranchSortDir(d=>d==='asc'?'desc':'asc');else{setBranchSortField(c.key);setBranchSortDir('asc');}}:undefined}>{headIcon(c.label)}{c.label}{c.sortable?(branchSortField===c.key?(branchSortDir==='asc'?' ▲':' ▼'):' ↕'):''}</th>))}
                 <th style={S.thAction}>Action</th>
               </tr></thead>
             </table>
